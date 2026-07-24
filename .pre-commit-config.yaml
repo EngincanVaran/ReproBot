@@ -27,4 +27,4 @@ repos:
       - id: mixed-line-ending
       - id: check-added-large-files
         args: [--maxkb=2048]
-        exclude: ^(papers/|docs/.*\.pdf$)
+        exclude: ^(papers/|dataset/|docs/.*\.pdf$)
