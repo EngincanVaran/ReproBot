@@ -227,3 +227,37 @@ Decision: build `reader/extract_hyperparameters.py` next (not this session
 — logged for the next increment).
 
 ---
+
+### Full 8-paper VLM batch run — 2 papers hit an unfixable content-filter false-positive
+
+**What happened:** ran `ocr.vlm_extract` over all 8 renamed `dataset/`
+papers. 6 succeeded fully. 2 failed with `Output blocked by content
+filtering policy` from the Anthropic API, both specifically on **page 2**:
+*Deep Networks with Stochastic Depth* and *Densely Connected Convolutional
+Networks*.
+
+**Investigated directly (no subagent — quick, hands-on diagnosis):**
+rendered both pages to PNG and visually confirmed each is completely benign
+academic prose (screenshotted, no images/tables, nothing remotely
+sensitive). Retried both papers fresh — same error, same page, both times
+(deterministic, not a transient flake). Tested whether it was an encoding
+artifact: re-rendered Stochastic Depth's page 2 at `scale=1.5` instead of
+`2.0`, and swapped the detailed transcription prompt for a one-line
+"Transcribe this page briefly" — **identical failure both times.** Ruled
+out our prompt and our render scale as the cause; this is a genuine,
+deterministic false-positive in Claude's vision content classifier tied to
+how this specific page's image renders, not something fixable client-side.
+
+**Real gap this exposed:** `run_vlm()` only writes `markdown_path` after
+its full per-page loop completes, and a page-level exception propagates
+all the way up through `extract_dataset`'s per-*paper* try/except — so a
+single bad page (page 2 of 16, or 2 of 9) discards the *entire* paper,
+including every page that already transcribed successfully. Proposed fix:
+catch failures per-page, insert a placeholder marker, and continue —
+not implemented this session.
+
+**Decision (Engincan):** leave these 2 papers as-is for now (0 pages
+extracted each), don't build per-page resilience yet — revisit once
+`reader/` actually needs to consume them specifically.
+
+---
