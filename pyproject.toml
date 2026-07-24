@@ -24,6 +24,16 @@ vlm = [
     "pypdfium2>=4.30",
     "python-dotenv>=1.0",
 ]
+# reader/ (Claude tool-use over already-extracted Markdown) needs the
+# Anthropic SDK + dotenv but not pypdfium2 — it never touches a PDF or
+# renders a page image, it only reads ocr/'s Markdown output. Kept as its
+# own extra rather than reusing `vlm` so each stage stays independently
+# installable (`uv sync --extra reader`), per this repo's one-folder-per-
+# stage, no-shared-package convention.
+reader = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
 
 [dependency-groups]
 dev = [
@@ -37,7 +47,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ocr"]
+packages = ["ocr", "reader"]
 
 [tool.ruff]
 line-length = 100

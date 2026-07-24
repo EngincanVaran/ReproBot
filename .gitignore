@@ -219,3 +219,6 @@ __marimo__/
 
 # ReproBot: generated MinerU output (Markdown + assets extracted from papers)
 ocr/output/
+
+# ReproBot: generated Reader claims output (JSON extracted from ocr/ Markdown)
+reader/output/
