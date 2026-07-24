@@ -5,12 +5,12 @@ extraction quality before committing to one for the Reader agent. Each
 backend is its own script with the same CLI shape and writes to its own
 subfolder under `ocr/output/` (gitignored — regenerate anytime).
 
-| Backend | Script | Install | How it parses |
-|---|---|---|---|
-| **pdfplumber** | `pdfplumber_extract.py` | `uv sync --extra pdfplumber` | Rule-based, no ML models |
-| **Claude (VLM)** | `vlm_extract.py` | `uv sync --extra vlm` + API key | Claude reads rendered page images directly |
-| **Docling** | `docling_extract.py` | separate env — see below | Learned layout/table models (torch) |
-| **MinerU** | `mineru_extract.py` | separate env — see below | Learned layout/OCR models (torch) |
+| Backend | Script | Install | How it parses | Verified |
+|---|---|---|---|---|
+| **pdfplumber** | `pdfplumber_extract.py` | `uv sync --extra pdfplumber` | Rule-based, no ML models | ✅ ran end-to-end |
+| **Claude (VLM)** | `vlm_extract.py` | `uv sync --extra vlm` + API key | Claude reads rendered page images directly | ✅ ran end-to-end |
+| **Docling** | `docling_extract.py` | separate env — see below | Learned layout/table models (torch) | not runnable on this machine, see below |
+| **MinerU** | `mineru_extract.py` | separate env — see below | Learned layout/OCR models (torch) | not runnable on this machine, see below |
 
 See `docs/notes/reader-agent-precedents.md` for why learned-layout parsing
 (MinerU/Docling-style) was the starting recommendation — both AutoReproduce
@@ -43,6 +43,28 @@ uv run python -m ocr.pdfplumber_extract --output somewhere/else
 
 Both scripts default to reading from `dataset/` (the CIFAR-10 paper set) and
 skip papers they've already extracted, so reruns are cheap.
+
+## How the Claude (VLM) backend handles figures
+
+`vlm_extract.py` renders each PDF page to a **full-page PNG** via pypdfium2
+(`page.render(scale=...)`) and sends that whole image to Claude in one call —
+it does not extract or strip figures separately first. Whatever's visually on
+the page (body text, equations, diagrams, plots, tables) is in the pixels
+Claude receives, so it genuinely looks at figures rather than working from
+text alone. `ocr/output/vlm/Network In Network.md` is a good example: Claude
+correctly described Figure 1's two-panel diagram, including that panel (b)
+shows "a small multilayer perceptron (represented by two columns of circular
+nodes)" — that detail only comes from actually reading the image.
+
+That said, the current prompt (`PROMPT` in `vlm_extract.py`) only asks for a
+*brief* bracketed description of each figure — it's not instructed to
+transcribe every number on a plot axis or describe a diagram's full
+structure. AutoP2C's own VLM-parsing prompt (see
+`docs/notes/reader-agent-precedents.md`) goes further: capture *all*
+numerical elements, ignore purely decorative detail, and cross-reference the
+figure's caption to ground the description. Worth adopting that level of
+detail once figure interpretation actually feeds the Reader's claim/
+hyperparameter extraction — not needed just to compare raw backend output.
 
 ## Docling and MinerU — separate environment required
 
@@ -80,7 +102,12 @@ and `ocr/output/mineru/<paper>/<mineru's own internal layout>/<paper>.md` +
 
 ## Status
 
-Extraction only, for now — no LLM-based parsing (claims/hyperparameters/
-figures) is wired up yet beyond the VLM backend's raw page transcription.
-That's the next step, once we've eyeballed and compared all four backends'
-raw output on a few papers.
+- pdfplumber and Claude VLM: both ran end-to-end locally (`uv sync`, ruff,
+  mypy --strict, and pre-commit all pass); sample output under
+  `ocr/output/`.
+- Docling and MinerU: code written, not yet run (need a non-Intel-macOS /
+  Python-≤3.12 environment — someone else is running these).
+- Extraction only so far — no claims/hyperparameter extraction is wired up
+  yet, beyond the VLM backend's brief inline figure descriptions (see above).
+  That's the next step, once we've eyeballed and compared all four backends'
+  raw output on a few papers.

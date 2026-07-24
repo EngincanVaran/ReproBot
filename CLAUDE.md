@@ -4,7 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This repository is currently a **research/proposal phase** for ReproBot — there is no application code yet (no `src/`/`app/` package, no `tests/`, no Python tooling files). What exists today is the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`. When implementation starts, expect a standard Python project layout (package + tests + `pyproject.toml`) to be scaffolded fresh rather than assumed from anything currently in the repo.
+Implementation has started, narrowly: **`ocr/` (PDF extraction) is the only pipeline stage with real code.** Everything else (Reader's claim/hyperparameter extraction, Coder, Runner, Critic, Orchestrator) is still design-only, described in `docs/project-plan/ReproBot_Project_Plan.md`. Alongside `ocr/`, the rest of the repo is still the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`.
+
+**Repo layout convention — read before adding code:** each pipeline stage gets its own top-level folder at repo root (`ocr/` now; `coder/`, `runner/`, `critic/`, `orchestrator/` later, as siblings), not nested under one unified `reprobot`/`src` package. This was an explicit user correction early on — don't reintroduce a `src/reprobot/`-style monolith. All stage folders share one root `pyproject.toml` / `uv.lock` / `.pre-commit-config.yaml`, unless a stage's dependencies are fundamentally unsyncable alongside the others (see the MinerU/Docling case below), in which case that stage's deps are documented but deliberately left out of the managed lock rather than breaking `uv sync` for everyone else.
+
+**Build style:** one stage at a time, verified. Don't pre-scaffold stub packages for stages that haven't been asked for yet. Before calling a stage done, actually run `uv sync`, smoke-test scripts against real files (`dataset/` or `papers/`), and run `ruff check`/`ruff format --check`/`mypy --strict`/`pre-commit run --all-files` — this codebase has already surfaced real platform-specific breakage (see "Tooling" below) that only showed up by actually running things, not from reading the code.
+
+### Tooling
+
+- **Python 3.13** (`.python-version`), **uv** as the package manager (`pyproject.toml` + `uv.lock`). `requires-python = ">=3.13"`.
+- Dev tools: `ruff` (lint + format, line-length 100, double quotes), `mypy --strict`, `pre-commit` (hooks installed into `.git/hooks`; config in `.pre-commit-config.yaml`). Run `uv sync --group dev` plus whichever `--extra`s a stage needs.
+- **Known platform trap, don't re-derive this from scratch:** the primary dev machine is an **Intel Mac (x86_64)**. No PyTorch release supports Python 3.13 **and** ships Intel-macOS wheels at the same time — PyTorch added 3.13 support at `2.5.0`, the exact release range where it dropped Intel-macOS wheels entirely (last Intel-mac wheel: `2.2.2`). Any torch-dependent tool (MinerU, Docling, and anything similar) cannot be `uv sync`'d into this project's main lock on this machine — declaring it as a project extra breaks `uv sync` for *everything*, since `uv.lock` resolves the union of all extras. Pattern to follow: keep such deps out of `pyproject.toml` entirely, write the integration code anyway, and document manual `pip install` instructions for whoever runs it on compatible hardware (see `ocr/README.md` for the live example with MinerU/Docling).
+- Secrets: `.env` (gitignored) holds `ANTHROPIC_API_KEY`; copy from `.env.example`. Scripts that need it call `dotenv.load_dotenv()` themselves.
+
+### ocr/ — PDF extraction (implemented)
+
+Four independent PDF→Markdown backends, same CLI shape (`--input`, `--output`, skips already-extracted papers), output to `ocr/output/<backend>/` (gitignored). Full detail, install commands, and the MinerU/Docling platform caveat are in `ocr/README.md` — read that before touching this stage, don't re-derive it:
+
+- `pdfplumber_extract.py` — rule-based, no ML models. Verified working.
+- `vlm_extract.py` — renders each page to a full PNG (pypdfium2) and sends it to Claude (`claude-sonnet-5`) in one call per page; genuinely reads figures (not text-only), but the prompt currently asks for only a *brief* bracketed figure description, not a deep read (no per-numeral transcription, no full diagram-structure description) — deliberately deferred until figure interpretation actually feeds real claim/hyperparameter extraction, not needed just to compare raw backend output. Verified working.
+- `docling_extract.py`, `mineru_extract.py` — written, correct, but excluded from this repo's `uv.lock` per the platform trap above; not yet run by anyone. Someone else is running these on separate hardware.
+
+This is extraction only — no claims/hyperparameters/method-summary parsing is wired up yet. See `docs/notes/reader-agent-precedents.md` for why MinerU/Docling-style learned-layout parsing was the starting recommendation (AutoReproduce and AutoP2C both use it), and for the AutoP2C-style deeper figure-parsing prompt that's the natural next step once figure interpretation needs to feed real extraction rather than just backend comparison.
+
+### dataset/ — CIFAR-10 replication targets
+
+8 image-classification papers (PDFs, full titles as filenames) selected as ReproBot's first replication targets — the input `ocr/` actually runs against, distinct from `papers/`'s 9 literature-review references below. Being curated/expanded by someone else in parallel; treat its contents as external input, not something to edit as part of pipeline-stage work.
 
 ## What ReproBot is
 
