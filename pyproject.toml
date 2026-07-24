@@ -5,7 +5,9 @@ description = "Multi-agent pipeline for automated ML paper replication."
 readme = "README.md"
 requires-python = ">=3.13"
 license = { file = "LICENSE" }
-dependencies = []
+dependencies = [
+    "loguru>=0.7",
+]
 
 [project.optional-dependencies]
 # OCR/extraction backends that this project's own uv lock manages — i.e. the

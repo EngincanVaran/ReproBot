@@ -20,6 +20,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 
 @dataclass
 class OcrResult:
@@ -59,22 +61,22 @@ def extract_dataset(input_dir: Path, output_dir: Path, *, backend: str = "pipeli
     """Run MinerU over every PDF in input_dir, skipping papers already extracted."""
     pdf_paths = sorted(input_dir.glob("*.pdf"))
     if not pdf_paths:
-        print(f"No PDFs found in {input_dir}")
+        logger.warning(f"No PDFs found in {input_dir}")
         return
 
     for pdf_path in pdf_paths:
         paper_output_dir = output_dir / pdf_path.stem
         if any(paper_output_dir.rglob("*.md")):
-            print(f"[skip]    {pdf_path.name} (already extracted)")
+            logger.info(f"[skip]    {pdf_path.name} (already extracted)")
             continue
 
-        print(f"[extract] {pdf_path.name}")
+        logger.info(f"[extract] {pdf_path.name}")
         try:
             result = run_mineru(pdf_path, paper_output_dir, backend=backend)
         except subprocess.CalledProcessError as exc:
-            print(f"[error]   {pdf_path.name}: MinerU exited with {exc.returncode}")
+            logger.error(f"[error]   {pdf_path.name}: MinerU exited with {exc.returncode}")
             continue
-        print(f"          -> {result.markdown_path}")
+        logger.info(f"          -> {result.markdown_path}")
 
 
 def main() -> None:
@@ -100,7 +102,7 @@ def main() -> None:
         extract_dataset(args.input, args.output, backend=args.backend)
     else:
         result = run_mineru(args.input, args.output / args.input.stem, backend=args.backend)
-        print(f"-> {result.markdown_path}")
+        logger.info(f"-> {result.markdown_path}")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pdfplumber
+from loguru import logger
 
 
 @dataclass
@@ -59,22 +60,22 @@ def extract_dataset(input_dir: Path, output_dir: Path) -> None:
     """Run pdfplumber over every PDF in input_dir, skipping papers already extracted."""
     pdf_paths = sorted(input_dir.glob("*.pdf"))
     if not pdf_paths:
-        print(f"No PDFs found in {input_dir}")
+        logger.warning(f"No PDFs found in {input_dir}")
         return
 
     for pdf_path in pdf_paths:
         markdown_path = output_dir / f"{pdf_path.stem}.md"
         if markdown_path.exists():
-            print(f"[skip]    {pdf_path.name} (already extracted)")
+            logger.info(f"[skip]    {pdf_path.name} (already extracted)")
             continue
 
-        print(f"[extract] {pdf_path.name}")
+        logger.info(f"[extract] {pdf_path.name}")
         try:
             result = run_pdfplumber(pdf_path, output_dir)
         except Exception as exc:  # noqa: BLE001 - report and continue with the rest
-            print(f"[error]   {pdf_path.name}: {exc}")
+            logger.error(f"[error]   {pdf_path.name}: {exc}")
             continue
-        print(f"          -> {result.markdown_path}")
+        logger.info(f"          -> {result.markdown_path}")
 
 
 def main() -> None:
@@ -94,7 +95,7 @@ def main() -> None:
         extract_dataset(args.input, args.output)
     else:
         result = run_pdfplumber(args.input, args.output)
-        print(f"-> {result.markdown_path}")
+        logger.info(f"-> {result.markdown_path}")
 
 
 if __name__ == "__main__":

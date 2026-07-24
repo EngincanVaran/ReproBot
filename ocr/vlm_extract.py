@@ -15,21 +15,49 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import pypdfium2 as pdfium
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from loguru import logger
 
 MODEL = "claude-sonnet-5"
 
 PROMPT = """Transcribe this page of an academic paper into clean Markdown.
 
-- Preserve headings, paragraph text, and reading order.
-- Render tables as Markdown tables.
+- Preserve headings, paragraph text, and reading order. If the page is laid
+  out in two columns, transcribe the entire left column top-to-bottom first,
+  then the entire right column top-to-bottom - never interleave lines across
+  columns.
+- Exclude page furniture: running headers, footers, page numbers, and
+  arXiv/journal sidebar stamps (e.g. a vertical arXiv identifier printed in
+  the margin). Do not transcribe these. Exception: still transcribe any
+  in-text code or data repository URL (e.g. a GitHub/GitLab link) verbatim,
+  even if it appears in a header, footer, or footnote.
+- Render tables as Markdown tables. This is critical: transcribe EVERY row and
+  EVERY column exactly as printed, including headers, row labels, units, and
+  footnote markers. Preserve full numeric precision verbatim (e.g. "10.41",
+  not "10.4" or "~10"); never round, summarize, abbreviate, merge, or omit any
+  cell, row, or column, even if the table is large or dense. Downstream code
+  parses exact numbers out of these tables, so a missing or altered digit is
+  a real bug. If a cell is illegible, write [illegible] rather than guessing
+  or skipping it. Immediately before or after the table, transcribe its
+  caption text verbatim (e.g. "Table 1: Test set error rates..."); downstream
+  code cites results by this exact caption text, so it must match the printed
+  text exactly, not a paraphrase.
 - Render math as LaTeX (inline $...$ or block $$...$$).
-- Describe figures/diagrams briefly in square brackets, e.g. [Figure 2: ...].
+- Describe figures/diagrams in square brackets, e.g. [Figure 2: ...]. First
+  transcribe the figure's caption text verbatim, then add a code-relevant
+  description: include only detail relevant to reproducing the paper's
+  method (architecture shapes, layer counts, hyperparameter values shown,
+  axis/legend meaning), capture every numerical element visible in the
+  figure, and cross-reference the caption rather than repeating it.
+- Compact the bibliography/references section to one line per entry - author,
+  year, and title only. Do not transcribe full reference details (venue,
+  pages, DOI), and do not skip the bibliography entirely.
 - Output only the transcribed content, no commentary or preamble."""
 
 
@@ -54,7 +82,7 @@ def _render_page_png(pdf_path: Path, page_index: int, scale: float) -> bytes:
 def _transcribe_page(client: Anthropic, png_bytes: bytes) -> str:
     message = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[
             {
                 "role": "user",
@@ -95,9 +123,17 @@ def run_vlm(
 
     sections: list[str] = []
     for page_index in range(n_pages):
+        page_num = page_index + 1
+        page_start = time.monotonic()
         png_bytes = _render_page_png(pdf_path, page_index, scale)
         text = _transcribe_page(client, png_bytes)
-        sections.append(f"## Page {page_index + 1}\n\n{text}")
+        elapsed = time.monotonic() - page_start
+        has_table = "|" in text
+        logger.info(
+            f"  [page {page_num}/{n_pages}] {elapsed:.1f}s, "
+            f"{len(text)} chars, table={'yes' if has_table else 'no'}"
+        )
+        sections.append(f"## Page {page_num}\n\n{text}")
 
     markdown_path.write_text("\n\n".join(sections), encoding="utf-8")
     return OcrResult(pdf_path=pdf_path, markdown_path=markdown_path)
@@ -109,23 +145,23 @@ def extract_dataset(
     """Run the VLM extractor over every PDF in input_dir, skipping already-extracted papers."""
     pdf_paths = sorted(input_dir.glob("*.pdf"))
     if not pdf_paths:
-        print(f"No PDFs found in {input_dir}")
+        logger.warning(f"No PDFs found in {input_dir}")
         return
 
     client = Anthropic()
     for pdf_path in pdf_paths:
         markdown_path = output_dir / f"{pdf_path.stem}.md"
         if markdown_path.exists():
-            print(f"[skip]    {pdf_path.name} (already extracted)")
+            logger.info(f"[skip]    {pdf_path.name} (already extracted)")
             continue
 
-        print(f"[extract] {pdf_path.name}")
+        logger.info(f"[extract] {pdf_path.name}")
         try:
             result = run_vlm(pdf_path, output_dir, client, scale=scale, max_pages=max_pages)
         except Exception as exc:  # noqa: BLE001 - report and continue with the rest
-            print(f"[error]   {pdf_path.name}: {exc}")
+            logger.error(f"[error]   {pdf_path.name}: {exc}")
             continue
-        print(f"          -> {result.markdown_path}")
+        logger.info(f"          -> {result.markdown_path}")
 
 
 def main() -> None:
@@ -154,7 +190,7 @@ def main() -> None:
         result = run_vlm(
             args.input, args.output, client, scale=args.scale, max_pages=args.max_pages
         )
-        print(f"-> {result.markdown_path}")
+        logger.info(f"-> {result.markdown_path}")
 
 
 if __name__ == "__main__":
