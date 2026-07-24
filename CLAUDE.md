@@ -4,11 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Implementation has started, narrowly: **`ocr/` (PDF extraction) is the only pipeline stage with real code.** Everything else (Reader's claim/hyperparameter extraction, Coder, Runner, Critic, Orchestrator) is still design-only, described in `docs/project-plan/ReproBot_Project_Plan.md`. Alongside `ocr/`, the rest of the repo is still the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`.
+Implementation has started, narrowly: **`ocr/` (PDF extraction) and `reader/` (claims extraction) are the only pipeline stages with real code.** Everything else (Reader's hyperparameter/architecture/data-pipeline extraction, Coder, Runner, Critic, Orchestrator) is still design-only, described in `docs/project-plan/ReproBot_Project_Plan.md`. Alongside `ocr/`/`reader/`, the rest of the repo is still the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`.
 
 **Repo layout convention — read before adding code:** each pipeline stage gets its own top-level folder at repo root (`ocr/` now; `coder/`, `runner/`, `critic/`, `orchestrator/` later, as siblings), not nested under one unified `reprobot`/`src` package. This was an explicit user correction early on — don't reintroduce a `src/reprobot/`-style monolith. All stage folders share one root `pyproject.toml` / `uv.lock` / `.pre-commit-config.yaml`, unless a stage's dependencies are fundamentally unsyncable alongside the others (see the MinerU/Docling case below), in which case that stage's deps are documented but deliberately left out of the managed lock rather than breaking `uv sync` for everyone else.
 
 **Build style:** one stage at a time, verified. Don't pre-scaffold stub packages for stages that haven't been asked for yet. Before calling a stage done, actually run `uv sync`, smoke-test scripts against real files (`dataset/` or `papers/`), and run `ruff check`/`ruff format --check`/`mypy --strict`/`pre-commit run --all-files` — this codebase has already surfaced real platform-specific breakage (see "Tooling" below) that only showed up by actually running things, not from reading the code.
+
+### Orchestrator + agent delegation
+
+Claude (the main session) is the **orchestrator** — Engincan talks to it directly; it decides when a task warrants a specialized subagent, dispatches one via the Agent tool, and appends what happened to `docs/agent-log.md` (who, what they were asked, what came back, summarized — full detail lives in the actual files/commits, not duplicated in the log). Not every task needs delegation; use judgment — trivial mechanical work (a rename, a one-line fix) is faster done directly.
+
+**Established roles:**
+- **Research Agent** (`general-purpose`, or `Explore` if it should be read-only) — surveys papers/notes/dataset/existing output, proposes a scoped design (e.g. "smallest useful first slice" for a new script). Doesn't write code.
+- **Review Agent** (`general-purpose`, read-only) — critiques something before a costly or hard-to-repeat action (e.g. reviewed the VLM extraction prompt before an 8-paper batch API run). Concrete, specific recommended edits only, not generic advice.
+- **Coding Agent** (`general-purpose`) — implements a scoped change; always verifies with `ruff check`/`ruff format`/`mypy --strict`/`pre-commit run --all-files`; instruments the actual code with detailed `loguru` logging (per-page/per-table/per-claim progress, not a single summary line) — Engincan has explicitly required this, not optional polish.
+- **Validator Agent** (`Explore`, read-only) — audits existing output/coverage for completeness/quality issues; independent of a concurrent Coding Agent's work, so it can run in parallel with one.
+- **Explainer** — usually Claude directly, not a subagent, since a fresh subagent would have to re-derive context Claude already has from the delegation it just orchestrated.
+
+**Sequencing:** run independent agents in parallel (single message, multiple Agent tool calls); only sequence when there's a real dependency (e.g. claims extraction needed the VLM prompt fix to land first, so it ran after that Coding Agent, not alongside it). Don't force parallelism where one step's output is another's input.
+
+**Before multi-step or costly work** (spawning several agents, an API-cost batch run), present the plan as clear numbered steps and wait for a go-ahead — Engincan has explicitly asked for this review-before-execute step more than once; don't skip it for anything non-trivial.
+
+**Not yet an agent with a loop:** every stage built so far (`ocr/`, `reader/extract_claims.py`) is single-shot — one call, structured output, done. Real agentic loops (retry, planning, iterative tool-use) aren't needed until the Orchestrator/Coder/Critic retry loop is built — see §1.3 of the project plan, which already recommends LangGraph for exactly that loop. Don't add loop/graph machinery to `ocr/`/`reader/` preemptively; that's correctly deferred, not a gap.
 
 ### Tooling
 
@@ -22,14 +39,24 @@ Implementation has started, narrowly: **`ocr/` (PDF extraction) is the only pipe
 Four independent PDF→Markdown backends, same CLI shape (`--input`, `--output`, skips already-extracted papers), output to `ocr/output/<backend>/` (gitignored). Full detail, install commands, and the MinerU/Docling platform caveat are in `ocr/README.md` — read that before touching this stage, don't re-derive it:
 
 - `pdfplumber_extract.py` — rule-based, no ML models. Verified working.
-- `vlm_extract.py` — renders each page to a full PNG (pypdfium2) and sends it to Claude (`claude-sonnet-5`) in one call per page; genuinely reads figures (not text-only), but the prompt currently asks for only a *brief* bracketed figure description, not a deep read (no per-numeral transcription, no full diagram-structure description) — deliberately deferred until figure interpretation actually feeds real claim/hyperparameter extraction, not needed just to compare raw backend output. Verified working.
+- `vlm_extract.py` — renders each page to a full PNG (pypdfium2) and sends it to Claude (`claude-sonnet-5`) in one call per page; genuinely reads figures (not text-only). Prompt does AutoP2C-depth figure description (every numerical element, caption cross-referenced), explicit two-column reading order, page-furniture exclusion, table/figure caption capture, and a compacted bibliography — see `docs/agent-log.md`'s Review/Coding Agent entries for the reasoning behind each. Verified working; run on the full 8-paper `dataset/` batch.
 - `docling_extract.py`, `mineru_extract.py` — written, correct, but excluded from this repo's `uv.lock` per the platform trap above; not yet run by anyone. Someone else is running these on separate hardware.
 
-This is extraction only — no claims/hyperparameters/method-summary parsing is wired up yet. See `docs/notes/reader-agent-precedents.md` for why MinerU/Docling-style learned-layout parsing was the starting recommendation (AutoReproduce and AutoP2C both use it), and for the AutoP2C-style deeper figure-parsing prompt that's the natural next step once figure interpretation needs to feed real extraction rather than just backend comparison.
+All 5 `ocr/`+`reader/` scripts log via `loguru`, not `print` (colorized, leveled, zero shared config — each script imports its own `from loguru import logger`).
+
+`ocr/` itself is extraction only — Markdown out, nothing structured. See `reader/` below for what consumes it.
+
+### reader/ — structured extraction (claims implemented)
+
+Turns one paper's `ocr/output/vlm/<paper>.md` into structured data via Claude tool-use (forced structured JSON output, not free-text parsing). Full detail in `reader/README.md`.
+
+- `extract_claims.py` — extracts the paper's own reported results (metric, dataset, value, unit, source, optional `model_variant`), excluding baseline/prior-work rows from the same tables. Verified against Network In Network: correctly kept 8 own-method claims across 5 tables, correctly excluded every baseline. Reuses the project plan's `Claim` shape (§1.2) plus `model_variant`.
+- Next slice (scoped, not yet built): `extract_hyperparameters.py` — see `docs/agent-log.md`'s "Research Agent — scope the next Reader extraction slice" entry for the full design (value kept as a string, not float, so LR schedules survive; separate file, not a mode on `extract_claims.py`).
+- `reader/` is its own `pyproject.toml` extra (`anthropic` + `python-dotenv`), deliberately not reusing `ocr`'s `vlm` extra — it never touches a PDF or renders a page image, only reads `ocr/`'s Markdown output.
 
 ### dataset/ — CIFAR-10 replication targets
 
-8 image-classification papers (PDFs, full titles as filenames) selected as ReproBot's first replication targets — the input `ocr/` actually runs against, distinct from `papers/`'s 9 literature-review references below. Being curated/expanded by someone else in parallel; treat its contents as external input, not something to edit as part of pipeline-stage work.
+8 image-classification papers (PDFs, filenames prefixed `YYYY-MM - Full Title.pdf` in publish-date order — see `docs/literature-review/CIFAR10_Candidate_Replication_Targets.md` for the ordered shortlist with exact dates) selected as ReproBot's first replication targets — the input `ocr/` actually runs against, distinct from `papers/`'s 9 literature-review references below. Being curated/expanded by someone else in parallel; treat its contents as external input, not something to edit as part of pipeline-stage work.
 
 ## What ReproBot is
 

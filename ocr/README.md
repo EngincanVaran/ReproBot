@@ -32,7 +32,7 @@ uv run python -m ocr.pdfplumber_extract
 uv run python -m ocr.vlm_extract
 
 # a single paper
-uv run python -m ocr.pdfplumber_extract --input "dataset/Deep Residual Learning for Image Recognition.pdf"
+uv run python -m ocr.pdfplumber_extract --input "dataset/2015-12 - Deep Residual Learning for Image Recognition.pdf"
 
 # cheap test run: only the first 2 pages of every paper (VLM backend costs real API tokens)
 uv run python -m ocr.vlm_extract --max-pages 2
@@ -51,20 +51,21 @@ skip papers they've already extracted, so reruns are cheap.
 it does not extract or strip figures separately first. Whatever's visually on
 the page (body text, equations, diagrams, plots, tables) is in the pixels
 Claude receives, so it genuinely looks at figures rather than working from
-text alone. `ocr/output/vlm/Network In Network.md` is a good example: Claude
+text alone. `ocr/output/vlm/2013-12 - Network In Network.md` is a good example: Claude
 correctly described Figure 1's two-panel diagram, including that panel (b)
 shows "a small multilayer perceptron (represented by two columns of circular
 nodes)" — that detail only comes from actually reading the image.
 
-That said, the current prompt (`PROMPT` in `vlm_extract.py`) only asks for a
-*brief* bracketed description of each figure — it's not instructed to
-transcribe every number on a plot axis or describe a diagram's full
-structure. AutoP2C's own VLM-parsing prompt (see
-`docs/notes/reader-agent-precedents.md`) goes further: capture *all*
-numerical elements, ignore purely decorative detail, and cross-reference the
-figure's caption to ground the description. Worth adopting that level of
-detail once figure interpretation actually feeds the Reader's claim/
-hyperparameter extraction — not needed just to compare raw backend output.
+Updated: the prompt now asks for AutoP2C-depth figure description (capture
+every numerical element visible, ignore purely decorative detail,
+cross-reference the figure's own caption) rather than the brief one-liner
+it started with — see `docs/agent-log.md`'s "Review Agent" and "Coding
+Agent" entries for why and exactly what changed. The prompt also now
+explicitly handles two-column reading order, excludes page-furniture noise
+(headers/footers/arXiv sidebar stamps, with a carve-out for in-text code/
+data URLs), captures table *and* figure captions verbatim (since
+`reader/extract_claims.py`'s `source` field depends on exact caption text),
+and compacts the bibliography to one line per entry.
 
 ## Docling and MinerU — separate environment required
 
@@ -100,14 +101,23 @@ Output layout matches the other two backends: `ocr/output/docling/<paper>.md`
 and `ocr/output/mineru/<paper>/<mineru's own internal layout>/<paper>.md` +
 `images/`.
 
+## Logging
+
+All 5 scripts log via `loguru`, not `print` — colorized, leveled
+(`logger.info` for progress, `logger.warning`/`logger.error` for
+early-exits/failures), zero shared config (each script imports its own
+`from loguru import logger`, per this repo's no-shared-package-between-
+stages convention).
+
 ## Status
 
 - pdfplumber and Claude VLM: both ran end-to-end locally (`uv sync`, ruff,
-  mypy --strict, and pre-commit all pass); sample output under
-  `ocr/output/`.
+  mypy --strict, and pre-commit all pass); the VLM backend has since been
+  run on the full 8-paper `dataset/` batch (see `docs/agent-log.md`).
 - Docling and MinerU: code written, not yet run (need a non-Intel-macOS /
   Python-≤3.12 environment — someone else is running these).
-- Extraction only so far — no claims/hyperparameter extraction is wired up
-  yet, beyond the VLM backend's brief inline figure descriptions (see above).
-  That's the next step, once we've eyeballed and compared all four backends'
-  raw output on a few papers.
+- Extraction is done for the VLM backend's own scope; the next layer up —
+  turning this Markdown into structured claims/hyperparameters/method
+  summary — is `reader/`, not `ocr/`. See `reader/README.md`; claims
+  extraction is built and verified there, hyperparameters is scoped as the
+  next slice (`docs/agent-log.md`).
