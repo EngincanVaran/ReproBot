@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Implementation has started, narrowly: **`ocr/` (PDF extraction) and `reader/` (claims extraction) are the only pipeline stages with real code.** Everything else (Reader's hyperparameter/architecture/data-pipeline extraction, Coder, Runner, Critic, Orchestrator) is still design-only, described in `docs/project-plan/ReproBot_Project_Plan.md`. Alongside `ocr/`/`reader/`, the rest of the repo is still the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`.
+Implementation has started, narrowly: **`ocr/` (PDF extraction) and `reader/` (claims, hyperparameters, data_pipeline extraction, plus a validation retry loop) are the only pipeline stages with real code.** Everything else (Reader's architecture-notes extraction, Coder, Runner, Critic, Orchestrator) is still design-only, described in `docs/project-plan/ReproBot_Project_Plan.md`. Alongside `ocr/`/`reader/`, the rest of the repo is still the project proposal, progress reports, and a literature review built from 9 related papers, organized under `docs/`.
 
 **Repo layout convention — read before adding code:** each pipeline stage gets its own top-level folder at repo root (`ocr/` now; `coder/`, `runner/`, `critic/`, `orchestrator/` later, as siblings), not nested under one unified `reprobot`/`src` package. This was an explicit user correction early on — don't reintroduce a `src/reprobot/`-style monolith. All stage folders share one root `pyproject.toml` / `uv.lock` / `.pre-commit-config.yaml`, unless a stage's dependencies are fundamentally unsyncable alongside the others (see the MinerU/Docling case below), in which case that stage's deps are documented but deliberately left out of the managed lock rather than breaking `uv sync` for everyone else.
 
@@ -25,7 +25,7 @@ Claude (the main session) is the **orchestrator** — Engincan talks to it direc
 
 **Before multi-step or costly work** (spawning several agents, an API-cost batch run), present the plan as clear numbered steps and wait for a go-ahead — Engincan has explicitly asked for this review-before-execute step more than once; don't skip it for anything non-trivial.
 
-**Not yet an agent with a loop:** every stage built so far (`ocr/`, `reader/extract_claims.py`) is single-shot — one call, structured output, done. Real agentic loops (retry, planning, iterative tool-use) aren't needed until the Orchestrator/Coder/Critic retry loop is built — see §1.3 of the project plan, which already recommends LangGraph for exactly that loop. Don't add loop/graph machinery to `ocr/`/`reader/` preemptively; that's correctly deferred, not a gap.
+**Not yet an agent with an open-ended loop:** `reader/pipeline.py` does have a retry loop now (validate → route flags to the owning extractor → re-extract with feedback → re-validate, capped at `max_retries=3` passes), but it's a small, bounded, deterministic Python loop over a fixed set of extractors — not an LLM deciding what to do next. Each individual extractor call is still single-shot: one call, structured output, done. Real open-ended agentic loops (an LLM planning its own next action, iterative tool-use) aren't needed until the Orchestrator/Coder/Critic retry loop is built — see §1.3 of the project plan, which already recommends LangGraph for exactly that loop, deliberately not used for `reader/`'s simpler bounded loop. Don't add LangGraph/graph machinery to `ocr/`/`reader/` preemptively; that's correctly deferred, not a gap.
 
 ### Tooling
 
@@ -46,12 +46,17 @@ All 5 `ocr/`+`reader/` scripts log via `loguru`, not `print` (colorized, leveled
 
 `ocr/` itself is extraction only — Markdown out, nothing structured. See `reader/` below for what consumes it.
 
-### reader/ — structured extraction (claims implemented)
+### reader/ — structured extraction (claims, hyperparameters, data_pipeline implemented)
 
-Turns one paper's `ocr/output/vlm/<paper>.md` into structured data via Claude tool-use (forced structured JSON output, not free-text parsing). Full detail in `reader/README.md`.
+Turns one paper's `ocr/output/vlm/<paper>.md` into structured data via Claude tool-use (forced structured JSON output, not free-text parsing), cross-checked by a validation step that can trigger a bounded retry loop. Full detail (class architecture diagram, loop diagram, a real caught-bug walkthrough) in `reader/README.md` — read that before touching this stage, don't re-derive it here.
 
-- `extract_claims.py` — extracts the paper's own reported results (metric, dataset, value, unit, source, optional `model_variant`), excluding baseline/prior-work rows from the same tables. Verified against Network In Network: correctly kept 8 own-method claims across 5 tables, correctly excluded every baseline. Reuses the project plan's `Claim` shape (§1.2) plus `model_variant`.
-- Next slice (scoped, not yet built): `extract_hyperparameters.py` — see `docs/agent-log.md`'s "Research Agent — scope the next Reader extraction slice" entry for the full design (value kept as a string, not float, so LR schedules survive; separate file, not a mode on `extract_claims.py`).
+- `base.py` — `Extractor[ResultT]` ABC (PEP 695 generic syntax): every extraction stage implements `name: ClassVar[str]` and `extract(markdown_text, client, feedback=None) -> ResultT`. Lets `pipeline.py` treat every stage uniformly (call `.extract()`, route validation flags back to the stage whose `.name` matches).
+- `claims.py` — `ClaimsExtractor`. Extracts the paper's own reported results (metric, dataset, value, unit, source, optional `model_variant`), excluding baseline/prior-work rows from the same tables. Reuses the project plan's `Claim` shape (§1.2) plus `model_variant`.
+- `hyperparameters.py` — `HyperparametersExtractor`. Extracts the paper's own training hyperparameters from both a dedicated table and "Implementation Details"/"Training Details" prose (value kept as a string, not float, so LR schedules survive).
+- `data_pipeline.py` — `DataPipelineExtractor`. Extracts per-dataset preprocessing/augmentation/split info plus paper-level `reference_urls` (GitHub/dataset URLs). Deliberately does not guess: when a paper defers a detail to a citation without giving numbers, it records that fact rather than inventing plausible values — see `reader/README.md` for why.
+- `validator.py` — `ExtractionValidator`. One more Claude call, given the full paper text plus every stage's combined output, that flags (does not fix) inconsistencies between stages or gaps vs. the paper. Iterates the results generically by stage name, so adding a new extractor needs zero changes here.
+- `pipeline.py` — `ReaderPipeline`, the entry point (same `--input`/`--output`/skip-if-already-done CLI shape as `ocr/`'s scripts). Loads a paper's Markdown once, runs every stage once, validates, then loops: route flags to the one stage each belongs to, re-run only that stage with the flag folded into its prompt as feedback, re-validate — capped at `max_retries=3` total validation passes, finishes gracefully either way. Writes one combined `reader/output/<paper>.json` including `validation.flags`/`.attempts`/`.retried_stages`.
+- Each extractor is an importable class (prompt + tool schema + parsing), not a standalone script — `pipeline.py` is the only entry point. A new extraction type (`architecture_notes`, ...) becomes one more `Extractor` subclass plus one more entry in `pipeline.py`'s default stage list, no other file changes.
 - `reader/` is its own `pyproject.toml` extra (`anthropic` + `python-dotenv`), deliberately not reusing `ocr`'s `vlm` extra — it never touches a PDF or renders a page image, only reads `ocr/`'s Markdown output.
 
 ### dataset/ — CIFAR-10 replication targets

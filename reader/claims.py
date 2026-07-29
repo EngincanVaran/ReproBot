@@ -8,26 +8,22 @@ definition, `tool_choice` forced to it) to get back a validated list of
 claims describing the paper's own method — baseline/prior-work rows from
 the same results tables are deliberately excluded.
 
-Requires the `reader` extra: `uv sync --extra reader`, plus an
-ANTHROPIC_API_KEY in `.env` at the repo root (copy `.env.example`).
-
-Usage:
-    uv run python -m reader.extract_claims --input "ocr/output/vlm/2013-12 - Network In Network.md"
-    uv run python -m reader.extract_claims --input ocr/output/vlm --output reader/output
+This module is an importable extraction step, not a standalone script —
+`reader/pipeline.py` is the entry point that loads a paper's Markdown, runs
+`ClaimsExtractor.extract()`, and combines the result with the other
+extraction steps into one `reader_output.json`.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, ClassVar, cast
 
 from anthropic import Anthropic
 from anthropic.types import Message, ToolChoiceToolParam, ToolParam
-from dotenv import load_dotenv
 from loguru import logger
+
+from reader.base import Extractor
 
 MODEL = "claude-sonnet-5"
 
@@ -161,9 +157,7 @@ class Claim:
 
 
 @dataclass
-class ClaimsResult:
-    markdown_path: Path
-    json_path: Path
+class ClaimsExtraction:
     claims: list[Claim]
     tables_examined: list[str]
     candidates_considered: int
@@ -195,108 +189,56 @@ def _parse_claim(raw: object) -> Claim:
     )
 
 
-def run_claims_extraction(markdown_path: Path, output_dir: Path, client: Anthropic) -> ClaimsResult:
-    """Send one paper's VLM Markdown to Claude and extract its own-method claims."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / f"{markdown_path.stem}.json"
+class ClaimsExtractor(Extractor[ClaimsExtraction]):
+    """Extracts a paper's own reported results (claims) from its VLM Markdown."""
 
-    markdown_text = markdown_path.read_text(encoding="utf-8")
-    message = client.messages.create(
-        model=MODEL,
-        max_tokens=4096,
-        tools=[cast(ToolParam, CLAIM_TOOL)],
-        tool_choice=cast(ToolChoiceToolParam, {"type": "tool", "name": "record_claims"}),
-        messages=[{"role": "user", "content": f"{PROMPT}\n\n---\n\n{markdown_text}"}],
-    )
-    payload = _tool_input(message)
+    name: ClassVar[str] = "claims"
 
-    tables_examined = [str(table) for table in _as_list(payload.get("tables_examined"))]
-    candidates_considered = int(payload.get("candidates_considered") or 0)  # type: ignore[call-overload]
-    claims = [_parse_claim(raw) for raw in _as_list(payload.get("claims"))]
+    def extract(
+        self, markdown_text: str, client: Anthropic, feedback: str | None = None
+    ) -> ClaimsExtraction:
+        """Send one paper's already-loaded VLM Markdown to Claude and extract its
+        own-method claims. No file I/O here - the pipeline owns reading input and
+        writing output."""
+        prompt = PROMPT
+        if feedback:
+            prompt = (
+                f"{PROMPT}\n\n"
+                f"A prior validation pass flagged this specific issue with your "
+                f"previous attempt: {feedback}\nAddress it specifically in this "
+                f"attempt."
+            )
 
-    logger.info(f"  tables examined ({len(tables_examined)}):")
-    for table in tables_examined:
-        logger.info(f"    - {table}")
-    logger.info(f"  candidates considered (own-method + baseline rows): {candidates_considered}")
-    logger.info(f"  kept as own-method claims: {len(claims)}")
-    for claim in claims:
-        variant = f" [{claim.model_variant}]" if claim.model_variant else ""
-        logger.info(
-            f"    {claim.claim_id}: {claim.metric} = {claim.reported_value}{claim.unit} "
-            f"on {claim.dataset}{variant} ({claim.source})"
+        message = client.messages.create(
+            model=MODEL,
+            max_tokens=8192,
+            tools=[cast(ToolParam, CLAIM_TOOL)],
+            tool_choice=cast(ToolChoiceToolParam, {"type": "tool", "name": "record_claims"}),
+            messages=[{"role": "user", "content": f"{prompt}\n\n---\n\n{markdown_text}"}],
         )
+        payload = _tool_input(message)
 
-    json_path.write_text(
-        json.dumps(
-            {
-                "paper": markdown_path.stem,
-                "source_markdown": str(markdown_path),
-                "tables_examined": tables_examined,
-                "candidates_considered": candidates_considered,
-                "claims": [asdict(claim) for claim in claims],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    return ClaimsResult(
-        markdown_path=markdown_path,
-        json_path=json_path,
-        claims=claims,
-        tables_examined=tables_examined,
-        candidates_considered=candidates_considered,
-    )
+        tables_examined = [str(table) for table in _as_list(payload.get("tables_examined"))]
+        candidates_considered = int(payload.get("candidates_considered") or 0)  # type: ignore[call-overload]
+        claims = [_parse_claim(raw) for raw in _as_list(payload.get("claims"))]
 
+        logger.info(f"  [claims] tables examined ({len(tables_examined)}):")
+        for table in tables_examined:
+            logger.info(f"    - {table}")
+        logger.info(
+            f"  [claims] candidates considered (own-method + baseline rows): "
+            f"{candidates_considered}"
+        )
+        logger.info(f"  [claims] kept as own-method claims: {len(claims)}")
+        for claim in claims:
+            variant = f" [{claim.model_variant}]" if claim.model_variant else ""
+            logger.info(
+                f"    {claim.claim_id}: {claim.metric} = {claim.reported_value}{claim.unit} "
+                f"on {claim.dataset}{variant} ({claim.source})"
+            )
 
-def extract_dataset(input_dir: Path, output_dir: Path) -> None:
-    """Run claims extraction over every Markdown file in input_dir, skipping papers already done."""
-    markdown_paths = sorted(input_dir.glob("*.md"))
-    if not markdown_paths:
-        logger.warning(f"No Markdown files found in {input_dir}")
-        return
-
-    client = Anthropic()
-    for markdown_path in markdown_paths:
-        json_path = output_dir / f"{markdown_path.stem}.json"
-        if json_path.exists():
-            logger.info(f"[skip]    {markdown_path.name} (already extracted)")
-            continue
-
-        logger.info(f"[extract] {markdown_path.name}")
-        try:
-            result = run_claims_extraction(markdown_path, output_dir, client)
-        except Exception as exc:  # noqa: BLE001 - report and continue with the rest
-            logger.error(f"[error]   {markdown_path.name}: {exc}")
-            continue
-        logger.info(f"          -> {result.json_path}")
-
-
-def main() -> None:
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=Path("ocr/output/vlm"),
-        help="VLM-extracted Markdown file, or a directory of them",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("reader/output"),
-        help="Directory for extracted claims JSON",
-    )
-    args = parser.parse_args()
-
-    if args.input.is_dir():
-        extract_dataset(args.input, args.output)
-    else:
-        client = Anthropic()
-        logger.info(f"[extract] {args.input.name}")
-        result = run_claims_extraction(args.input, args.output, client)
-        logger.info(f"          -> {result.json_path}")
-
-
-if __name__ == "__main__":
-    main()
+        return ClaimsExtraction(
+            claims=claims,
+            tables_examined=tables_examined,
+            candidates_considered=candidates_considered,
+        )
