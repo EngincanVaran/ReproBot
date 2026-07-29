@@ -64,7 +64,7 @@ Agent" entries for why and exactly what changed. The prompt also now
 explicitly handles two-column reading order, excludes page-furniture noise
 (headers/footers/arXiv sidebar stamps, with a carve-out for in-text code/
 data URLs), captures table *and* figure captions verbatim (since
-`reader/extract_claims.py`'s `source` field depends on exact caption text),
+`reader/claims.py`'s `source` field depends on exact caption text),
 and compacts the bibliography to one line per entry.
 
 ## Docling and MinerU — separate environment required
