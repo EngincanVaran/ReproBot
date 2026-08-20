@@ -475,3 +475,48 @@ with real `source` values — the model isn't reliably populating that one
 field despite it being schema-required. Cosmetic, not fixed this session.
 
 ---
+
+### Validator Agent — audit ocr/ and reader/ output quality before continuing
+
+**Asked:** Read-only audit of the actual generated content (not just line
+counts) of all 6 `ocr/output/vlm/*.md` files and both `reader/output/*.json`
+files, looking for defects distinct from ones already documented (WRN's
+non-converging validation, `sources_examined` bug, pdfplumber garbling, the
+2-paper content-filter failure, deliberate no-guessing on cited-but-unstated
+data_pipeline details).
+
+**Result:**
+1. **Duplicated figure captions** — `Striving for Simplicity (All
+   Convolutional Net).md`, Figures 5/6 only: caption restated as a bare
+   paragraph right after the bracketed `[Figure N: ...]` description block.
+   Figures 1-4 in the same file don't do this; a page-specific VLM slip, not
+   systemic.
+2. **Hallucinated stray heading** — `AutoAugment.md`, page 5: a spurious
+   `# Page Content` heading inserted before the real continuation sentence,
+   not present in the source PDF.
+3. **Real extractor gap, confirmed** — `Wide Residual Networks.json`:
+   ImageNet has 14 reported claims (c52-c65) but zero hyperparameter entries
+   at all (not even a "not stated" placeholder, unlike every other gap in
+   the file) — this is exactly what validation flag #8 already points at,
+   now confirmed as a genuine coverage miss rather than a nitpick.
+
+**Confirms working correctly:** page counts match source PDFs exactly across
+all 6 VLM outputs (no silent page drops beyond the known 2-paper failure);
+spot-checked numeric tables (WRN, ResNet, NIN) all match the source PDFs
+exactly, including a genuine WRN-internal inconsistency (Table 8 vs. Table 9
+disagree on WRN-50-2-bottleneck top-5 error, 6.03% vs. 5.79%) that both OCR
+and claims extraction correctly preserved as two distinct claims rather than
+silently merging/picking one; CCT.md correctly stitches a bibliography entry
+split across a page boundary; NIN.json and WRN.json both have well-grounded
+sources and correct `reference_urls`. Of WRN's 8 unresolved validation
+flags, content-checked directly: 5 are the validator second-guessing itself
+and finding no issue, 1 is a defensible interpretive edge case, only 2 are
+substantive (the ImageNet gap above, and narrative comparison deltas
+correctly excluded as derived-not-reported values).
+
+Decision: fix the two OCR prompt issues (duplicate caption restatement,
+stray page-break heading) and the ImageNet hyperparameters gap before
+starting `architecture_notes.py` — not blocking, but cheap and now
+concretely diagnosed rather than theoretical.
+
+---
