@@ -152,10 +152,20 @@ class CoderPipeline:
         markdown_path: Path,
         output_dir: Path,
         client: Anthropic,
+        feedback: str | None = None,
     ) -> CoderOutput:
         """Generate one training script, gate it, and write it under
         `output_dir/<paper>/`. Raises `ScriptSyntaxError` if the syntax gate
-        fails (the offending source is still written, as `train.py.invalid`)."""
+        fails (the offending source is still written, as `train.py.invalid`).
+
+        `feedback` is passed straight through to `CodeWriter.write()`, which has
+        always accepted it. It is set on a retry: a description of what went
+        wrong with the previous attempt (a Runner triage's `suggested_fix`, or
+        this pipeline's own syntax-gate message), folded into the prompt so the
+        model addresses that specifically instead of being generically re-asked.
+        `orchestrator/` is what passes it; a direct `coder.pipeline` run leaves
+        it None and behaves exactly as before.
+        """
         paper = reader_json_path.stem
         logger.info(f"[{self.writer.name}] reading reader output: {reader_json_path}")
         reader_output: dict[str, Any] = json.loads(reader_json_path.read_text(encoding="utf-8"))
@@ -170,8 +180,11 @@ class CoderPipeline:
             f"{len(reader_output.get('data_pipeline', {}).get('datasets', []))} dataset(s)"
         )
 
-        logger.info(f"[{self.writer.name}] generating training script...")
-        result = self.writer.write(reader_output, paper_markdown, client)
+        if feedback:
+            logger.info(f"[{self.writer.name}] regenerating with feedback: {feedback}")
+        else:
+            logger.info(f"[{self.writer.name}] generating training script...")
+        result = self.writer.write(reader_output, paper_markdown, client, feedback=feedback)
 
         paper_dir = output_dir / paper
         paper_dir.mkdir(parents=True, exist_ok=True)

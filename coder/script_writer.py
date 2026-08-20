@@ -64,6 +64,21 @@ REQUIRED_CLI_FLAGS: tuple[str, ...] = (
     "--output-dir",
     "--metrics-output",
     "--seed",
+    # `--data-dir` is required for a reason that only showed up under the retry
+    # loop. `runner/` bind-mounts a shared CIFAR-10 cache at the container's
+    # `/workspace/data`, which only lands where the script looks if the script
+    # defaults its data directory to `./data`. That used to be a convention -
+    # whatever the prompt happened to produce - and `runner/README.md` correctly
+    # called it "a convention, not a contract".
+    #
+    # Then a real regeneration defaulted it to `./<output-dir>/data` instead,
+    # missed the mount, and re-downloaded 170 MB: the same `probe` stage took
+    # **2000 s instead of 169 s**. Nothing broke, which is what makes it nasty -
+    # it just silently costs twelve minutes. In a retry loop every regeneration
+    # re-rolls that dice, and the stage budgets are calibrated for a warm cache.
+    # So the convention is now a contract, enforced by the same literal check as
+    # every other flag here.
+    "--data-dir",
 )
 
 # The exact metrics shape the future Critic diffs against the paper's claim.
@@ -181,6 +196,11 @@ CHOOSE SENSIBLY, ALWAYS DISCLOSE.
    `--metrics-output`    default = a `metrics.json` path
    `--seed`              default = any fixed integer, seeded through `torch`, \
 `numpy` and `random`
+   `--data-dir`          default = EXACTLY `"./data"` - not a path derived from \
+`--output-dir`, not any other name. The Runner bind-mounts a shared, \
+pre-populated dataset cache at that exact relative location, and the dataset \
+download must be pointed at it. Getting this wrong does not fail: it silently \
+re-downloads ~170 MB and makes the run about twelve times slower.
    This is a load-bearing interface contract with the pipeline's Runner stage, \
 which uses these flags to force fast capped smoke runs before a full one. \
 List every flag your `argparse` actually defines in `cli_flags_included`.

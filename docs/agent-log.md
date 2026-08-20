@@ -736,3 +736,64 @@ and nothing connects them. That is the next increment and the project's actual
 differentiator.
 
 ---
+
+### Coding Agent — build `orchestrator/`, the Coder↔Runner retry loop
+
+**Asked:** Build the fifth stage: the project plan's §1.2 shared-memory state
+object plus the retry loop that routes a Runner failure back into the Coder as
+feedback. Four design calls handed down rather than left open — plain Python
+over LangGraph (§1.3 recommends it, but at this slice the graph is three nodes
+and one edge, and CLAUDE.md says not to add graph machinery preemptively);
+`environment_error` stops immediately instead of consuming retries; the §2.1
+plateau guard; and `script_version`/`diff_from_previous` populated for real.
+Explicitly told: do NOT build the Critic, and if the loop fails to converge,
+report that honestly rather than tuning the test until it passes.
+
+**Result:** `orchestrator/{__init__,state,loop,pipeline}.py` + `README.md`, plus
+one backwards-compatible change to `coder/pipeline.py` (`run()` gained
+`feedback: str | None = None`, threaded into `writer.write()`; default `None`,
+so a direct `coder.pipeline` run is unaffected). Seven terminal verdicts.
+ruff/mypy --strict/pre-commit all pass; 118 assertions with no Docker and no API
+key, covering every verdict path, the plateau maths at and around the threshold,
+diff truncation, and state round-tripping.
+
+**The key test — the loop repaired a real runtime bug, first retry.** The
+historical `self.optimizer`-never-assigned bug was reintroduced into a *scratch
+copy* of the WRN script (valid Python, so `ast.parse` passes — precisely the
+failure class the loop exists for):
+```
+[probe] FAILED in 169.5s (exit 1)
+  AttributeError: '_StepDecayScheduler' object has no attribute 'optimizer'
+[triage] category: recoverable_error
+[decide] RETRY - triage says the fault is in the generated script
+[plateau] v1 vs v2 line similarity 0.4079 (stop at >= 0.98)
+[probe] PASSED in 2000.8s (exit 0)
+[loop] VERDICT: success - finished after 2 attempt(s), 1/2 retries used
+```
+Verified directly in `state.json`: `verdict: success`, `retry_count: 1`,
+`script_version: 2`, `critic_output: null`, 7 history entries. The fix wasn't
+luck — v2 kept the class triage named and did exactly what it was told.
+
+**Agent's own finding, worth more than the feature:** `autojunk=True` (the
+`SequenceMatcher` default) discards repeated lines and measured **0.9975 vs.
+0.7625** on the same pair — with the 0.98 threshold that is the difference
+between "plateaued, stop" and "keep going". Left off deliberately.
+
+**A real defect the loop surfaced, now fixed.** Attempt 2's probe took **2000 s
+vs. 169 s** — the regenerated script defaulted its data dir to
+`./<output-dir>/data` instead of `./data`, missed `runner/`'s shared cache mount,
+and re-downloaded 170 MB. Nothing failed, which is what makes it nasty: it
+silently costs twelve minutes, and a retry loop re-rolls that dice every
+regeneration while the stage budgets assume a warm cache. `runner/README.md` had
+called this exact risk "a convention, not a contract" — so the convention was
+made a contract: `--data-dir` added to `coder/`'s `REQUIRED_CLI_FLAGS` with the
+prompt requiring exactly `"./data"`, enforced by the same literal check as every
+other flag. (The committed script already complied; only the regeneration drifted.)
+
+**Honest limits:** convergence is proven for one injected bug on one paper. The
+retry regenerates the whole file rather than patching, so a fix can introduce a
+new defect, and nothing diffs semantics. `environment_error`/`timeout`/
+`untriaged_error`/`coder_failed` are verified against fakes only, never observed
+in the wild.
+
+---

@@ -148,11 +148,20 @@ host directory at `/workspace/data` — nested inside the `/workspace` mount, wh
 Docker allows because it orders mounts by path depth — turns that into one shared
 copy across all eight papers.
 
-That nesting depends on `./data`, which is a **convention, not a contract**: it
-is the default `coder/`'s prompt happens to produce, and it is not in
-`REQUIRED_CLI_FLAGS`. If a future paper's script uses a different directory name,
-the mount is simply unused and that paper's download lands in its own
-`/workspace` mount — slower, never broken. Nothing detects or depends on it.
+That nesting depends on the script defaulting `--data-dir` to `./data`. This
+README used to call that "a convention, not a contract" — and then the
+convention broke, exactly as predicted.
+
+Under `orchestrator/`'s retry loop, a regenerated script defaulted its data
+directory to `./<output-dir>/data` instead, missed the mount, and re-downloaded
+170 MB: the same `probe` stage took **2000 s instead of 169 s**. Nothing failed,
+which is what makes it nasty — it just silently costs twelve minutes, and a
+retry loop re-rolls that dice on every regeneration while these stage budgets
+assume a warm cache.
+
+So `--data-dir` is now **in `coder/`'s `REQUIRED_CLI_FLAGS`**, with the prompt
+requiring exactly `"./data"`, enforced by the same literal check as every other
+flag. It is a contract now.
 
 `runner/cache/` and `runner/output/` are both gitignored.
 

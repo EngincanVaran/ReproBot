@@ -6,7 +6,7 @@
 
 ## Project status
 
-Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), and `runner/` (Docker-sandboxed execution) are built.** Everything else — the Reader's architecture-notes extraction, the Critic, the Orchestrator, and the Coder↔Runner retry loop that would join the last two stages — is still design-only, described in [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md). The chain is proven end to end — a paper PDF goes through all four stages and comes out as a real training run inside Docker. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
+Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution), and `orchestrator/` (the Coder↔Runner retry loop) are built.** Still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md): the Reader's architecture-notes extraction, the **Critic** (nothing yet compares a reproduced number against the paper's claim), and the Report Generator. The chain is proven end to end and is now a loop — a failing script is triaged, fed back to the Coder, and regenerated. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
 
 ## Repository structure
 
@@ -16,6 +16,7 @@ ReproBot/
 ├── reader/                     # Markdown → structured claims/hyperparameters/data-pipeline JSON
 ├── coder/                      # reader JSON + paper Markdown → HuggingFace Trainer training script
 ├── runner/                     # executes a generated script in a Docker sandbox, triages the outcome
+├── orchestrator/               # shared-memory state + the Coder↔Runner retry loop
 ├── dataset/                    # 8 CIFAR-10 papers, ReproBot's first replication targets
 ├── papers/                     # 9 agent-framework reference papers (literature review)
 ├── docs/
@@ -58,9 +59,9 @@ Initial evaluation scope is deliberately narrow: **CIFAR-10 image-classification
 ## Setup
 
 ```bash
-uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --extra runner --group dev
+uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --extra runner --extra orchestrator --group dev
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 uv run pre-commit install
 ```
 
-See `ocr/README.md`, `reader/README.md`, `coder/README.md`, and `runner/README.md` for how to actually run each stage.
+See `ocr/README.md`, `reader/README.md`, `coder/README.md`, `runner/README.md`, and `orchestrator/README.md` for how to actually run each stage.

@@ -235,3 +235,7 @@ runner/output/
 # ReproBot: Runner's shared download caches, bind-mounted into every container
 # (CIFAR-10 is ~170 MB and HuggingFace/torch fetches land here too)
 runner/cache/
+
+# ReproBot: Orchestrator retry-loop state (state.json + every attempt's archived
+# script + per-attempt container logs)
+orchestrator/output/
