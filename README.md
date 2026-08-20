@@ -6,7 +6,7 @@
 
 ## Project status
 
-Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), and `runner/` (Docker-sandboxed execution) are built.** Everything else — the Reader's architecture-notes extraction, the Critic, the Orchestrator, and the Coder↔Runner retry loop that would join the last two stages — is still design-only, described in [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md). Note that `runner/`'s Docker path is written and lint/type/unit-verified but has **never actually built an image or run a container** — see `runner/README.md`'s Status section. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
+Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), and `runner/` (Docker-sandboxed execution) are built.** Everything else — the Reader's architecture-notes extraction, the Critic, the Orchestrator, and the Coder↔Runner retry loop that would join the last two stages — is still design-only, described in [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md). The chain is proven end to end — a paper PDF goes through all four stages and comes out as a real training run inside Docker. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
 
 ## Repository structure
 

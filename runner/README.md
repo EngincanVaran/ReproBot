@@ -112,12 +112,17 @@ So every run:
 
 Defaults, overridable with a repeatable `--timeout MODE=SECONDS`:
 
-| Stage | Budget | Why |
+Budgets are **calibrated against a measured run**, not estimated (see Status):
+
+| Stage | Budget | Measured / reasoning |
 |---|---|---|
-| `probe` | 1200 s | 2 optimizer steps, plus the cold-cache CIFAR-10 download (~170 MB) that this stage pays for everyone |
-| `smoke` | 2400 s | 1 epoch over 512 samples plus an eval pass |
-| `capped` | 7200 s | 5 epochs over 512 samples on CPU |
-| `full` | 86400 s | the paper's real setup; only ever run deliberately |
+| `probe` | 2700 s | ~67 s of compute, but a *cold* cache adds the ~170 MB CIFAR-10 fetch — measured at 1707 s on a slow connection. An earlier 1200 s guess would have timed out on the very first run, which looks exactly like a hung script. |
+| `smoke` | 900 s | ~134 s equivalent at the measured 5.256 samples/s, warm cache |
+| `capped` | 1800 s | ~525 s equivalent, warm cache |
+| `full` | 86400 s | Not a real ceiling — a marker that this mode is GPU-only. At the measured CPU throughput it would take **~22 days**. |
+
+For reference, the containerised `probe` with a warm cache completed in **166 s**,
+comfortably inside its budget.
 
 A second, subtler trap is handled too: on the timeout path `TimeoutExpired`
 carries whatever partial output it had collected as **raw bytes even in text
@@ -365,10 +370,25 @@ thing that finally executes torch code.
 
 ## Status
 
-**Docker Desktop was blocked on a macOS privileged-access password dialog for
-the entire session, so `docker build` and `docker run` could not be exercised.**
-Following `ocr/README.md`'s precedent for Docling/MinerU, here is exactly what is
-verified and what is written-but-unrun.
+**Verified end to end in Docker.** The image builds and a real container runs a
+real generated script to completion:
+
+```
+[docker] built reprobot-runner:latest in 224.2s
+  [probe] budget: 2700s
+  [probe] captured 1124 chars stdout, 2218 chars stderr (full, untruncated)
+  [probe] metrics (file): claim_id=c34 test error=92.1875 % (train_accuracy=14.45)
+  [probe] PASSED in 166.4s (exit 0)
+[done] 1 paper(s) passed, 0 failed their stages, 0 could not be run at all
+```
+
+`runner_output.json` came back `status: success` with `triage: null` — no API call
+is spent on the success path, as designed.
+
+**The shared dataset cache is worth what it costs.** The same `probe` took
+**1774 s** natively with a cold cache and **166 s** in the container with a warm
+one. Nearly all of that difference is the one-time ~170 MB CIFAR-10 download,
+which every one of the 8 papers would otherwise repeat.
 
 ### Verified
 
@@ -396,7 +416,8 @@ verified and what is written-but-unrun.
   whether `full` is GPU-only.
 
   What it does *not* verify: any of this happening **inside a container**. The
-  script ran on the host. Everything Docker-shaped below is still unproven.
+  script ran on the host — the containerised run above is the one that proves
+  the Docker path itself.
 - `ruff check`, `ruff format --check`, `mypy --strict runner/`, and
   `pre-commit run --all-files` all pass.
 - **110 assertions** over every daemon-free function, against synthetic input:
@@ -434,7 +455,7 @@ verified and what is written-but-unrun.
 
 - `docker build` of this image has **never been run**. The pins are confirmed to
   exist and the instructions parse, but no layer has actually been built, so
-  apt/pip resolution inside the image is unproven.
+  apt/pip resolution inside the image is exercised by the 224.2 s build above.
 - `docker run` has **never been run**, so nothing here has yet driven a real
   container: the mounts (including the nested `/workspace/data`), the working
   directory, and `bash reproduce.sh <mode>` reaching the generated script are all

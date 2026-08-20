@@ -695,3 +695,44 @@ pin is not arbitrary. Recorded in CLAUDE.md's Tooling section so nobody
 re-derives it.
 
 ---
+
+### End-to-end verification — the full chain runs, in and out of Docker
+
+**Native run first (Docker still blocked):** `reproduce.sh probe` executed in a
+throwaway 3.11 venv using the legacy pin-set above. **Exit 0**, and it wrote a
+`metrics.probe.json` matching `coder/`'s documented contract exactly — all
+twelve keys, `metric`/`unit` carried verbatim from claim c34. Measured: 48.7 s
+train (256 samples, 5.256 samples/s), ~19 s across two eval passes, ~67 s
+compute total — inside **1774 s** of wall clock, because the cold CIFAR-10
+download took the other ~1707 s.
+
+**That measurement caught a real bug in `runner/`.** Stage budgets had been
+estimated, with the cold download folded into `probe` at 1200 s. The real run
+took 1774 s, so the very first Docker run would have timed out — and a timeout
+looks exactly like a hung script, so it would have been triaged
+`recoverable_error`, sending the Coder to fix a bug that does not exist.
+Budgets recalibrated from the measurement (probe 2700 / smoke 900 / capped
+1800), and `runner/cache/datasets/` seeded with the already-downloaded CIFAR-10
+so the first container run starts warm.
+
+**Then Docker came up and the container path was verified for real:**
+```
+[docker] built reprobot-runner:latest in 224.2s
+  [probe] PASSED in 166.4s (exit 0)
+  [probe] metrics (file): claim_id=c34 test error=92.1875 %
+[done] 1 paper(s) passed, 0 failed, 0 could not be run at all
+```
+`runner_output.json`: `status: success`, `triage: null` — confirming no API call
+is spent on the success path. Logs captured to separate stdout/stderr files.
+
+**The cache design paid for itself immediately:** the same `probe` took 1774 s
+natively with a cold cache and **166 s** in the container with a warm one. That
+~1600 s delta is the one-time download all 8 papers would otherwise repeat.
+
+**Status after this:** the full chain — PDF → `ocr/` → `reader/` → `coder/` →
+`runner/` — is proven end to end. What does *not* exist yet is the loop:
+`coder/base.py` accepts `feedback`, `runner/triage.py` emits `suggested_fix`,
+and nothing connects them. That is the next increment and the project's actual
+differentiator.
+
+---
