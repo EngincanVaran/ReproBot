@@ -225,3 +225,6 @@ ocr/output/
 
 # ReproBot: generated Reader claims output (JSON extracted from ocr/ Markdown)
 reader/output/
+
+# ReproBot: generated Coder output (training scripts written from reader/ JSON)
+coder/output/

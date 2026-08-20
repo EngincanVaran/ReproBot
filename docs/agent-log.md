@@ -519,4 +519,113 @@ stray page-break heading) and the ImageNet hyperparameters gap before
 starting `architecture_notes.py` — not blocking, but cheap and now
 concretely diagnosed rather than theoretical.
 
+**Superseded by Engincan's redirect:** he chose to move on to the Coder and
+Runner stages instead of fixing these first. The three findings stay logged
+here as known, diagnosed, unfixed work — not silently dropped.
+
+---
+
+### Research Agents (x2, parallel) — scope `coder/` and `runner/` first slices
+
+**Asked:** Two independent scoping passes, run concurrently since neither
+depends on the other's output. (a) `coder/`: smallest useful slice that
+turns `reader/output/<paper>.json` into one self-contained HuggingFace
+`Trainer` script. (b) `runner/`: Docker sandbox design, AutoReproduce's
+two-stage dry-run mechanic, CPU-feasible capped run, log truncation, Haiku
+triage, timeout enforcement. Both grounded in
+`docs/notes/coder-agent-precedents.md` §4 (treated as settled research, not
+re-derived) and project plan §2.3/§2.4.
+
+**Result (coder):** one Sonnet 5 tool-use call; hand-rolled `WideResNet`
+`nn.Module` rather than `AutoModelForImageClassification` (HF's built-in
+ResNets assume ImageNet's 224x224 7x7-conv+maxpool stem — wrong for CIFAR's
+32x32); `torchvision.datasets.CIFAR10` rather than `datasets.load_dataset`
+(the paper's 4px-reflection-pad augmentation maps directly onto
+`torchvision.transforms`, and it keeps `pyarrow` out of the future Runner
+image); `ast.parse()` as a free pre-write syntax gate; `max_tokens` starting
+at 8192+ given this repo's two prior `stop_reason: max_tokens` incidents.
+
+**Result (runner):** `python:3.11-slim` + CPU torch wheel (NOT
+`pytorch/pytorch`, which drags in CUDA layers) — worth being precise that
+the container runs its own **Linux** Python, so the host's Intel-macOS +
+3.13 trap simply doesn't apply inside it; this stage is that trap's
+*solution*, not another instance of it. Script bind-mounted in (not `COPY`d,
+since the Coder regenerates it every retry — a bind mount keeps the image
+static and cacheable); results bind-mounted out (survives a timeout-kill,
+unlike `docker cp`). Three escalating stages, each just a differently-flagged
+invocation of the same script: shape probe → structural dry run → capped
+run. Log truncation head-and-tail (~8k chars: first 2k catches import/setup
+failures, last 6k catches the traceback), full log always kept on disk.
+Haiku called **only** to disambiguate a genuine non-timeout failure
+(`recoverable_error` vs `environment_error`) — success and timeout are both
+determined mechanically, saving an API call on the common path. Timeout via
+host-side `subprocess.run(timeout=...)` plus an explicit `docker kill`,
+since `TimeoutExpired` only kills the `docker run` *client* while the
+container keeps running inside `dockerd` (and no native `docker run
+--timeout` flag exists).
+
+**Reconciliation needed (the two agents disagreed):** each independently
+proposed a different `metrics.json` schema — Coder's claim-linked
+(`claim_id`/`metric`/`unit`/`value`), Runner's training-diagnostics-focused
+(`train_loss`/`epochs_completed`/...). Merged into one 12-key shape carrying
+both, with `metric`/`unit` copied verbatim from the targeted claim so a
+future Critic can diff against `reported_value` with no unit conversion.
+
+**Blocking prerequisite found:** the Docker daemon is not running on this
+machine (`docker --version` works, v29.4.1; `docker info` and `docker run
+hello-world` both fail to connect to the socket). Docker Desktop must be
+started before `runner/` can be built or tested.
+
+---
+
+### Coding Agent — build `coder/`
+
+**Asked:** Implement the scoped design as a production-ready stage, with one
+change Engincan requested directly: the Coder should read **the paper itself**
+alongside `reader/`'s JSON. Rationale — `reader/` has no `architecture_notes`
+stage yet, so the architecture description exists only in the OCR Markdown;
+passing both grounds the architecture in the paper's real text instead of
+pretrained knowledge, and closes exactly the gap the earlier scoping pass had
+flagged as its open question #2. Both inputs are only ~18k tokens combined,
+so no retrieval machinery was needed. Verify with ruff/mypy --strict/
+pre-commit, then actually run against Wide Residual Networks.
+
+**Result:** `coder/{__init__,base,script_writer,pipeline}.py` + `README.md`;
+`pyproject.toml` (`coder` extra + packages), `.gitignore`, and
+`.pre-commit-config.yaml` (mypy `files:` widened to `^(ocr|reader|coder)/`)
+updated. ruff/mypy --strict/pre-commit all pass.
+
+**Real run, verified independently rather than taken on the agent's word:**
+346-line script, `stop_reason=tool_use` (not `max_tokens`), both gates
+passed, 0 missing CLI flags, 9 hyperparameters, 7 assumptions recorded.
+Direct inspection of the generated `train.py` confirms: correct WRN
+(`n=(depth-4)//6`, widths `16/16k/32k/64k`, pre-activation BN-ReLU-Conv
+B(3,3), Kaiming init); all 8 required flags with the paper's real values as
+defaults; `torchvision` + `Pad(4, padding_mode="reflect")`; the exact 12-key
+metrics contract with `"test error"`/`"%"` verbatim from c34. **Regime
+matching — the thing most likely to silently reproduce the wrong number —
+is correct**: CIFAR milestones `[60,120,160]` γ=0.2, not SVHN's
+`[80,120]` γ=0.1; no dropout; mean/std normalization, not ZCA. Unprompted
+nice touch: it rescales the LR milestones proportionally when `--epochs` is
+reduced, so a Runner smoke test still gets a sensible schedule.
+
+**Two findings worth keeping:**
+1. **Intermittent tool-field leak (worked around).** In roughly half the
+   observed calls the model serialized later tool fields as literal
+   `<parameter name="...">` text *inside* an earlier field, twice swallowing
+   `script_content` entirely. `_recover_leaked_fields()` splits them back
+   out deterministically, restricted to the 8 known field names so `<`/`>`
+   inside generated code can't false-trigger. Free, but a workaround for a
+   model-behavior quirk, not a fix — worth revisiting if it changes.
+2. **A real bug in a generated script that the gates cannot catch.** One run
+   produced a `_NoOpScheduler` whose `get_last_lr()` reads
+   `self.optimizer.param_groups`, but the class never sets `self.optimizer`
+   — an `AttributeError` the moment `Trainer` logs the LR. `ast.parse` proves
+   a script *parses*, not that it *runs*. Deliberately not fixed with a third
+   static-analysis gate: this is precisely the failure class the Runner
+   exists to catch, and it's concrete local evidence for what
+   `coder-agent-precedents.md` already argues from AutoReproduce's ablation
+   (dropping the debug loop barely moved their alignment score but nearly
+   tripled their performance gap). Not present in the final committed script.
+
 ---

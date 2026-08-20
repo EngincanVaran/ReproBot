@@ -10,7 +10,7 @@ repos:
     rev: v2.3.0
     hooks:
       - id: mypy
-        files: ^(ocr|reader)/
+        files: ^(ocr|reader|coder)/
         additional_dependencies:
           - "anthropic>=0.69"
           - "python-dotenv>=1.0"

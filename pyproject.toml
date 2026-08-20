@@ -36,6 +36,16 @@ reader = [
     "anthropic>=0.69",
     "python-dotenv>=1.0",
 ]
+# coder/ (Claude tool-use over reader/'s JSON + ocr/'s Markdown) has the same
+# dependency shape as reader/ and, importantly, does NOT need torch: it only
+# *writes* a training script, it never executes one. Keeping torch out is what
+# lets this stage stay in the managed lock on the Intel-macOS dev machine (see
+# the note above); the generated script's torch/torchvision/transformers
+# dependencies belong to the future runner/ Docker image, not to this project.
+coder = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
 
 [dependency-groups]
 dev = [
@@ -49,7 +59,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ocr", "reader"]
+packages = ["ocr", "reader", "coder"]
 
 [tool.ruff]
 line-length = 100
@@ -64,6 +74,14 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.13"
 strict = true
+# coder/output/ holds GENERATED training scripts. They are standalone artifacts
+# meant to run inside the future runner/ Docker image against torch/torchvision/
+# transformers — none of which are (or can be) installed here, per the Intel-macOS
+# platform trap above — and they are deliberately written in plain untyped Python,
+# not to this project's --strict standard. They are gitignored, and their
+# correctness gate is coder/pipeline.py's ast.parse plus the future Runner, not
+# mypy. Without this, `mypy --strict coder/` recurses into them and fails.
+exclude = ["^coder/output/"]
 
 [[tool.mypy.overrides]]
 module = "pypdfium2.*"

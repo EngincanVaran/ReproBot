@@ -6,14 +6,15 @@
 
 ## Project status
 
-Implementation has started, narrowly: **`ocr/` (PDF extraction) and `reader/` (claims extraction) are built and verified.** Everything else — the rest of the Reader's extraction (hyperparameters, architecture, data pipeline), Coder, Runner, Critic, Orchestrator — is still design-only, described in [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md). Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
+Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), and `coder/` (training-script generation) are built and verified.** Everything else — the Reader's architecture-notes extraction, Runner, Critic, Orchestrator — is still design-only, described in [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md). Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
 
 ## Repository structure
 
 ```
 ReproBot/
 ├── ocr/                        # PDF → Markdown extraction (4 backends; pdfplumber + Claude VLM verified)
-├── reader/                     # Markdown → structured extraction (claims done; hyperparameters next)
+├── reader/                     # Markdown → structured claims/hyperparameters/data-pipeline JSON
+├── coder/                      # reader JSON + paper Markdown → HuggingFace Trainer training script
 ├── dataset/                    # 8 CIFAR-10 papers, ReproBot's first replication targets
 ├── papers/                     # 9 agent-framework reference papers (literature review)
 ├── docs/
@@ -56,9 +57,9 @@ Initial evaluation scope is deliberately narrow: **CIFAR-10 image-classification
 ## Setup
 
 ```bash
-uv sync --extra pdfplumber --extra vlm --extra reader --group dev
+uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --group dev
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 uv run pre-commit install
 ```
 
-See `ocr/README.md` and `reader/README.md` for how to actually run each stage.
+See `ocr/README.md`, `reader/README.md`, and `coder/README.md` for how to actually run each stage.
