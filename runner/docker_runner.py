@@ -73,14 +73,37 @@ CONTAINER_CACHE_DIR: Final[str] = "/cache"
 STAGE_ORDER: Final[tuple[str, ...]] = ("probe", "smoke", "capped", "full")
 
 # Per-stage wall-clock budgets, enforced independently so a hung cheap stage can
-# never eat the budget of the expensive one behind it. Sized for CPU-only
-# execution of a ~36M-parameter net, with the cold-cache CIFAR-10 download
-# (~170 MB) folded into the probe budget because that is the stage that pays it.
+# never eat the budget of the expensive one behind it.
+#
+# CALIBRATED AGAINST A REAL RUN, not estimated. `reproduce.sh probe` was executed
+# natively on the dev machine (8-core Intel Mac, WRN-28-10, ~36M params) and
+# reported, from the run's own metrics and Trainer output:
+#
+#     train_runtime            48.7 s   (256 samples, 1 epoch, 2 optimizer steps)
+#     train_samples_per_second  5.256
+#     eval passes              ~6.4 s (128 eval) + ~12.2 s (256-sample train-acc)
+#     total compute            ~67 s
+#     total wall clock         1774 s   <-- the other ~1707 s was the CIFAR-10
+#                                           download, on a slow connection
+#
+# That download is the whole story here. The previous budgets folded it into
+# `probe` at 1200 s, which the measured 1774 s would have BLOWN on the very first
+# run - a timeout that looks exactly like a hung script. `probe` therefore gets a
+# budget that tolerates a slow cold fetch; every later stage assumes `probe`
+# already paid it and the shared cache mount is warm.
+#
+# Extrapolating from 5.256 samples/s, warm: smoke ~134 s, capped ~525 s. Each
+# budget below is roughly 3-5x its measured cost, which is headroom for a slower
+# host, not an invitation to run something enormous.
+#
+# `full` is 50,000 samples x 200 epochs = ~1.9M seconds at this throughput, i.e.
+# about 22 DAYS on this CPU. Its budget is not a real ceiling - it is a marker
+# that this mode is GPU-only, and the 24 h figure only means anything on one.
 DEFAULT_STAGE_TIMEOUTS: Final[dict[str, int]] = {
-    "probe": 1200,  # 20 min: 2 optimizer steps + first-run dataset download
-    "smoke": 2400,  # 40 min: 1 epoch over 512 samples + an eval pass
-    "capped": 7200,  # 2 h: 5 epochs over 512 samples
-    "full": 86400,  # 24 h: the paper's real setup; only ever run deliberately
+    "probe": 2700,  # 45 min: ~67 s compute + a possibly slow cold CIFAR-10 fetch
+    "smoke": 900,  # 15 min: ~134 s measured-equivalent, warm cache
+    "capped": 1800,  # 30 min: ~525 s measured-equivalent, warm cache
+    "full": 86400,  # 24 h: GPU-only; ~22 days on this CPU, so never run it here
 }
 
 # Budget for the short-lived control commands (`docker info`, `image inspect`,

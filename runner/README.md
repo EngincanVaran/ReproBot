@@ -372,6 +372,31 @@ verified and what is written-but-unrun.
 
 ### Verified
 
+- **The generated script genuinely runs, and the stage budgets below are
+  calibrated against that run rather than estimated.** `reproduce.sh probe` was
+  executed natively on the dev machine (outside Docker, in a throwaway Python
+  3.11 venv — see CLAUDE.md's Tooling section for the narrow legacy pin-set that
+  makes that possible on an Intel Mac). It completed with **exit 0** and wrote a
+  `metrics.probe.json` matching the documented contract exactly, all twelve keys:
+
+  ```
+  train_runtime             48.7 s   (256 samples, 1 epoch, 2 optimizer steps)
+  train_samples_per_second   5.256
+  eval passes               ~6.4 s (128 eval) + ~12.2 s (256-sample train-acc)
+  total compute             ~67 s
+  total wall clock          1774 s   <- the other ~1707 s was the CIFAR-10 download
+  ```
+
+  Two things follow, and both changed the code. First, the cold dataset fetch
+  dominates everything else, so `probe`'s budget has to tolerate it (the earlier
+  1200 s guess would have timed out on the very first run, looking exactly like a
+  hung script) and the shared cache mount is load-bearing, not an optimisation.
+  Second, extrapolating 5.256 samples/s to `full` — 50,000 samples × 200 epochs —
+  gives roughly **22 days** on this CPU, which settles any ambiguity about
+  whether `full` is GPU-only.
+
+  What it does *not* verify: any of this happening **inside a container**. The
+  script ran on the host. Everything Docker-shaped below is still unproven.
 - `ruff check`, `ruff format --check`, `mypy --strict runner/`, and
   `pre-commit run --all-files` all pass.
 - **110 assertions** over every daemon-free function, against synthetic input:
