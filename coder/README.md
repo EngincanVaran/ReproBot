@@ -269,8 +269,36 @@ Output per paper (gitignored):
 ```
 coder/output/<paper>/
 ├── train.py             # the generated script (or train.py.invalid on gate 1 failure)
+├── reproduce.sh         # runnable wrapper: ./reproduce.sh [full|smoke]
 └── coder_output.json    # bookkeeping (or coder_output.failed.json)
 ```
+
+### `reproduce.sh` — the human-readable handle on a generated script
+
+Written **deterministically by `coder/pipeline.py`**, not by the model. A shell
+wrapper is pure templating from data already in hand (claim, hyperparameters,
+script path), so generating it in Python costs no tokens, cannot invent a flag
+`train.py` does not define, and cannot be mangled by the tool-field leak
+described under "Known issues".
+
+Its header is the audit trail: the targeted claim, every hyperparameter with the
+paper value it came from, and every assumption the Coder had to make because the
+paper did not state something. Reading it is the fastest way to answer "what did
+this actually decide, and where did each number come from" without opening the
+JSON.
+
+Two modes, and the difference between them is the point:
+
+```bash
+./reproduce.sh          # full — the real reproduction attempt
+./reproduce.sh smoke    # 1 epoch, 256 samples — proves it runs; accuracy is meaningless
+```
+
+`full` passes **no flags at all**, because every default in `train.py` is already
+the paper's own value. `smoke` is the shape `runner/` will drive, capped small
+enough to finish on a CPU. Both need torch/torchvision/transformers, which are
+deliberately absent from this repo's lock — run inside `runner/`'s image, or a
+throwaway venv (the script's own header carries the exact commands).
 
 `coder_output.json` deliberately does **not** duplicate `script_content` — the
 script lives at `script_path` and the JSON stays readable. `script_version: 1`
