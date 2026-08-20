@@ -46,6 +46,16 @@ coder = [
     "anthropic>=0.69",
     "python-dotenv>=1.0",
 ]
+# runner/ executes coder/'s generated scripts in a Docker sandbox, and is the
+# ANSWER to the platform trap above rather than another instance of it: torch
+# lives only inside runner/Dockerfile's image, whose own Linux CPython is
+# unaffected by the host's Intel-macOS/3.13 constraint. On the host this stage
+# shells out to the `docker` CLI via subprocess, so it needs no docker Python
+# SDK either - just the Anthropic SDK for the single failure-triage call.
+runner = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
 
 [dependency-groups]
 dev = [
@@ -59,7 +69,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ocr", "reader", "coder"]
+packages = ["ocr", "reader", "coder", "runner"]
 
 [tool.ruff]
 line-length = 100

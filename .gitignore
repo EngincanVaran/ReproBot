@@ -228,3 +228,10 @@ reader/output/
 
 # ReproBot: generated Coder output (training scripts written from reader/ JSON)
 coder/output/
+
+# ReproBot: Runner sandbox results (runner_output.json + full container logs)
+runner/output/
+
+# ReproBot: Runner's shared download caches, bind-mounted into every container
+# (CIFAR-10 is ~170 MB and HuggingFace/torch fetches land here too)
+runner/cache/

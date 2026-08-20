@@ -862,6 +862,10 @@ reader = [
     { name = "anthropic" },
     { name = "python-dotenv" },
 ]
+runner = [
+    { name = "anthropic" },
+    { name = "python-dotenv" },
+]
 vlm = [
     { name = "anthropic" },
     { name = "pypdfium2" },
@@ -879,15 +883,17 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'coder'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'reader'", specifier = ">=0.69" },
+    { name = "anthropic", marker = "extra == 'runner'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'vlm'", specifier = ">=0.69" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pdfplumber", marker = "extra == 'pdfplumber'", specifier = ">=0.11" },
     { name = "pypdfium2", marker = "extra == 'vlm'", specifier = ">=4.30" },
     { name = "python-dotenv", marker = "extra == 'coder'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'reader'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'runner'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'vlm'", specifier = ">=1.0" },
 ]
-provides-extras = ["pdfplumber", "vlm", "reader", "coder"]
+provides-extras = ["pdfplumber", "vlm", "reader", "coder", "runner"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -629,3 +629,69 @@ reduced, so a Runner smoke test still gets a sensible schedule.
    tripled their performance gap). Not present in the final committed script.
 
 ---
+
+### Coding Agent — build `runner/` (Docker path unproven)
+
+**Asked:** Implement the scoped Runner design, with one correction Engincan
+made directly: **`reproduce.sh <mode>` is the entire interface.** Runner never
+builds a `python` command and never passes a `--flag`, so it stays
+paper-agnostic — a future paper needing different arguments changes only its
+own `reproduce.sh`. The earlier flag-passing design is superseded. Told
+explicitly that the Docker daemon was blocked behind a macOS password prompt,
+and to verify everything daemon-independent rather than fake it or block.
+
+**Result:** `runner/{__init__,docker_runner,triage,pipeline}.py`, `Dockerfile`,
+`README.md`; `pyproject.toml`/`.gitignore`/`.pre-commit-config.yaml` updated.
+ruff/mypy --strict/pre-commit all pass (re-run independently, not taken on
+trust). 110 assertions over every daemon-free function, including
+`subprocess.run` monkeypatched end-to-end. The genuinely valuable ones: the
+timeout path issues `docker kill` against the exact `--name` it launched with;
+partial `TimeoutExpired` output arrives as raw **bytes** even in text mode and
+is decoded rather than crashing the handler reporting the timeout; a 150k-char
+stdout does not push stderr's traceback out of the truncated excerpt (with a
+control case showing it *does* if you combine streams before truncating); no
+API call is spent on success or on timeout. Image pins were verified over HTTP
+since they could not be verified by building.
+
+**Verification path taken: (b), the honest one.** No image was ever built and
+no container ever ran. `runner/README.md`'s Status section separates verified
+from unrun, following `ocr/README.md`'s docling/mineru precedent.
+
+**Caught in review — the agent got one thing wrong.** It read
+`coder/README.md`'s "Known issues" entry about a `_NoOpScheduler` bug and
+concluded that bug is in the committed script, so its report predicted the
+first `probe` run would fail. Checked directly: `grep -c "_NoOpScheduler"`
+returns **0**. That bug came from a *discarded* generation. The claim had
+propagated into `runner/README.md` and was corrected there. Worth noting as a
+delegation lesson: an agent reading a "Known issues" section can mistake
+historical findings for current state, and a claim about what's in a file is
+cheap to verify and should be.
+
+**Open, deliberately unfixed:** stage timeout budgets (probe 1200s / smoke
+2400s / capped 7200s) are estimates never checked against a real run; the
+container runs as root, which macOS Docker Desktop hides but a Linux host will
+not; `--memory`/`--cpus` are exposed but unset, because an arbitrary cap
+produces exit 137 that looks identical to a script crash and would be triaged
+as `recoverable_error`, sending the Coder to fix a bug that does not exist.
+
+---
+
+### Direct investigation (no subagent) — the Intel-mac torch trap is worse than documented
+
+**Why:** with Docker blocked, the fallback plan was to run the generated script
+natively in a Python 3.11 venv to get real timing numbers for Runner's budgets.
+
+**Found:** Python 3.11 does install torch on this host — but only `2.2.2`, the
+last Intel-mac wheel. Current `transformers` (5.x) requires torch >= 2.5 and,
+on finding 2.2.2, **does not error**: it silently disables the PyTorch backend
+and logs "Models won't be available", so an HF `Trainer` script fails
+confusingly rather than at import. torch 2.2.2 is also compiled against NumPy
+1.x and warns loudly under NumPy 2. One narrow legacy combination does work:
+`torch==2.2.2` + `transformers==4.46.3` + `accelerate<1.2` + `numpy<2`.
+
+**Why it matters:** it upgrades Docker from convenience to genuinely
+load-bearing for `runner/`, and it means the container's `transformers==4.46.3`
+pin is not arbitrary. Recorded in CLAUDE.md's Tooling section so nobody
+re-derives it.
+
+---
