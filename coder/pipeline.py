@@ -302,28 +302,64 @@ def _write_reproduce_script(
 #   python3.11 -m venv .venv && . .venv/bin/activate
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 #   pip install transformers accelerate
+# ---------------------------------------------------------------------------
+# This file is the ONLY interface runner/ uses. Runner picks a mode; it never
+# constructs a python command or passes a --flag. That keeps Runner paper-
+# agnostic: a future paper whose script needs entirely different arguments
+# changes only its own reproduce.sh, and Runner is untouched.
+#
+#   probe   is this script runnable at all?  (a couple of optimizer steps)
+#   smoke   does a whole epoch reach eval and write metrics?
+#   capped  does training actually learn?    (CPU-sized, minutes)
+#   full    the paper's real setup            (needs a GPU; hours)
+#
+# Each mode writes its own metrics file, so a cheap stage's numbers can never
+# be mistaken for a real run's. Modes are cumulative gates: run them in order
+# and stop at the first non-zero exit.
+# ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")"
 
 MODE="${{1:-full}}"
 
 case "$MODE" in
-  full)
-    # No flags: every default in {script_name} is already the paper's own value.
-    # This is the real reproduction attempt.
-    python {script_name}
-    ;;
-  smoke)
-    # Fast structural check - proves the script runs end to end and writes
-    # metrics.json. The resulting accuracy is NOT comparable to the paper.
+  probe)
+    # Stage 1. Two optimizer steps. Proves data -> model -> loss -> step works
+    # at all; catches shape/dtype errors in seconds. Accuracy is meaningless.
     python {script_name} \\
       --epochs 1 \\
       --max-train-samples 256 \\
+      --max-eval-samples 128 \\
+      --metrics-output metrics.probe.json
+    ;;
+  smoke)
+    # Stage 2. One full epoch over a small slice, so execution reaches the
+    # eval path and the metrics write that `probe` may exit before touching.
+    python {script_name} \\
+      --epochs 1 \\
+      --max-train-samples 512 \\
       --max-eval-samples 256 \\
       --metrics-output metrics.smoke.json
     ;;
+  capped)
+    # Stage 3. The cheapest run that carries real signal: on 512 examples a
+    # 36M-parameter net should overfit fast, so train accuracy climbing well
+    # above 10% (CIFAR-10 chance) means learning is wired up correctly.
+    # Eval accuracy here is NOT comparable to the paper's claim.
+    python {script_name} \\
+      --epochs 5 \\
+      --max-train-samples 512 \\
+      --max-eval-samples 256 \\
+      --metrics-output metrics.capped.json
+    ;;
+  full)
+    # Stage 4. No flags at all - every default in {script_name} is already the
+    # paper's own value. This is the only mode whose numbers are comparable to
+    # the paper's claim, and the only one that needs a GPU.
+    python {script_name}
+    ;;
   *)
-    echo "usage: $0 [full|smoke]" >&2
+    echo "usage: $0 [probe|smoke|capped|full]" >&2
     exit 2
     ;;
 esac

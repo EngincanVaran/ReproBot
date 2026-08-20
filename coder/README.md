@@ -287,18 +287,33 @@ paper did not state something. Reading it is the fastest way to answer "what did
 this actually decide, and where did each number come from" without opening the
 JSON.
 
-Two modes, and the difference between them is the point:
+**This file is the only interface `runner/` uses.** Runner picks a mode; it never
+builds a `python` command and never passes a `--flag`. That is what keeps Runner
+paper-agnostic — a future paper whose script needs entirely different arguments
+changes only its own `reproduce.sh`, and `runner/` is untouched. The contract
+narrows from "eight CLI flags spelled exactly right" to "four mode names".
 
 ```bash
-./reproduce.sh          # full — the real reproduction attempt
-./reproduce.sh smoke    # 1 epoch, 256 samples — proves it runs; accuracy is meaningless
+./reproduce.sh probe    # 2 optimizer steps  — does anything run at all?
+./reproduce.sh smoke    # 1 full epoch       — does it reach eval + write metrics?
+./reproduce.sh capped   # 5 epochs, 512 imgs — does it actually learn?
+./reproduce.sh full     # no flags           — the paper's real setup
 ```
 
-`full` passes **no flags at all**, because every default in `train.py` is already
-the paper's own value. `smoke` is the shape `runner/` will drive, capped small
-enough to finish on a CPU. Both need torch/torchvision/transformers, which are
-deliberately absent from this repo's lock — run inside `runner/`'s image, or a
-throwaway venv (the script's own header carries the exact commands).
+The modes are cumulative gates: run them in order, stop at the first non-zero
+exit. Each writes its **own** metrics file (`metrics.probe.json`,
+`metrics.smoke.json`, ...) so a cheap stage's numbers can never be mistaken for a
+real run's.
+
+`capped` is the one that carries real signal on a CPU: on 512 examples a
+36M-parameter net should overfit fast, so **train** accuracy climbing well above
+10% (CIFAR-10 chance) means learning is wired up correctly. Its *eval* accuracy
+is not comparable to the paper's claim — only `full` is, and only `full` needs a
+GPU.
+
+All modes need torch/torchvision/transformers, deliberately absent from this
+repo's lock — run inside `runner/`'s image, or a throwaway venv (the script's own
+header carries the exact commands).
 
 `coder_output.json` deliberately does **not** duplicate `script_content` — the
 script lives at `script_path` and the JSON stays readable. `script_version: 1`
