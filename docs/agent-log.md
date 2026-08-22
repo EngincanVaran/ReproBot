@@ -797,3 +797,70 @@ new defect, and nothing diffs semantics. `environment_error`/`timeout`/
 in the wild.
 
 ---
+
+### Coding Agent — complete the Reader: `method_summary` + `architecture_notes`
+
+**Asked:** Build the two §1.2 fields never implemented. Schema for
+`architecture_notes` specified up front (`model_name`, `overall_structure`,
+`components[]`, `key_equations`, `depth_or_scale`, `unstated_details`), with
+`data_pipeline`'s "deliberately does not guess" discipline carried over and
+sharpened: code has to run, so an invented channel count trains the *wrong
+network* and reports a number for it. Told to verify against Network In Network
+specifically — the hard case, custom `mlpconv`, no dimensions in-paper — and to
+report honestly if it invented anything.
+
+**Result:** both extractors built and wired in (5 stages now). NIN came out
+clean: the three-mlpconv + global-average-pooling structure read off the
+Figure 2 block, equation (2) verbatim, 12 `unstated_details`, **zero invented
+numbers**, quoting the paper's own deferral ("the detailed settings of the
+parameters are provided in the supplementary materials"). Final NIN output: 12
+claims, 17 hyperparameters, 4 datasets, 7 architecture components, 279-word
+method summary, 4 flags after 3 passes.
+
+**The agent corrected the orchestrator, and was right.** The task brief asserted
+Wide Residual Networks states `depth = 6N + 4`. It does not — verified
+independently by grepping the Markdown: the paper gives only Table 1's symbolic
+`N` and the `WRN-n-k` naming convention. That formula is community knowledge.
+The extractor refused to supply it and said so, and on a later pass the
+validator independently re-checked and confirmed it absent. Worth recording
+because the generated `train.py` from the earlier Coder run *asserts* that
+formula — it came from the model's priors, not the paper. That silent
+substitution is precisely what this stage exists to surface.
+
+**Fix applied on review — `key_equations` was actively misleading.** It returned
+three bare LaTeX strings for NIN: conventional convolution, mlpconv, and maxout.
+Indistinguishable, so a Coder had three plausible specifications and would have
+confidently implemented one. Instructing the model in the prompt to "skip
+baseline equations" did not work — it kept returning them. Forcing the *schema*
+to carry a role did: each entry is now an object with `latex`/`label`/`defines`/
+`is_own_method`, and the run reports "3 (1 defining this paper's own method, 2
+shown for contrast)". Three plausible specs is worse for a code generator than
+none at all.
+
+**The agent's own report was inaccurate about what it changed** — it said it
+left `claims.py`/`hyperparameters.py`/`data_pipeline.py`/`validator.py`
+untouched; git showed all four modified. It had refactored every call site onto
+a new shared `reader/tooluse.py`. The refactor is *better* than what it
+described (hardening lands once rather than six times), but the mismatch meant
+its verification claims could not be trusted, so the full pipeline was re-run
+directly. Delegation lesson, same shape as the earlier `_NoOpScheduler` miss: an
+agent's description of its own diff is a claim, and `git diff` is cheap.
+
+**That re-run proved the hardening's worth immediately.** `reader/tooluse.py`
+handles three silent failure modes it found — `max_tokens` truncation, an
+all-empty payload, and a *double-encoded* tool input where the model returns the
+whole payload as a JSON string under one key on a clean `stop_reason: tool_use`.
+The last one fired live during verification:
+```
+[data_pipeline] tool input arrived double-encoded (whole payload as a JSON
+string under 'datasets') - unwrapped it; the extraction below is real, not empty
+[data_pipeline] datasets extracted: 4
+```
+Before the fix that was a silent `0 datasets` on a clean run — indistinguishable
+from a paper that genuinely had none.
+
+**Open:** `hyperparameters.sources_examined` is still empty and is now costing
+retry budget, since the validator flags it every run. Cost has risen materially
+— five extractors plus a validator inside a retry loop, ~3 passes per paper.
+
+---

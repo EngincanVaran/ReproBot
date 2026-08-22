@@ -21,13 +21,13 @@ This module is an importable extraction step, not a standalone script -
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from anthropic import Anthropic
-from anthropic.types import Message, ToolChoiceToolParam, ToolParam
 from loguru import logger
 
 from reader.base import Extractor
+from reader.tooluse import as_list, request_tool_use
 
 MODEL = "claude-sonnet-5"
 
@@ -168,17 +168,6 @@ class HyperparametersExtraction:
     sources_examined: list[str]
 
 
-def _tool_input(message: Message) -> dict[str, object]:
-    for block in message.content:
-        if block.type == "tool_use":
-            return block.input
-    raise RuntimeError("Claude did not call the record_hyperparameters tool")
-
-
-def _as_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
-
-
 def _parse_hyperparameter(raw: object) -> Hyperparameter:
     if not isinstance(raw, dict):
         raise ValueError(f"Expected a hyperparameter object, got {raw!r}")
@@ -213,20 +202,19 @@ class HyperparametersExtractor(Extractor[HyperparametersExtraction]):
                 f"attempt."
             )
 
-        message = client.messages.create(
+        payload = request_tool_use(
+            client,
+            log_prefix="hparams",
             model=MODEL,
             max_tokens=8192,
-            tools=[cast(ToolParam, HYPERPARAMETER_TOOL)],
-            tool_choice=cast(
-                ToolChoiceToolParam, {"type": "tool", "name": "record_hyperparameters"}
-            ),
-            messages=[{"role": "user", "content": f"{prompt}\n\n---\n\n{markdown_text}"}],
+            tool=HYPERPARAMETER_TOOL,
+            user_content=f"{prompt}\n\n---\n\n{markdown_text}",
+            required_keys=("sources_examined", "hyperparameters"),
         )
-        payload = _tool_input(message)
 
-        sources_examined = [str(source) for source in _as_list(payload.get("sources_examined"))]
+        sources_examined = [str(source) for source in as_list(payload.get("sources_examined"))]
         hyperparameters = [
-            _parse_hyperparameter(raw) for raw in _as_list(payload.get("hyperparameters"))
+            _parse_hyperparameter(raw) for raw in as_list(payload.get("hyperparameters"))
         ]
 
         logger.info(f"  [hparams] sources examined ({len(sources_examined)}):")

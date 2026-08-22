@@ -17,13 +17,13 @@ extraction steps into one `reader_output.json`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from anthropic import Anthropic
-from anthropic.types import Message, ToolChoiceToolParam, ToolParam
 from loguru import logger
 
 from reader.base import Extractor
+from reader.tooluse import as_int, as_list, request_tool_use
 
 MODEL = "claude-sonnet-5"
 
@@ -163,17 +163,6 @@ class ClaimsExtraction:
     candidates_considered: int
 
 
-def _tool_input(message: Message) -> dict[str, object]:
-    for block in message.content:
-        if block.type == "tool_use":
-            return block.input
-    raise RuntimeError("Claude did not call the record_claims tool")
-
-
-def _as_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
-
-
 def _parse_claim(raw: object) -> Claim:
     if not isinstance(raw, dict):
         raise ValueError(f"Expected a claim object, got {raw!r}")
@@ -209,18 +198,21 @@ class ClaimsExtractor(Extractor[ClaimsExtraction]):
                 f"attempt."
             )
 
-        message = client.messages.create(
+        payload = request_tool_use(
+            client,
+            log_prefix="claims",
             model=MODEL,
             max_tokens=8192,
-            tools=[cast(ToolParam, CLAIM_TOOL)],
-            tool_choice=cast(ToolChoiceToolParam, {"type": "tool", "name": "record_claims"}),
-            messages=[{"role": "user", "content": f"{prompt}\n\n---\n\n{markdown_text}"}],
+            tool=CLAIM_TOOL,
+            user_content=f"{prompt}\n\n---\n\n{markdown_text}",
+            required_keys=("tables_examined", "candidates_considered", "claims"),
         )
-        payload = _tool_input(message)
 
-        tables_examined = [str(table) for table in _as_list(payload.get("tables_examined"))]
-        candidates_considered = int(payload.get("candidates_considered") or 0)  # type: ignore[call-overload]
-        claims = [_parse_claim(raw) for raw in _as_list(payload.get("claims"))]
+        tables_examined = [str(table) for table in as_list(payload.get("tables_examined"))]
+        candidates_considered = as_int(
+            payload.get("candidates_considered"), "claims", "candidates_considered"
+        )
+        claims = [_parse_claim(raw) for raw in as_list(payload.get("claims"))]
 
         logger.info(f"  [claims] tables examined ({len(tables_examined)}):")
         for table in tables_examined:

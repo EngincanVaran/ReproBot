@@ -1,13 +1,17 @@
 # reader/ — structured extraction pipeline
 
 Turns one paper's already-OCR'd Markdown (`ocr/output/vlm/<paper>.md`) into
-structured data — **claims** (the paper's own reported results),
+structured data — **method_summary** (what the paper proposes, in prose),
+**architecture_notes** (the model to build, and what the paper fails to
+specify about it), **claims** (the paper's own reported results),
 **hyperparameters** (its training configuration), and **data_pipeline**
 (dataset source, preprocessing, augmentation, reference URLs) — each
-source-grounded to a table/page or prose section, cross-checked against
-the paper by a validation step that can trigger a bounded retry loop. This
-is the Reader agent's complete first phase: everything the eventual Coder
-needs from a paper except architecture details (not yet built).
+source-grounded to a table/page, figure block, or prose section, cross-checked
+against the paper by a validation step that can trigger a bounded retry loop.
+Those five stages are the four `reader_output` fields the project plan's §1.2
+specifies (`architecture_notes` and `method_summary` completed the set), so
+this is now the Reader agent's full scope: everything the Coder needs from a
+paper.
 
 ## Class architecture
 
@@ -19,16 +23,21 @@ reader/base.py
 │    extract(markdown_text, client,            │
 │             feedback: str | None) -> ResultT  │
 └─────────────────────────────────────────┘
-           ▲              ▲               ▲
-           │              │               │
-┌──────────┴───┐  ┌───────┴────────┐  ┌────┴─────────────┐
-│ ClaimsExtractor │  │HyperparametersEx-│  │DataPipelineExtractor│
-│ name="claims"    │  │tractor            │  │name="data_pipeline"  │
-│                    │  │name="hyperparam- │  │                       │
-│ reader/claims.py    │  │eters"             │  │reader/data_pipeline.py│
-│                      │  │reader/hyperparam- │  │                        │
-│                       │  │eters.py            │  │                        │
-└─────────────────┘  └────────────────┘  └───────────────────┘
+           ▲
+           │  implemented once per reader_output field —
+           │  five stages, all reading the same Markdown,
+           │  none consuming another's output
+           │
+           ├── MethodSummaryExtractor       name="method_summary"
+           │     reader/method_summary.py
+           ├── ArchitectureNotesExtractor   name="architecture_notes"
+           │     reader/architecture_notes.py
+           ├── ClaimsExtractor              name="claims"
+           │     reader/claims.py
+           ├── HyperparametersExtractor     name="hyperparameters"
+           │     reader/hyperparameters.py
+           └── DataPipelineExtractor        name="data_pipeline"
+                 reader/data_pipeline.py
 
 reader/validator.py
 ┌─────────────────────────────────────────┐
@@ -38,7 +47,9 @@ reader/validator.py
 │             client) -> ValidationResult        │
 │  (iterates `results` generically by stage        │
 │   name — does NOT hardcode which stages exist,    │
-│   so adding a 4th extractor needs zero changes here)│
+│   so adding an Nth extractor needs no code change  │
+│   here, only one more example parenthetical in the  │
+│   prompt so its cross-checks are actually asked for)  │
 └─────────────────────────────────────────┘
 
 reader/pipeline.py
@@ -56,11 +67,14 @@ reader/pipeline.py
 extraction stage uniformly — call `.extract()`, look up results by
 `.name`, and on a validation flag, route it back to whichever stage owns
 that name and call `.extract()` again with `feedback` set. A shared base
-class makes that loop's code stage-agnostic. Concretely: `data_pipeline.py`
-was added after this design existed, and required **zero changes** to
-`pipeline.py`'s loop logic, `validator.py`'s cross-checking, or the flag
-routing — just one new class and one new line in the default stage list.
-That's the whole point.
+class makes that loop's code stage-agnostic. Concretely: `data_pipeline.py`,
+then `method_summary.py` and `architecture_notes.py`, were each added after
+this design existed, and each required **zero changes** to `pipeline.py`'s
+loop logic, `validator.py`'s cross-checking, or the flag routing — just one
+new class and one new line in the default stage list. (The validator prompt
+does gain one example parenthetical per new stage — not to make cross-checking
+*possible*, which it already is, but to make it *asked for*.) That's the whole
+point.
 
 ## The retry loop — now real, and proven to catch real bugs
 
@@ -72,7 +86,9 @@ ReaderPipeline.run(markdown_path, client)
         │
         ▼
   run every stage ONCE
-  (claims.extract(), hyperparameters.extract(), data_pipeline.extract())
+  (method_summary, architecture_notes, claims,
+   hyperparameters, data_pipeline — .extract() each;
+   stages are independent, order is only reading order)
         │
         ▼
   ┌──────────────────────────────────────────┐
@@ -135,6 +151,104 @@ and it did fix a genuine bug above — but "always converges to zero" is not
 a guarantee for large/complex papers with the current 3-pass cap. Worth
 revisiting (higher cap? tighter validator prompt?) once more papers have
 been run through it, not something to solve speculatively now.
+
+## `method_summary.py` — `MethodSummaryExtractor`
+
+The project plan's §1.2 `method_summary` field. The only stage whose output
+is prose rather than records: `problem` (what the paper attacks), `core_idea`
+(the central contribution — the mechanism, not just its name), `novelty`
+(what is new against the prior work the paper *itself* names), `summary` (one
+coherent paragraph, the §1.2 field proper), plus `sources_examined`.
+
+Consumers are the Coder — which needs to know what it is building before it
+reads `architecture_notes`' component list — and the eventual Report
+Generator.
+
+**Deliberately narrow, and the prompt says so explicitly:** no result numbers,
+no hyperparameters, no dataset preprocessing, no layer-level architecture
+spec. Not tidiness — every stage's output goes to `validator.py` *together*,
+so a summary that restates a number slightly differently from the stage that
+owns it manufactures a cross-check flag about a disagreement that was never
+real. Naming the architecture and its central mechanism in a sentence is
+correct; enumerating its filter sizes is not.
+
+## `architecture_notes.py` — `ArchitectureNotesExtractor`
+
+The other half of §1.2, and the higher-stakes one: its consumer is the Coder,
+which has to emit a real `nn.Module`, so this stage is graded on whether an
+engineer could write the model from it.
+
+`model_name`, `overall_structure` (prose: how the parts compose end to end),
+`components` (each with `name` / `role` / `specification` / `source`),
+`key_equations` (verbatim LaTeX, the paper's own numbering kept),
+`depth_or_scale`, `unstated_details`, `sources_examined`.
+
+**Figures are first-class source text.** `ocr/vlm_extract.py` renders every
+page image and transcribes figures in-line as bracketed `[Figure N: ...]`
+blocks — caption plus a description of what the figure depicts — and for
+architecture that block is frequently where the structure actually lives.
+Network In Network's *"three mlpconv layers and one global average pooling
+layer"* is stated in the Figure 2 block; the prose around it only gestures at
+the structure. The prompt directs the model at those blocks by name and
+requires citing them as sources.
+
+**`specification` is a string, never a number** — same reasoning as
+`hyperparameters.value`, sharper here: "not stated" and prose formulas ("a
+three-layer perceptron; the number of layers is flexible") have to survive
+verbatim instead of collapsing into a plausible-looking integer.
+
+**`key_equations` entries carry a role, and that is the point.** Each is an
+object: `latex` (verbatim, the paper's own `\tag` numbering kept), `label`,
+`defines` (one line on what it specifies), and `is_own_method`.
+
+That last field is load-bearing rather than decorative. A paper introducing a
+new layer almost always prints the conventional formulation — and often a
+rival's — right beside its own. Network In Network prints all three within two
+pages, and the first version of this extractor returned exactly that: three
+bare LaTeX strings, indistinguishable. Telling the model in the prompt to
+"skip baseline equations" did not work; it kept returning them. Making the
+schema *force* a role declaration did:
+
+```
+eq 1  [contrast only]   Conventional convolution + ReLU, shown for contrast
+eq 2  [IMPLEMENT THIS]  The mlpconv layer's per-patch MLP computation
+eq 3  [contrast only]   Maxout, a prior-work baseline contrasted against mlpconv
+```
+
+Three plausible specifications with no way to choose between them is worse
+for a code generator than no equations at all — it will confidently implement
+one of them. A consumer now filters on `is_own_method` and gets eq. (2) alone.
+A bare string from an older run is still parsed, but is marked
+`is_own_method=false`, which is the conservative reading.
+
+### `unstated_details` — required, not optional
+
+This is the field the stage exists for. It lists, explicitly, every
+architectural detail needed to write working code that the paper does **not**
+state — per-layer filter counts, kernel sizes, strides, pooling windows, MLP
+widths, initialization — including details deferred to supplementary material
+or to a citation without numbers, quoted in the paper's own wording.
+
+Same "deliberately does not guess" discipline `data_pipeline.py` established,
+with a higher stake, and the prompt spells out why: **code has to actually
+run.** A wrong-but-plausible channel count does not fail loudly — it produces
+a model that trains happily and reports a number for the *wrong network*,
+which is strictly worse than a gap labelled as a gap. So the gap gets
+surfaced loudly (an empty `unstated_details` even logs a `warning`, because a
+paper that fully specifies its architecture is rare) instead of being silently
+filled in.
+
+**Honest limitation:** this stage cannot make a paper say what it does not
+say. For Network In Network it correctly reports that the main text never
+gives filter counts or kernel sizes — the paper defers them to supplementary
+material this pipeline never sees. That is the *right* output, but it is not a
+buildable spec: the Coder still has to resolve those gaps some other way
+(a `depth_or_scale` formula, a reference repo from `data_pipeline.reference_urls`,
+a documented assumption, or a human). Closing them automatically would need
+the same paper-lineage mechanism `data_pipeline.py`'s citation-deferral gap
+needs — see `docs/notes/coder-agent-precedents.md` — which is out of scope
+here. What this stage guarantees is that the gap is *visible* rather than
+invented; it does not guarantee the gap is filled.
 
 ## `claims.py` — `ClaimsExtractor`
 
@@ -235,7 +349,10 @@ uv run python -m reader.pipeline --input ocr/output/vlm --output somewhere/else
 ```
 
 Output: `reader/output/<paper>.json` (gitignored) —
-`{ claims, hyperparameters, data_pipeline, validation: { flags, attempts, retried_stages } }`.
+`{ method_summary, architecture_notes, claims, hyperparameters, data_pipeline,
+validation: { flags, attempts, retried_stages } }`. Keys are one per stage
+name, written from the results dict, so the JSON grows a key when a stage is
+added and downstream consumers (`coder/`) read them by name.
 
 ## Dependency choice
 
@@ -257,6 +374,14 @@ all four Claude calls in `reader/` (not just the one that broke — all four
 have the same unbounded-output risk for a large enough paper). Same class
 of bug already hit once before in `ocr/vlm_extract.py`.
 
+Because that class of bug is silent by construction, `method_summary.py` and
+`architecture_notes.py` additionally check `message.stop_reason` and
+`logger.error` when it is `max_tokens`, so a truncated call announces itself
+instead of being diagnosed after the fact. **Open follow-up:** the four older
+calls (`claims`, `hyperparameters`, `data_pipeline`, `validator`) still don't
+check it — same four-line guard, deliberately left out of the slice that
+introduced it to keep the diff reviewable.
+
 ## Status
 
 Verified end-to-end against two papers:
@@ -270,7 +395,82 @@ Verified end-to-end against two papers:
   complex paper (8 flags remained after the 3-pass cap) — see "Honest
   limitation" above.
 
-Not yet built: `architecture_notes.py` (next slice — needed once Coder
-moves past stock-architecture papers like Wide ResNet to something like
-Network In Network's custom `mlpconv` layer), and any auto-resolution for
-`cross-check: ...` style flags that don't route to a single stage.
+`method_summary` and `architecture_notes` were then added and run end to end
+against the same two papers, which is where the two malformed-payload issues
+in "Known issues, open" below surfaced. What the new stages produced:
+
+- **Network In Network** (the hard case — a custom `mlpconv` layer whose
+  dimensions the paper never gives). `architecture_notes` captured the
+  three-mlpconv-layers-plus-global-average-pooling structure, eq. (2)
+  verbatim with its `\tag{2}`, `depth_or_scale` correctly reporting that the
+  paper gives no closed-form rule (quoting *"The number of layers in both NIN
+  and the micro networks is flexible"*), and **11 `unstated_details`** — filter
+  counts, receptive-field size, pooling window, initialization, plus the
+  paper's own deferral, quoted: *"The detailed settings of the parameters are
+  provided in the supplementary materials"*. No invented numbers anywhere in
+  the output.
+- **Wide Residual Networks** (the near-stock case). 9 components over 19
+  sources: Table 1's per-group structure with exact widths (`[3×3, 16]` for
+  conv1, `16×k`/`32×k`/`64×k` for conv2–4), BN-ReLU-conv ordering, dropout
+  placement read off the Figure 1(d) block, avg-pool `[8×8]`, and the honest
+  note that Table 1 declares the final classification layer *"omitted for
+  clearance"*. `depth_or_scale` records the `WRN-n-k` naming convention **and
+  states that the paper gives no closed-form `n = 6N+4` relation** — which is
+  correct; the formula is not in this paper's text, and the validator
+  independently re-checked and confirmed it absent.
+
+Both papers ran the full 3 validation passes and finished with flags
+remaining (NIN 4, WRN 6), consistent with the "Honest limitation" above.
+Routing worked in both directions on the new stages: `architecture_notes` was
+re-run from a routed flag on both papers, `method_summary` on Wide ResNet.
+
+Still open: any auto-resolution for `cross-check: ...` style flags that don't
+route to a single stage, and the `unstated_details` gap itself (this stage
+reports the gap; nothing yet closes it — see `architecture_notes.py` above).
+
+## Known issues, open
+
+**Tool input arriving double-encoded (guarded in the two newest stages,
+unguarded in the older four).** Caught while verifying `architecture_notes`:
+`data_pipeline` returned *zero* datasets for Network In Network, three runs
+out of three, on a call whose `stop_reason` was a clean `tool_use`. Dumping
+the raw block showed the extraction had actually succeeded — the model had
+just emitted the whole payload as a JSON *string* under a single key
+(`{"datasets": "{\"datasets_examined\": [...], \"datasets\": [...]}"}`)
+instead of as the schema's object. Every `payload.get(...)` then missed,
+`_as_list()` turned each miss into `[]`, and the stage reported an empty
+result that looked like a clean run.
+
+`method_summary.py` and `architecture_notes.py` detect that shape, unwrap it,
+and `logger.warning` about it. `claims.py`, `hyperparameters.py`,
+`data_pipeline.py`, and `validator.py` do **not** yet — they will silently
+drop a good extraction if the model does this to them.
+
+**An all-empty tool payload, intermittently, on any stage.** A second, related
+shape: the tool call returns `stop_reason: tool_use` but with every required
+field missing, so the stage produces a structurally valid, completely empty
+result. Seen across three different stages in three consecutive runs —
+`data_pipeline` and then `claims` on Network In Network, `method_summary` on
+Wide Residual Networks — and not reproducible on demand (probing the same
+stage/paper pair directly returned good payloads both times). So: intermittent,
+model-side, and *not* specific to any one stage or prompt.
+
+The retry loop is what currently saves this, and it demonstrably does: in
+every case the validator flagged the empty extraction specifically ("the
+`method_summary` fields are all empty, despite the paper providing clear
+content for these"), `pipeline.py` routed the flag to that stage by name, and
+the re-run came back populated. That is the loop earning its keep on a failure
+mode it was not designed for. But it costs a full extra validation pass out of
+a budget of three, so it eats retry budget that should be going to real
+extraction errors.
+
+The proper fix for both shapes is one shared tool-use helper (unwrap +
+`stop_reason` check + a loud "required field missing" path, and probably an
+immediate single re-request on an empty payload rather than waiting for the
+validator) used by all six stages, replacing the six copies of
+`_tool_input`/`_as_list`. That is a refactor across every module in this
+package and belongs in its own commit, not smuggled into the one that found
+the bug. For now, the two newest stages report the diagnosis
+(`logger.error` naming exactly which keys were missing and which arrived) so
+the next occurrence is readable straight off the console instead of needing
+another raw-payload dump.

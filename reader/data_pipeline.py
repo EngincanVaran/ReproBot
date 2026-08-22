@@ -29,13 +29,13 @@ implements.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from anthropic import Anthropic
-from anthropic.types import Message, ToolChoiceToolParam, ToolParam
 from loguru import logger
 
 from reader.base import Extractor
+from reader.tooluse import as_list, request_tool_use
 
 MODEL = "claude-sonnet-5"
 
@@ -214,17 +214,6 @@ class DataPipelineExtraction:
     datasets: list[DatasetPipeline]
 
 
-def _tool_input(message: Message) -> dict[str, object]:
-    for block in message.content:
-        if block.type == "tool_use":
-            return block.input
-    raise RuntimeError("Claude did not call the record_data_pipeline tool")
-
-
-def _as_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
-
-
 def _parse_dataset(raw: object) -> DatasetPipeline:
     if not isinstance(raw, dict):
         raise ValueError(f"Expected a dataset pipeline object, got {raw!r}")
@@ -258,18 +247,23 @@ class DataPipelineExtractor(Extractor[DataPipelineExtraction]):
                 f"attempt."
             )
 
-        message = client.messages.create(
+        payload = request_tool_use(
+            client,
+            log_prefix="data_pipeline",
             model=MODEL,
             max_tokens=8192,
-            tools=[cast(ToolParam, DATA_PIPELINE_TOOL)],
-            tool_choice=cast(ToolChoiceToolParam, {"type": "tool", "name": "record_data_pipeline"}),
-            messages=[{"role": "user", "content": f"{prompt}\n\n---\n\n{markdown_text}"}],
+            tool=DATA_PIPELINE_TOOL,
+            user_content=f"{prompt}\n\n---\n\n{markdown_text}",
+            required_keys=("datasets_examined", "datasets"),
+            # `reference_urls` is schema-required but genuinely empty for papers
+            # that publish no code or dataset link (Network In Network has none),
+            # so an empty list here is an answer, not a malformed response.
+            may_be_empty_keys=("reference_urls",),
         )
-        payload = _tool_input(message)
 
-        datasets_examined = [str(entry) for entry in _as_list(payload.get("datasets_examined"))]
-        datasets = [_parse_dataset(raw) for raw in _as_list(payload.get("datasets"))]
-        reference_urls = [str(url) for url in _as_list(payload.get("reference_urls"))]
+        datasets_examined = [str(entry) for entry in as_list(payload.get("datasets_examined"))]
+        datasets = [_parse_dataset(raw) for raw in as_list(payload.get("datasets"))]
+        reference_urls = [str(url) for url in as_list(payload.get("reference_urls"))]
 
         logger.info(f"  [data_pipeline] datasets examined ({len(datasets_examined)}):")
         for entry in datasets_examined:

@@ -6,14 +6,14 @@
 
 ## Project status
 
-Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution), and `orchestrator/` (the Coder↔Runner retry loop) are built.** Still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md): the Reader's architecture-notes extraction, the **Critic** (nothing yet compares a reproduced number against the paper's claim), and the Report Generator. The chain is proven end to end and is now a loop — a failing script is triaged, fed back to the Coder, and regenerated. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
+Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution), and `orchestrator/` (the Coder↔Runner retry loop) are built.** `reader/` is now complete against its spec — method summary, claims, hyperparameters, architecture notes, and data pipeline. Still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md): the **Critic** (nothing yet compares a reproduced number against the paper's claim) and the Report Generator. The chain is proven end to end and is now a loop — a failing script is triaged, fed back to the Coder, and regenerated. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
 
 ## Repository structure
 
 ```
 ReproBot/
 ├── ocr/                        # PDF → Markdown extraction (4 backends; pdfplumber + Claude VLM verified)
-├── reader/                     # Markdown → structured claims/hyperparameters/data-pipeline JSON
+├── reader/                     # Markdown → structured method/architecture/claims/hyperparameters/data JSON
 ├── coder/                      # reader JSON + paper Markdown → HuggingFace Trainer training script
 ├── runner/                     # executes a generated script in a Docker sandbox, triages the outcome
 ├── orchestrator/               # shared-memory state + the Coder↔Runner retry loop

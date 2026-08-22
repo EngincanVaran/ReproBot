@@ -5,19 +5,22 @@ Pulled out of `reader/pipeline.py` so the pipeline's retry loop can call
 owning the validation prompt/tool/parsing itself. `results` is a dict keyed
 by extractor name (e.g. `{"claims": <ClaimsExtraction>, "hyperparameters":
 <HyperparametersExtraction>}`) rather than named parameters, so this stays
-generic as more extraction stages (`data_pipeline`, `architecture_notes`,
-...) are added later - this module never needs to change to support them.
+generic as more extraction stages are added later - this module's *logic*
+never needs to change to support them, only the prompt's per-stage example
+parentheticals, so the cross-checks it can already perform are actually asked
+for.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, cast
+from typing import Any
 
 from anthropic import Anthropic
-from anthropic.types import Message, ToolChoiceToolParam, ToolParam
 from loguru import logger
+
+from reader.tooluse import as_list, request_tool_use
 
 MODEL = "claude-sonnet-5"
 
@@ -28,8 +31,14 @@ mistakes before they propagate downstream.
 Below you are given:
 1. The full paper Markdown.
 2. A combined JSON object with the extractions already produced from it, \
-one entry per extraction stage (e.g. `claims`: the paper's own reported \
-results; `hyperparameters`: the paper's own training configuration; \
+one entry per extraction stage (e.g. `method_summary`: a prose summary of the \
+paper's own problem, core idea and novelty, deliberately carrying no result \
+numbers, hyperparameters, dataset detail or layer dimensions; \
+`architecture_notes`: the paper's own model architecture - components, key \
+equations, depth/width scaling - together with `unstated_details`, an explicit \
+list of architectural details the paper does NOT state, which is a required \
+finding rather than a gap in the extraction; `claims`: the paper's own \
+reported results; `hyperparameters`: the paper's own training configuration; \
 `data_pipeline`: the paper's own per-dataset preprocessing/augmentation/ \
 split and any reference URLs).
 
@@ -51,7 +60,8 @@ speculative concerns. If you find nothing wrong, return an empty list.
 For each issue, call out which field/extraction it relates to using the \
 extraction's key name from the JSON object followed by a colon and the \
 specific detail (e.g. "claims: c3", "hyperparameters: learning rate", \
-"data_pipeline: CIFAR-10"), or, if the issue is a genuine inconsistency \
+"data_pipeline: CIFAR-10", "architecture_notes: mlpconv layer", \
+"method_summary: novelty"), or, if the issue is a genuine inconsistency \
 BETWEEN two or more extractions rather than something owned by exactly one \
 of them, use "cross-check: " followed by which extractions are involved \
 (e.g. "cross-check: claims vs. hyperparameters"). Give a short, concrete \
@@ -79,7 +89,9 @@ VALIDATION_TOOL: dict[str, Any] = {
                             "description": (
                                 "Which field/extraction this concerns, e.g. 'claims: c3', "
                                 "'hyperparameters: learning rate', 'data_pipeline: "
-                                "CIFAR-10', or 'cross-check: claims vs. hyperparameters'."
+                                "CIFAR-10', 'architecture_notes: mlpconv layer', "
+                                "'method_summary: novelty', or 'cross-check: claims vs. "
+                                "hyperparameters'."
                             ),
                         },
                         "description": {
@@ -105,17 +117,6 @@ class ValidationFlag:
 @dataclass
 class ValidationResult:
     flags: list[ValidationFlag]
-
-
-def _tool_input(message: Message) -> dict[str, object]:
-    for block in message.content:
-        if block.type == "tool_use":
-            return block.input
-    raise RuntimeError("Claude did not call the record_validation tool")
-
-
-def _as_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
 
 
 def _parse_flag(raw: object) -> ValidationFlag:
@@ -146,15 +147,22 @@ class ExtractionValidator:
             f"--- PAPER MARKDOWN ---\n\n{markdown_text}\n\n"
             f"--- COMBINED EXTRACTION ---\n\n{json.dumps(combined, indent=2)}"
         )
-        message = client.messages.create(
+        payload = request_tool_use(
+            client,
+            log_prefix="validate",
             model=MODEL,
             max_tokens=8192,
-            tools=[cast(ToolParam, VALIDATION_TOOL)],
-            tool_choice=cast(ToolChoiceToolParam, {"type": "tool", "name": "record_validation"}),
-            messages=[{"role": "user", "content": user_content}],
+            tool=VALIDATION_TOOL,
+            user_content=user_content,
+            # Nothing goes in `required_keys`: an empty `flags` list is this
+            # stage's *success* case ("no inconsistencies or gaps found"), so
+            # treating emptiness as a malformed response would make every clean
+            # validation re-request itself and double its cost. `flags` still has
+            # to arrive, though - a payload with no `flags` key at all silently
+            # reads as "clean" and is exactly the failure this helper exists for.
+            may_be_empty_keys=("flags",),
         )
-        payload = _tool_input(message)
-        flags = [_parse_flag(raw) for raw in _as_list(payload.get("flags"))]
+        flags = [_parse_flag(raw) for raw in as_list(payload.get("flags"))]
 
         logger.info(f"  [validate] flags raised: {len(flags)}")
         for flag in flags:

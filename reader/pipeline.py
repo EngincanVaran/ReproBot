@@ -1,8 +1,9 @@
 """Reader pipeline: run every extraction stage over one paper's VLM Markdown,
 then validate and retry.
 
-This is the entry point for `reader/` - `claims.py`, `hyperparameters.py`,
-and `data_pipeline.py` provide `Extractor` subclasses (prompt + tool schema +
+This is the entry point for `reader/` - `method_summary.py`,
+`architecture_notes.py`, `claims.py`, `hyperparameters.py`, and
+`data_pipeline.py` provide `Extractor` subclasses (prompt + tool schema +
 parsing + `extract()`), not standalone scripts. `ReaderPipeline` loads a
 paper's Markdown once, runs each stage against it, runs `ExtractionValidator`
 to cross-check the combined output against the source paper, and - if
@@ -10,10 +11,11 @@ validation flags anything that maps to a specific stage - re-runs that stage
 with the flag folded into its prompt as feedback, up to `max_retries` total
 validation passes. Flags that don't map to exactly one stage (e.g.
 "cross-check: claims vs. hyperparameters") are left in the final output as
-report-only. One `<paper>.json` is written per paper. Future extraction
-stages (`architecture_notes`, ...) plug in by adding one more `Extractor` to
-the `stages` list passed to `ReaderPipeline` - no other code here needs to
-change.
+report-only. One `<paper>.json` is written per paper. Further extraction
+stages plug in by adding one more `Extractor` to the `stages` list passed to
+`ReaderPipeline` - no other code here needs to change (which is exactly how
+`method_summary` and `architecture_notes` were added: two new classes, two new
+list entries, zero changes to the loop).
 
 Requires the `reader` extra: `uv sync --extra reader`, plus an
 ANTHROPIC_API_KEY in `.env` at the repo root (copy `.env.example`).
@@ -35,10 +37,12 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from loguru import logger
 
+from reader.architecture_notes import ArchitectureNotesExtractor
 from reader.base import Extractor
 from reader.claims import ClaimsExtractor
 from reader.data_pipeline import DataPipelineExtractor
 from reader.hyperparameters import HyperparametersExtractor
+from reader.method_summary import MethodSummaryExtractor
 from reader.validator import ExtractionValidator, ValidationFlag, ValidationResult
 
 
@@ -168,8 +172,22 @@ def run_pipeline(
     """Run the reader pipeline over one paper's VLM Markdown and write the
     combined `<paper>.json`."""
     if pipeline is None:
+        # Stage order is cosmetic, not functional: every stage reads the same
+        # Markdown and none consumes another's output, so this list could be in
+        # any order and produce the same result. It is ordered the way a person
+        # reads a paper - and the way the Coder needs it - broad to specific:
+        # what the paper is (method_summary), what to build (architecture_notes),
+        # what it must score (claims), how to train it (hyperparameters), what to
+        # feed it (data_pipeline). That order is also the order the console log
+        # scrolls past in, which is the only thing it really affects.
         pipeline = ReaderPipeline(
-            stages=[ClaimsExtractor(), HyperparametersExtractor(), DataPipelineExtractor()],
+            stages=[
+                MethodSummaryExtractor(),
+                ArchitectureNotesExtractor(),
+                ClaimsExtractor(),
+                HyperparametersExtractor(),
+                DataPipelineExtractor(),
+            ],
             validator=ExtractionValidator(),
         )
 
