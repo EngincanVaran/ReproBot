@@ -82,6 +82,10 @@ packages = ["ocr", "reader", "coder", "runner", "orchestrator"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# docs/ holds document-generation scripts, not pipeline code. Their long lines are
+# LaTeX and TikZ held in raw strings, where a "fix" to the line length would change
+# the rendered figure. Lint the pipeline stages; leave the typesetting alone.
+extend-exclude = ["docs/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N", "C4", "PTH"]
