@@ -7,21 +7,30 @@ this module never executes it and never imports torch.
 
 Why both inputs (this is deliberate, not redundancy):
 
-- `reader/output/<paper>.json` is AUTHORITATIVE for claims, hyperparameters
-  and data_pipeline. It is structured, source-grounded (every entry cites a
-  table/section and transcribed page) and has already been cross-checked by
-  `reader/validator.py`'s retry loop.
-- `reader/` has no `architecture_notes` extraction stage yet, so the paper's
-  own architecture description - Wide ResNet's Table 1 group/width/block
-  structure, its BN-ReLU-conv ordering, its 3-group downsampling - exists only
-  in the OCR Markdown. Passing the Markdown too grounds the generated
-  `nn.Module` in the paper's real text instead of the model's pretrained
-  recollection of a famous architecture.
+- `reader/output/<paper>.json` is AUTHORITATIVE, across all FIVE of its
+  extraction stages: `method_summary`, `architecture_notes`, `claims`,
+  `hyperparameters`, `data_pipeline`. It is structured, source-grounded (every
+  entry cites a table/section/figure and a transcribed page) and has already
+  been cross-checked by `reader/validator.py`'s retry loop.
+- The paper Markdown is CORROBORATION and gap-fill. It used to carry the whole
+  architecture burden - before `reader/architecture_notes.py` existed, the
+  paper's own layer tables and figure descriptions lived only there. They are
+  now extracted, so the Markdown's job narrowed to: confirming a component's
+  `specification` against the surrounding prose, and supplying wording the
+  extraction did not need to keep.
 
-The prompt states that precedence explicitly: reader_output wins wherever it
-has data, the Markdown fills gaps and supplies context, and the Markdown may
-never be used to "correct" the reader output. Both fit comfortably in one
-context window (~8k + ~10k tokens for Wide Residual Networks).
+The prompt states a three-level precedence explicitly: the reader output wins
+wherever it has data, the Markdown may EXTEND but never OVERRIDE it, and the
+model's own recollection of a famous architecture ranks LAST and must be
+disclosed in `assumptions` whenever it is used. That last level is the point of
+the `architecture_notes` wiring: these are well-known papers, and an unguided
+model rebuilds them from third-party reimplementations it has memorized -
+complete with modernizations (batch-norm the paper never had, channel counts
+from a later codebase) that quietly reproduce a DIFFERENT network than the one
+the targeted claim came from.
+
+Both inputs fit comfortably in one context window (~8k + ~10k tokens for Wide
+Residual Networks; ~13k + ~6k for Network In Network).
 
 `max_tokens` is 16384 here, double the 8192 used across `reader/`. A full
 training script is long-form output, and this repo has already been bitten by
@@ -107,21 +116,100 @@ attempts to reproduce ONE specific numeric claim from that paper.
 ## Input precedence - read this before anything else
 
 1. READER OUTPUT (the JSON below) is AUTHORITATIVE. An earlier pipeline stage \
-extracted it from this paper and a validation pass cross-checked it against \
-the paper text. Its `claims`, `hyperparameters` and `data_pipeline` entries \
-are the source of truth: use their values VERBATIM. Do not "correct" them \
-from memory, and do not substitute numbers you happen to remember about this \
-paper.
-2. PAPER MARKDOWN (below the JSON) FILLS GAPS and supplies context. The Reader \
-has no architecture-extraction stage yet, so the paper's own description of \
-its ARCHITECTURE - layer/group tables, block structure, channel widths, where \
-downsampling happens, the ordering of batch-norm/activation/convolution - \
-exists ONLY in the Markdown. Ground the model definition in what the paper \
-actually writes there, not in your pretrained recollection of a famous \
+extracted it from this paper with FIVE separate extractors, and a validation \
+pass cross-checked them against the paper text and against each other:
+   - `method_summary` - what problem the method attacks, its core idea, what \
+is novel about it.
+   - `architecture_notes` - the paper's OWN model: `overall_structure`, \
+`components`, `key_equations`, `depth_or_scale`, and `unstated_details`.
+   - `claims` - the paper's own reported numbers.
+   - `hyperparameters` - the paper's own training settings.
+   - `data_pipeline` - per-dataset preprocessing, augmentation and splits.
+   Use their values VERBATIM. Do not "correct" them from memory, and do not \
+substitute numbers you happen to remember about this paper or this \
 architecture.
-3. The Markdown may EXTEND the reader output; it may never OVERRIDE it. If \
-the two appear to disagree about a hyperparameter or a reported number, the \
-reader output wins and you note the disagreement in `assumptions`.
+2. PAPER MARKDOWN (below the JSON) is CORROBORATION AND GAP-FILL. Use it to \
+confirm what a component's `specification` means in context, to read the \
+surrounding prose of a cited section/table/figure, and to supply wording the \
+extraction did not need to keep. It may EXTEND the reader output; it may never \
+OVERRIDE it. If the two appear to disagree, the reader output wins and you \
+note the disagreement in `assumptions`.
+3. YOUR OWN PRETRAINED KNOWLEDGE of this architecture ranks LAST - after both \
+inputs, not alongside them. Several of these papers are famous and you have \
+seen many third-party reimplementations of them; those carry accumulated \
+modernizations (a normalization layer the paper never had, channel counts from \
+a later codebase, a stem borrowed from a different paper) that do not fail \
+loudly. They produce a network that trains happily and reports a number for \
+the WRONG model. Whenever you fall back on that knowledge, you MUST record it \
+as an `assumptions` entry saying so explicitly.
+
+## Building the architecture - `architecture_notes` is the primary source
+
+The reader output's `architecture_notes` object, NOT the Markdown and NOT your \
+memory, is where the model definition comes from. Work through it field by \
+field:
+
+A. STRUCTURE. Read `overall_structure` once as the specification for \
+`forward()` - it describes how the pieces compose end to end, in order, from \
+the input image to the output. Then write one piece of code per `components` \
+entry, using that entry's `specification` as the build detail and its `source` \
+as the pointer into the Markdown when you need the surrounding prose. Build \
+EVERY component the paper's own model is made of, and build them in the order \
+`overall_structure` gives. If a component's presence or placement contradicts \
+what you remember about this architecture, follow the extraction.
+
+B. IGNORE BASELINE COMPONENTS. `components` can include blocks that belong to \
+a prior-work or comparison architecture the paper evaluates against - they are \
+marked as such in the entry's `name` or `role` (e.g. a name prefixed \
+"[baseline, not own method]", or a role saying it is used only in an \
+ablation/comparison section). Those are NOT part of the model you build. \
+Building one because it looked like a normal layer is a silent, total failure.
+
+C. EQUATIONS - implement ONLY `is_own_method: true`. Each `key_equations` \
+entry carries `latex`, `label`, `defines` and a boolean `is_own_method`. \
+Entries with `is_own_method: true` define THIS paper's proposed computation: \
+when a paper's contribution is a new layer, that equation IS the layer's \
+implementation specification, so your code must compute exactly what it says. \
+Entries with `is_own_method: false` are the conventional formulation or a \
+rival method's, printed only for contrast - implementing one of those silently \
+builds the wrong layer, and the resulting network still trains and still \
+reports a number. Check the flag on every equation before you write a line of \
+it; read `defines` to see which is which. State in `architecture_used` which \
+equation label(s) you implemented.
+
+D. `depth_or_scale` - never invent a formula it says is absent. This field \
+holds whatever depth/width formula, naming convention or scaling rule the \
+paper actually gives. If it states a closed-form relation, encode that \
+relation. If it says the paper gives ONLY a naming convention and NO formula, \
+then there is no formula: do not write one, do not assert one, and do not \
+`assert` on one. This has already gone wrong for real - a generated script \
+asserted `depth = 6N + 4` for Wide Residual Networks, which that paper does \
+not state anywhere (it gives only Table 1's symbolic N and the WRN-n-k naming \
+convention); the formula came purely from pretrained recall. In that situation, \
+derive the concrete structure from `components` and `overall_structure` \
+instead, hard-code the depths/widths that produces, and record the derivation \
+as an `assumptions` entry.
+
+E. `unstated_details` is a REQUIRED CHECKLIST, not background reading. It \
+lists, explicitly, every architectural detail the paper does NOT state but that \
+working code needs - filter counts, kernel sizes, strides, padding, pooling \
+windows, MLP widths, initialization, whether a normalization layer exists. \
+Go through it ENTRY BY ENTRY. For each one that your script has to decide in \
+order to run: choose the standard, era-appropriate value, AND record it as an \
+`assumptions` entry that names the gap it came from - phrase it like \
+"unstated_details: <the gap, in the extraction's own words> - used <what you \
+chose> because <why>". Entries that genuinely do not affect your script (a gap \
+in a baseline architecture you are not building, a dataset you are not \
+targeting) may be skipped, but say so rather than dropping them silently. This \
+is the mechanism that keeps a paper's gaps VISIBLE instead of papered over: an \
+invented-but-plausible channel count is indistinguishable from a stated one \
+once it is in the code, unless it is written down here.
+
+F. `method_summary` is CONTEXT ONLY. Use it to understand what the method is \
+trying to achieve and what is novel about it, so your implementation preserves \
+the point of the paper rather than an incidental resemblance to it. It is NOT \
+a source of numbers, architecture detail, or hyperparameters - those have their \
+own fields, and a number appearing in prose there does not override them.
 
 ## What to do
 
@@ -152,12 +240,19 @@ entries for the matched regime. Record each one you actually used in \
 `hyperparameters_used` as `{name, value_used}`, where `value_used` is the \
 concrete value the script encodes (e.g. "0.1, x0.2 at epochs 60/120/160").
 
-4. WRITE A HAND-ROLLED `nn.Module`, grounded in the paper's own architecture \
-description in the Markdown. Do NOT use `AutoModelForImageClassification` or \
-any pretrained/stock HuggingFace vision model: HuggingFace's built-in ResNets \
-assume ImageNet's 224x224 stem (7x7 stride-2 convolution followed by \
-max-pooling), which destroys CIFAR's 32x32 inputs before the first block. \
-Build the network the paper describes, from `torch.nn` primitives.
+4. WRITE A HAND-ROLLED `nn.Module`, built from `architecture_notes` exactly as \
+the section above prescribes, from `torch.nn` primitives. Do NOT use \
+`AutoModelForImageClassification` or any pretrained/stock HuggingFace vision \
+model: HuggingFace's built-in ResNets assume ImageNet's 224x224 stem (7x7 \
+stride-2 convolution followed by max-pooling), which destroys CIFAR's 32x32 \
+inputs before the first block. Equally, do NOT emit a generic CNN that merely \
+resembles the paper: if the paper's contribution is a custom layer, the custom \
+layer is the thing being reproduced, and a plain convolution stack in its place \
+is a failed replication no matter what accuracy it reaches. Name your classes \
+after the paper's own component names so the mapping is readable. \
+`architecture_used` must describe what you built concretely (depth, widths, \
+block structure, layer ordering) and tie each part back to the \
+`architecture_notes` component or equation label it came from.
 
 5. ADAPT IT TO `Trainer` WITHOUT SUBCLASSING `PreTrainedModel`. Wrap the raw \
 `nn.Module` in a thin `nn.Module` adapter whose `forward(self, pixel_values, \
@@ -179,12 +274,15 @@ normalization only. Provide a `data_collator` that stacks the torchvision \
 something the script cannot run without (weight initialization, the exact \
 normalization constants, `num_workers`, the eval batch size, ...), choose the \
 canonical standard default AND record it as one entry in `assumptions`, \
-phrased as "<what was missing> - used <what you chose> because <why>". An \
-empty `assumptions` array means you genuinely needed nothing beyond the two \
-inputs; that is rare, so do not empty it just to look tidy. This differs \
-deliberately from the Reader's rule: the Reader is allowed to record "not \
-stated" and stop, but generated code has to actually run, so the rule here is \
-CHOOSE SENSIBLY, ALWAYS DISCLOSE.
+phrased as "<what was missing> - used <what you chose> because <why>". \
+`assumptions` is where BOTH kinds of gap land: the ones \
+`architecture_notes.unstated_details` already named for you (walk that list, \
+per rule E above) and any further one you hit while writing the code. An empty \
+`assumptions` array means you genuinely needed nothing beyond the two inputs; \
+with a non-empty `unstated_details` that is impossible, so never empty it just \
+to look tidy. This differs deliberately from the Reader's rule: the Reader is \
+allowed to record "not stated" and stop, but generated code has to actually \
+run, so the rule here is CHOOSE SENSIBLY, ALWAYS DISCLOSE.
 
 8. ALWAYS DEFINE THESE ARGPARSE FLAGS, spelled exactly like this:
    `--epochs`            default = the paper's real epoch count for this regime
@@ -542,6 +640,51 @@ def _strip_code_fences(script: str) -> str:
     return "\n".join(lines[1:-1]) + "\n"
 
 
+def _log_architecture_inputs(reader_output: dict[str, Any]) -> None:
+    """Log what the `architecture_notes` stage actually handed this call.
+
+    Purely observational - the whole `reader_output` dict is serialized into the
+    prompt either way. It exists because the prompt now leans on three specific
+    sub-fields (`components`, `key_equations[].is_own_method`,
+    `unstated_details`), and when a generated script comes out looking like a
+    stock reimplementation, the first question is whether the extraction was
+    thin or whether the model ignored it. Without this line the console cannot
+    tell those two apart.
+    """
+    notes = reader_output.get("architecture_notes")
+    if not isinstance(notes, dict):
+        logger.warning(
+            "  [training_script] reader output carries NO `architecture_notes` - this is a "
+            "pre-architecture_notes reader run, so the model must fall back on the paper "
+            "Markdown for structure. Re-run reader/pipeline.py for this paper."
+        )
+        return
+
+    components = _as_list(notes.get("components"))
+    equations = _as_list(notes.get("key_equations"))
+    own = [eq for eq in equations if isinstance(eq, dict) and eq.get("is_own_method")]
+    unstated = _as_list(notes.get("unstated_details"))
+    logger.info(
+        f"  [training_script] architecture_notes in prompt: "
+        f"model_name={notes.get('model_name', '<none>')!r}, "
+        f"{len(components)} component(s), {len(equations)} equation(s) "
+        f"({len(own)} own-method, {len(equations) - len(own)} contrast-only), "
+        f"{len(unstated)} unstated detail(s) to be answered in `assumptions`"
+    )
+    for equation in own:
+        logger.info(f"    - implement eq {equation.get('label', '?')}: {equation.get('defines')}")
+    if equations and not own:
+        logger.warning(
+            "  [training_script] every extracted equation is marked contrast-only - there is "
+            "no equation for the script to implement; structure must come from `components`"
+        )
+    if not unstated:
+        logger.warning(
+            "  [training_script] `unstated_details` is empty - the paper is claimed to fully "
+            "specify its architecture, which is rare; expect few architectural assumptions"
+        )
+
+
 class TrainingScriptWriter(CodeWriter[TrainingScript]):
     """Writes one self-contained HuggingFace `Trainer` script targeting one claim."""
 
@@ -598,16 +741,18 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
 
         user_content = (
             f"{prompt}\n\n"
-            f"--- READER OUTPUT (AUTHORITATIVE: claims, hyperparameters, "
-            f"data_pipeline) ---\n\n{json.dumps(reader_output, indent=2)}\n\n"
-            f"--- PAPER MARKDOWN (fills gaps, ARCHITECTURE especially; never "
-            f"overrides the reader output) ---\n\n{paper_markdown}"
+            f"--- READER OUTPUT (AUTHORITATIVE: method_summary, "
+            f"architecture_notes, claims, hyperparameters, data_pipeline) ---"
+            f"\n\n{json.dumps(reader_output, indent=2)}\n\n"
+            f"--- PAPER MARKDOWN (corroborates and fills gaps; never overrides "
+            f"the reader output) ---\n\n{paper_markdown}"
         )
         logger.info(
             f"  [training_script] prompting {MODEL} (max_tokens={MAX_TOKENS}) with "
             f"{len(json.dumps(reader_output))} chars of reader output + "
             f"{len(paper_markdown)} chars of paper Markdown"
         )
+        _log_architecture_inputs(reader_output)
 
         payload: dict[str, object] = {}
         for attempt in range(1, self.max_attempts + 1):

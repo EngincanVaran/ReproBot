@@ -61,6 +61,21 @@ reader/pipeline.py
 │  extractor = add one instance to `stages`,           │
 │  nothing else in this file changes.                    │
 └─────────────────────────────────────────┘
+
+reader/tooluse.py            ← every one of the six Claude calls above
+┌─────────────────────────────────────────┐
+│  request_tool_use(client, log_prefix,      │
+│                   model, max_tokens, tool,  │
+│                   user_content,              │
+│                   required_keys,              │
+│                   may_be_empty_keys) -> dict   │
+│  as_list(value) / as_int(value, ...)            │
+│                                                  │
+│  Owns the request AND the response guards, so a    │
+│  stage module holds only its prompt, its tool        │
+│  schema, and its own parsing. See "Malformed tool      │
+│  payloads" under Known issues, fixed.                    │
+└─────────────────────────────────────────┘
 ```
 
 **Why classes, not functions:** the pipeline needs to treat every
@@ -374,13 +389,71 @@ all four Claude calls in `reader/` (not just the one that broke — all four
 have the same unbounded-output risk for a large enough paper). Same class
 of bug already hit once before in `ocr/vlm_extract.py`.
 
-Because that class of bug is silent by construction, `method_summary.py` and
-`architecture_notes.py` additionally check `message.stop_reason` and
-`logger.error` when it is `max_tokens`, so a truncated call announces itself
-instead of being diagnosed after the fact. **Open follow-up:** the four older
-calls (`claims`, `hyperparameters`, `data_pipeline`, `validator`) still don't
-check it — same four-line guard, deliberately left out of the slice that
-introduced it to keep the diff reviewable.
+Because that class of bug is silent by construction, the call now checks
+`message.stop_reason` and `logger.error`s when it is `max_tokens`, so a
+truncated call announces itself instead of being diagnosed after the fact.
+That check lives in `tooluse.py` and therefore covers **all six** Claude calls
+in this package, not just the two stages that originally carried it.
+
+**Malformed tool payloads silently producing empty extractions (fixed).**
+Three distinct shapes, all of which return a structurally valid, completely
+empty result on a clean `stop_reason: tool_use` — indistinguishable, from the
+outside, from a good run over a paper that had nothing to say:
+
+1. **A double-encoded tool input.** Instead of the schema's object, the model
+   emits a single key whose value is the entire payload re-encoded as a JSON
+   *string* — `{"datasets": "{\"datasets_examined\": [...], ...}"}`. Caught
+   while verifying `architecture_notes`: `data_pipeline` returned *zero*
+   datasets for Network In Network, three runs out of three. Dumping the raw
+   block showed the extraction had actually succeeded; every `payload.get(...)`
+   then missed and `_as_list()` turned each miss into `[]`.
+2. **An all-empty payload, intermittently, on any stage.** Every required field
+   missing. Seen across three different stages in three consecutive runs —
+   `data_pipeline` then `claims` on Network In Network, `method_summary` on
+   Wide Residual Networks — and never reproducible on demand, so: model-side
+   and not specific to any one prompt.
+3. **A prose value in a numeric field.** Found by the verification run for this
+   very fix: on Wide Residual Networks the `integer`-typed
+   `candidates_considered` came back as the string *"Let me count carefully."*
+   — the model narrating instead of filling the schema. A bare `int()` raises
+   `ValueError` on that, which is worse than the other two shapes rather than
+   milder: it doesn't lose a field, it **aborts the whole paper** before the
+   validator ever sees it. An empty extraction at least reaches a validator
+   that can flag it; a crash reaches nothing.
+
+All three are now handled once, in **`reader/tooluse.py`**, used by all six
+Claude calls in this package — replacing the six duplicated
+`_tool_input`/`_as_list` pairs, of which only two carried any guards at all.
+`request_tool_use()` owns the request as well as the response, which is what
+makes (2) fixable properly; `as_list()`/`as_int()` absorb (3).
+
+**On (2), it re-asks immediately instead of waiting for the validator.** The
+retry loop does catch an all-empty payload and demonstrably does fix it (the
+validator flags "the fields are all empty", `pipeline.py` routes that back to
+the owning stage by name, the re-run comes back populated) — the objection is
+the price, not the outcome. That path spends a whole validation pass out of a
+budget of three, and a validation pass is the most expensive call here (full
+paper Markdown *plus* every stage's combined output) before the stage re-run it
+triggers is even paid for. Worse, it spends budget meant for genuine extraction
+*errors*: the Wide ResNet run finished with unresolved flags against that same
+3-pass cap, so a pass burned on a malformed response is a real problem left
+unexamined. The trigger is deliberately narrow and the downside bounded: only
+when *every* `required_keys` entry is missing (a partial payload is a real
+extraction with a gap, which is the validator's judgement call, not a malformed
+response); only *once* (if it's deterministic, a retry can't fix it and looping
+would double the bill forever); and never for stages that pass no
+`required_keys` — which is what `validator.py` does, because an empty `flags`
+list is its *success* case. The re-ask resends the identical request rather
+than a "you returned nothing, try again" nudge, since the failure is
+intermittent and a nudged prompt would quietly ask a different question from
+the one whose answer was lost. The full argument is in `tooluse.py`'s comment.
+
+**Verified on a real run, not just in principle.** Re-running both papers from
+scratch, the double-encoding guard fired **three times on Network In Network
+alone** — twice on `data_pipeline`, once on `hyperparameters` — each time
+unwrapping a good extraction that the old code would have discarded. All 4
+datasets survived the call that used to return zero; Wide Residual Networks
+came back with 61 claims, 4 datasets, and all 4 reference URLs.
 
 ## Status
 
@@ -430,47 +503,30 @@ reports the gap; nothing yet closes it — see `architecture_notes.py` above).
 
 ## Known issues, open
 
-**Tool input arriving double-encoded (guarded in the two newest stages,
-unguarded in the older four).** Caught while verifying `architecture_notes`:
-`data_pipeline` returned *zero* datasets for Network In Network, three runs
-out of three, on a call whose `stop_reason` was a clean `tool_use`. Dumping
-the raw block showed the extraction had actually succeeded — the model had
-just emitted the whole payload as a JSON *string* under a single key
-(`{"datasets": "{\"datasets_examined\": [...], \"datasets\": [...]}"}`)
-instead of as the schema's object. Every `payload.get(...)` then missed,
-`_as_list()` turned each miss into `[]`, and the stage reported an empty
-result that looked like a clean run.
+**A partially-empty payload still costs a validation pass.** The immediate
+re-ask above fires only when *every* required key is missing, so a payload
+that arrives with some fields and not others still goes the long way round.
+This is not hypothetical: `hyperparameters` returned an empty
+`sources_examined` alongside a full `hyperparameters` list on the first
+attempt for *both* papers, and on Network In Network did it again on the
+retry. The narrow trigger is the right default — re-asking on a partial
+payload would throw away good data over what may be a legitimate gap — but
+the reporter now makes the pattern visible enough to judge from data. Worth
+revisiting once more papers have been run: if `sources_examined` keeps coming
+back empty specifically, that is a prompt problem in `hyperparameters.py`, not
+a plumbing one.
 
-`method_summary.py` and `architecture_notes.py` detect that shape, unwrap it,
-and `logger.warning` about it. `claims.py`, `hyperparameters.py`,
-`data_pipeline.py`, and `validator.py` do **not** yet — they will silently
-drop a good extraction if the model does this to them.
+**The same crash class remains in `_parse_claim`.** `as_int()` hardened
+`candidates_considered`, but `float(raw["reported_value"])` in
+`reader/claims.py` has exactly the same exposure — prose in a numeric field
+raises `ValueError`, an absent key raises `KeyError`, and either aborts the
+paper. It has not been observed live, and hardening it means deciding what a
+claim with no usable value *is* (drop it? keep it with a sentinel?), which is a
+schema question rather than a plumbing one. Flagged rather than fixed
+unilaterally.
 
-**An all-empty tool payload, intermittently, on any stage.** A second, related
-shape: the tool call returns `stop_reason: tool_use` but with every required
-field missing, so the stage produces a structurally valid, completely empty
-result. Seen across three different stages in three consecutive runs —
-`data_pipeline` and then `claims` on Network In Network, `method_summary` on
-Wide Residual Networks — and not reproducible on demand (probing the same
-stage/paper pair directly returned good payloads both times). So: intermittent,
-model-side, and *not* specific to any one stage or prompt.
-
-The retry loop is what currently saves this, and it demonstrably does: in
-every case the validator flagged the empty extraction specifically ("the
-`method_summary` fields are all empty, despite the paper providing clear
-content for these"), `pipeline.py` routed the flag to that stage by name, and
-the re-run came back populated. That is the loop earning its keep on a failure
-mode it was not designed for. But it costs a full extra validation pass out of
-a budget of three, so it eats retry budget that should be going to real
-extraction errors.
-
-The proper fix for both shapes is one shared tool-use helper (unwrap +
-`stop_reason` check + a loud "required field missing" path, and probably an
-immediate single re-request on an empty payload rather than waiting for the
-validator) used by all six stages, replacing the six copies of
-`_tool_input`/`_as_list`. That is a refactor across every module in this
-package and belongs in its own commit, not smuggled into the one that found
-the bug. For now, the two newest stages report the diagnosis
-(`logger.error` naming exactly which keys were missing and which arrived) so
-the next occurrence is readable straight off the console instead of needing
-another raw-payload dump.
+**Unchanged from before:** no auto-resolution for `cross-check: ...` flags that
+don't route to a single stage, the `unstated_details` gap itself (this package
+reports the gap; nothing closes it — see `architecture_notes.py` above), and
+validation not converging to zero flags on large papers within the 3-pass cap
+(see "Honest limitation" under the retry loop).

@@ -52,18 +52,81 @@ This is the central design decision of the stage, not redundancy.
 
 | Input | Role |
 |---|---|
-| `reader/output/<paper>.json` | **Authoritative** for claims, hyperparameters, data_pipeline. Structured, source-grounded (every entry cites a table/section and transcribed page), already cross-checked by `reader/validator.py`'s retry loop. |
-| `ocr/output/vlm/<paper>.md` | **Fills gaps**, architecture above all. `reader/` has no `architecture_notes` stage yet, so the paper's own layer table, block structure, channel widths and BN-ReLU-conv ordering exist *only* here. |
+| `reader/output/<paper>.json` | **Authoritative**, across all five extraction stages. Structured, source-grounded (every entry cites a table/section/figure and transcribed page), already cross-checked by `reader/validator.py`'s retry loop. |
+| `ocr/output/vlm/<paper>.md` | **Corroborates and fills gaps.** A component's one-line `specification` is often only interpretable next to the prose it was lifted from, and `unstated_details` is only trustworthy if the text it claims is silent is there to be read. |
 
-The prompt states the precedence explicitly: the reader output wins wherever it
-has data, the Markdown may **extend** it but never **override** it, and a
-genuine disagreement between the two gets recorded in `assumptions`. Without the
-Markdown the model would fall back on its pretrained recollection of a famous
-architecture; with it, WRN-28-10 is built from the paper's actual Table 1
-(`n = 6N+4`, widths `16, 16k, 32k, 64k`, downsampling in groups 3 and 4).
+The prompt states a **three-level** precedence, and the third level is the one
+that matters:
 
-Both fit comfortably in one context window — the Wide Residual Networks run
-sends ~33k input tokens total.
+1. **Reader output** wins wherever it has data.
+2. **Paper Markdown** may *extend* it, never *override* it; a genuine
+   disagreement is recorded in `assumptions`.
+3. **The model's own recollection** of a famous architecture ranks **last**, and
+   using it at all must be disclosed in `assumptions`.
+
+Level 3 is not theoretical. These are well-known papers, and an unguided model
+rebuilds them from the third-party reimplementations it has memorized — complete
+with modernizations the paper never had. That failure is silent: the wrong
+network still trains and still reports a number.
+
+Both inputs fit comfortably in one context window — the Wide Residual Networks
+run sends ~33k input tokens, Network In Network ~30k.
+
+## How the five reader fields are consumed
+
+`reader/` emits five stages, and the prompt gives each a distinct job. Getting
+these roles wrong is how a replication silently reproduces the wrong thing.
+
+| Field | Role in the prompt |
+|---|---|
+| `method_summary` | **Context only.** What the method is for and what is novel about it, so the implementation preserves the paper's point. Explicitly **not** a source of numbers, architecture, or hyperparameters — those have their own fields. |
+| `architecture_notes` | **The primary architecture source**, outranking both the Markdown and the model's own knowledge. See below. |
+| `claims` | The single targeted claim, quoted verbatim into the metrics contract. |
+| `hyperparameters` | Used verbatim, for the regime the targeted claim came from. |
+| `data_pipeline` | Preprocessing, augmentation and splits, for that same regime. |
+
+### `architecture_notes` — field by field
+
+- **`overall_structure`** is read once as the specification for `forward()`;
+  **`components`** become one piece of code each, built in that order, using
+  each entry's `specification` as the build detail and its `source` as the
+  pointer back into the Markdown.
+- **Baseline components are skipped.** `components` can carry blocks belonging
+  to a prior-work or comparison architecture, marked in the entry's `name` or
+  `role` (`"[baseline, not own method] ..."`). Network In Network has two: the
+  §4.6 fully-connected head and the Hinton et al. conventional CNN. Building one
+  because it looked like an ordinary layer is a total, silent failure.
+- **`key_equations` — implement only `is_own_method: true`.** Entries marked
+  `false` are the conventional formulation or a rival's, printed for contrast.
+  Implementing one silently builds the wrong layer, and the resulting network
+  still trains and still reports a number. Network In Network is the live case:
+  three equations, and only eq. (2) — the mlpconv per-patch MLP — is NIN's own.
+  Eq. (1) is a plain convolution and eq. (3) is maxout, both decoys. The prompt
+  requires the implemented equation label(s) to be named in `architecture_used`.
+- **`depth_or_scale` — never invent a formula it says is absent.** If the field
+  reports only a naming convention, there is no formula to encode. This has gone
+  wrong for real: the verified WRN script asserts
+  `assert (depth - 4) % 6 == 0, "depth must satisfy depth = 6N + 4 ..."`, but
+  Wide Residual Networks never states that relation — it gives only Table 1's
+  symbolic `N` and the `WRN-n-k` naming convention. The formula came purely from
+  pretrained recall. The rule now: derive the structure from `components`
+  instead, and disclose the derivation in `assumptions`.
+- **`unstated_details` is a required checklist, not background reading.** It is
+  the explicit list of what the paper never states but working code needs —
+  filter counts, kernel sizes, strides, initialization. The Coder walks it entry
+  by entry: choose a standard, era-appropriate value **and** record it in
+  `assumptions`, naming the gap it came from. That is the whole mechanism by
+  which a paper's gaps stay visible; once an invented channel count is in the
+  code it is indistinguishable from a stated one. Entries irrelevant to the
+  targeted script (a gap in a baseline, or in a dataset not being targeted) may
+  be skipped.
+
+`script_writer.py` logs what actually reached the prompt — component count,
+own-method vs. contrast-only equation counts with each own-method equation's
+`defines` line, and the number of unstated details awaiting an `assumptions`
+entry. When a generated script comes out looking like a stock reimplementation,
+that line is what separates "the extraction was thin" from "the model ignored
+it".
 
 ## Target-claim selection
 
@@ -209,9 +272,13 @@ never be silent again.
 
 What the prompt requires of the generated script:
 
-1. **A hand-rolled `nn.Module`**, never `AutoModelForImageClassification` — HF's
-   built-in ResNets assume ImageNet's 224×224 stem (7×7 stride-2 conv +
-   maxpool), which destroys CIFAR's 32×32 inputs before the first block.
+1. **A hand-rolled `nn.Module`**, built from `architecture_notes` (see above),
+   never `AutoModelForImageClassification` — HF's built-in ResNets assume
+   ImageNet's 224×224 stem (7×7 stride-2 conv + maxpool), which destroys CIFAR's
+   32×32 inputs before the first block. Equally, never a generic CNN that merely
+   resembles the paper: when the paper's contribution *is* a custom layer, that
+   layer is the thing being reproduced, and a plain convolution stack in its
+   place is a failed replication at any accuracy.
 2. **A thin `Trainer` adapter**, not a `PreTrainedModel` subclass: a plain
    `nn.Module` whose `forward(pixel_values, labels=None)` returns a dict with
    `logits`, plus `loss` when labels are passed. That dict is the entire
@@ -387,9 +454,45 @@ is genuinely needed rather than nice-to-have. Adding a third semantic gate here
 static-analysis dependency and would duplicate what actually executing the
 script tells you for free.
 
+**The bookkeeping can disagree with the code it describes.** The NIN run's
+`hyperparameters_used` reports stage 3 as `3x3 conv 192->192, 1x1 conv
+192->192, 1x1 conv 192->10`, but the code builds
+`MLPConvLayer(192, 192, num_classes, num_classes, ...)` — i.e. `192→192`,
+`192→10`, `10→10`, narrowing to ten channels one layer early. The script is
+valid, trains, and is a defensible reading of a dimension the paper never
+states; what is wrong is that the *self-report* does not match the *code*.
+Nothing deterministic catches this, because both halves are internally
+plausible. It is the same class of defect as the `_NoOpScheduler` bug above:
+evidence for the Runner→Critic→Coder loop, not for another gate here.
+
 ## Status
 
-Verified end-to-end against **Wide Residual Networks**, with a real API call:
+Verified end-to-end against **Network In Network**, with a real API call — the
+paper chosen deliberately to test whether the `architecture_notes` wiring beats
+pretrained priors. NIN is the hard case: its `mlpconv` layer *is* the paper's
+contribution, the paper states none of its dimensions, and its equation list
+carries two decoys. (A famous ResNet variant would pass on priors alone and
+prove nothing.)
+
+- Targeted claim `c1` — *test error 10.41% on CIFAR-10, NIN + Dropout*
+  (Table 1) — chosen freely, over the augmented `c2` and the §4.6 ablation rows.
+- 343-line script, `stop_reason=tool_use` (no truncation), no tool-field leak
+  (all 8 fields on attempt 1), **both gates passed**, all 9 required CLI flags
+  present, 8 hyperparameters encoded, **12 assumptions recorded, 6 of them
+  explicitly citing an `unstated_details` gap by name**.
+- A real `MLPConvLayer`: `k×k` spatial convolution → two 1×1 convolutions, each
+  with bias and ReLU, i.e. eq. (2)'s cascaded cross-channel parametric pooling —
+  not a generic CNN.
+- The decoys were avoided: the script's own docstring records that eq. (1)
+  (conventional convolution) and eq. (3) (maxout) are *not* implemented, and the
+  two `[baseline, not own method]` components are not built.
+- Structure matches `overall_structure`: three mlpconv stages, max pooling +
+  dropout after the first two, then `AdaptiveAvgPool2d(1)` → flatten → softmax.
+  **Zero `nn.Linear` in the file** — the FC head really is gone, which is the
+  paper's second contribution.
+
+Also verified against **Wide Residual Networks** (before the `architecture_notes`
+wiring landed):
 
 - Targeted claim `c34` — *test error 4.00% on CIFAR-10, WRN-28-10, no dropout,
   mean/std normalization* (Table 5) — chosen freely by Claude and correctly

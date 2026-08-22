@@ -3,11 +3,12 @@
 This is the entry point for `coder/` - `script_writer.py` provides a
 `CodeWriter` subclass (prompt + tool schema + parsing + `write()`), not a
 standalone script. `CoderPipeline` resolves a paper's TWO inputs (its
-authoritative `reader/output/<paper>.json` and its `ocr/output/vlm/<paper>.md`,
-which is where architecture description still lives because `reader/` has no
-`architecture_notes` stage yet), makes one Claude tool-use call, runs two
-deterministic zero-cost safety gates over the result, and writes
-`coder/output/<paper>/train.py` plus a `coder_output.json` of bookkeeping.
+authoritative `reader/output/<paper>.json`, whose `architecture_notes` stage is
+the primary source for the model definition, and its `ocr/output/vlm/<paper>.md`,
+which corroborates that extraction against the paper's own prose), makes one
+Claude tool-use call, runs two deterministic zero-cost safety gates over the
+result, and writes `coder/output/<paper>/train.py` plus a `coder_output.json`
+of bookkeeping.
 
 The two gates are pure Python, cost nothing, and catch the failures that would
 otherwise only surface inside the Runner's Docker sandbox:
@@ -124,17 +125,21 @@ def check_required_flags(script_content: str, self_reported: list[str]) -> list[
 def resolve_paper_markdown(reader_json_path: Path, markdown_dir: Path) -> Path:
     """Match a `reader/output/<paper>.json` to its `<markdown_dir>/<paper>.md`.
 
-    The Markdown is a REQUIRED second input, not an optional enrichment - it is
-    the only place the paper's architecture description exists. A missing one is
-    an error, never a quiet fallback to reader-output-only generation.
+    The Markdown is a REQUIRED second input, not an optional enrichment. It no
+    longer carries the architecture alone - `reader/architecture_notes.py` now
+    extracts that - but it is what the generated code is checked against: a
+    component's one-line `specification` is often only interpretable next to the
+    prose it was lifted from, and `unstated_details` is only trustworthy if the
+    text it claims is silent is actually present to be read. A missing one is an
+    error, never a quiet fallback to reader-output-only generation.
     """
     markdown_path = markdown_dir / f"{reader_json_path.stem}.md"
     if not markdown_path.exists():
         raise MissingPaperMarkdownError(
             f"no paper Markdown at {markdown_path} - the Coder needs the paper text "
-            f"for architecture detail, which reader/output/*.json does not carry. "
-            f"Run `uv run python -m ocr.vlm_extract` for this paper first, or point "
-            f"--paper-markdown-dir at the right directory."
+            f"to corroborate the reader output's architecture_notes against the paper's "
+            f"own prose. Run `uv run python -m ocr.vlm_extract` for this paper first, "
+            f"or point --paper-markdown-dir at the right directory."
         )
     return markdown_path
 
@@ -173,11 +178,14 @@ class CoderPipeline:
         paper_markdown = markdown_path.read_text(encoding="utf-8")
 
         claims = reader_output.get("claims", {}).get("claims", [])
+        architecture_notes = reader_output.get("architecture_notes", {})
         logger.info(
             f"[{self.writer.name}] reader output carries {len(claims)} claim(s), "
             f"{len(reader_output.get('hyperparameters', {}).get('hyperparameters', []))} "
             f"hyperparameter(s), "
-            f"{len(reader_output.get('data_pipeline', {}).get('datasets', []))} dataset(s)"
+            f"{len(reader_output.get('data_pipeline', {}).get('datasets', []))} dataset(s), "
+            f"{len(architecture_notes.get('components', []))} architecture component(s), "
+            f"{len(architecture_notes.get('unstated_details', []))} unstated detail(s)"
         )
 
         if feedback:
