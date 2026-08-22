@@ -27,10 +27,11 @@ ReproBot/
 │   │                                 # the CIFAR-10 shortlist, and the polished Intro/Lit-Review draft
 │   ├── notes/                       # Narrower working notes (e.g. Reader-agent precedents)
 │   └── agent-log.md                 # Record of every delegated subagent task and result
+├── TODO.md                     # status, open bugs, next steps — start here
 └── pyproject.toml               # uv-managed; each stage installs via its own --extra
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for a detailed map of what's in each document/stage and how they relate.
+See [`CLAUDE.md`](CLAUDE.md) for a detailed map of what's in each document/stage and how they relate, and [`TODO.md`](TODO.md) for current status, open bugs, and what's next.
 
 ## How this gets built
 

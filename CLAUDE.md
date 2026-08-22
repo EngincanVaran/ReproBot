@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+**`TODO.md` at the repo root is the live tracker** — current pipeline status, every open bug per stage, blockers, and the prioritized next steps. Read it before planning work, and update it when something lands or a new issue is found. This file describes how the repo *works*; `TODO.md` describes what is *currently broken or missing*.
+
 Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, data_pipeline extraction, plus a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution), and `orchestrator/` (the Coder↔Runner retry loop) are the pipeline stages with real code.** What is still design-only, per `docs/project-plan/ReproBot_Project_Plan.md`: the **Critic** (no numeric comparison of reproduced vs. claimed values exists yet — `critic_output` is a permanent `null` in the state object) and the Report Generator. **`reader/` is now complete against its §1.2 spec** — all four specified fields plus `data_pipeline`.
 
 **Known gap between stages:** `coder/script_writer.py` serializes the whole `reader_output` dict into its prompt, so `method_summary` and `architecture_notes` already reach it — but its prompt still names only "(claims, hyperparameters, data_pipeline)" and gives no instruction to *use* the architecture. Until that prompt is updated, the Coder keeps reconstructing architectures from the paper Markdown plus its own priors, and the new fields are read but unexploited.
