@@ -1,0 +1,106 @@
+[project]
+name = "reprobot"
+version = "0.1.0"
+description = "Multi-agent pipeline for automated ML paper replication."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { file = "LICENSE" }
+dependencies = [
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+# OCR/extraction backends that this project's own uv lock manages — i.e. the
+# ones that actually install on this dev machine (Intel macOS + Python 3.13).
+# See ocr/README.md for Docling and MinerU, which are NOT declared here: both
+# depend on torch, and no torch release supports Python 3.13 and Intel-macOS
+# wheels at the same time (PyTorch dropped Intel-macOS wheels in the same
+# release range it added 3.13 support) — including either in this lock would
+# make the whole project un-syncable on this machine. Run those two in a
+# separate environment; see ocr/README.md for exact commands.
+pdfplumber = [
+    "pdfplumber>=0.11",
+]
+vlm = [
+    "anthropic>=0.69",
+    "pypdfium2>=4.30",
+    "python-dotenv>=1.0",
+]
+# reader/ (Claude tool-use over already-extracted Markdown) needs the
+# Anthropic SDK + dotenv but not pypdfium2 — it never touches a PDF or
+# renders a page image, it only reads ocr/'s Markdown output. Kept as its
+# own extra rather than reusing `vlm` so each stage stays independently
+# installable (`uv sync --extra reader`), per this repo's one-folder-per-
+# stage, no-shared-package convention.
+reader = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
+# coder/ (Claude tool-use over reader/'s JSON + ocr/'s Markdown) has the same
+# dependency shape as reader/ and, importantly, does NOT need torch: it only
+# *writes* a training script, it never executes one. Keeping torch out is what
+# lets this stage stay in the managed lock on the Intel-macOS dev machine (see
+# the note above); the generated script's torch/torchvision/transformers
+# dependencies belong to the future runner/ Docker image, not to this project.
+coder = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
+# runner/ executes coder/'s generated scripts in a Docker sandbox, and is the
+# ANSWER to the platform trap above rather than another instance of it: torch
+# lives only inside runner/Dockerfile's image, whose own Linux CPython is
+# unaffected by the host's Intel-macOS/3.13 constraint. On the host this stage
+# shells out to the `docker` CLI via subprocess, so it needs no docker Python
+# SDK either - just the Anthropic SDK for the single failure-triage call.
+runner = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
+# orchestrator/ drives coder/ and runner/ round the retry loop. It makes no API
+# call of its own - the Anthropic SDK is here because it constructs the client
+# that the two stages it drives use - and it shells out to nothing itself, so it
+# inherits their (torch-free) dependency shape exactly.
+orchestrator = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ocr", "reader", "coder", "runner", "orchestrator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "C4", "PTH"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+# coder/output/ holds GENERATED training scripts. They are standalone artifacts
+# meant to run inside the future runner/ Docker image against torch/torchvision/
+# transformers — none of which are (or can be) installed here, per the Intel-macOS
+# platform trap above — and they are deliberately written in plain untyped Python,
+# not to this project's --strict standard. They are gitignored, and their
+# correctness gate is coder/pipeline.py's ast.parse plus the future Runner, not
+# mypy. Without this, `mypy --strict coder/` recurses into them and fails.
+exclude = ["^coder/output/"]
+
+[[tool.mypy.overrides]]
+module = "pypdfium2.*"
+ignore_missing_imports = true
