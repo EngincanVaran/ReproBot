@@ -168,6 +168,41 @@ class HyperparametersExtraction:
     sources_examined: list[str]
 
 
+def _resolve_sources_examined(
+    *, reported: list[str], hyperparameters: list[Hyperparameter]
+) -> list[str]:
+    """Return the model's own `sources_examined`, or derive it when it is empty.
+
+    This field is schema-required and the model has never populated it - empty
+    on every paper of every run, while the extraction beside it was correct and
+    fully source-grounded. Two ways to respond to that: keep insisting in the
+    prompt, or notice that the field is *derivable* and stop asking.
+
+    Every `Hyperparameter` already carries its own `source`, so the set of
+    places examined is exactly the distinct sources of what was found. Deriving
+    it is not a workaround for a flaky model; it is the correct place to compute
+    a value that was always a function of data we already had. The one thing the
+    derivation cannot know is a source that was searched and yielded nothing -
+    hence `reported` still wins whenever the model does supply it.
+
+    Order is stable (first appearance) rather than sorted, so the list reads in
+    the order the paper presents them.
+    """
+    if reported:
+        return reported
+    seen: dict[str, None] = {}
+    for hyperparameter in hyperparameters:
+        if hyperparameter.source:
+            seen.setdefault(hyperparameter.source, None)
+    derived = list(seen)
+    if derived:
+        logger.info(
+            f"  [hparams] model left 'sources_examined' empty (it always does); derived "
+            f"{len(derived)} distinct source(s) from the extracted hyperparameters instead"
+        )
+    return derived
+
+
 def _parse_hyperparameter(raw: object) -> Hyperparameter:
     if not isinstance(raw, dict):
         raise ValueError(f"Expected a hyperparameter object, got {raw!r}")
@@ -209,13 +244,23 @@ class HyperparametersExtractor(Extractor[HyperparametersExtraction]):
             max_tokens=8192,
             tool=HYPERPARAMETER_TOOL,
             user_content=f"{prompt}\n\n---\n\n{markdown_text}",
-            required_keys=("sources_examined", "hyperparameters"),
+            required_keys=("hyperparameters",),
+            # `sources_examined` is schema-required but the model has never once
+            # populated it - empty on every paper, every run. Listing it as
+            # required here made `tooluse` report a perfectly good extraction as
+            # incomplete, which the validator then flagged, which cost a whole
+            # retry pass per paper. See the derivation below for why that was
+            # the wrong place to insist.
+            may_be_empty_keys=("sources_examined",),
         )
 
-        sources_examined = [str(source) for source in as_list(payload.get("sources_examined"))]
         hyperparameters = [
             _parse_hyperparameter(raw) for raw in as_list(payload.get("hyperparameters"))
         ]
+        sources_examined = _resolve_sources_examined(
+            reported=[str(source) for source in as_list(payload.get("sources_examined"))],
+            hyperparameters=hyperparameters,
+        )
 
         logger.info(f"  [hparams] sources examined ({len(sources_examined)}):")
         for source in sources_examined:
