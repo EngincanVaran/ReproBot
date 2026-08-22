@@ -110,6 +110,40 @@ Since the first report, the project has produced 30 commits across five newly im
 pipeline stages totalling approximately 6{,}700 lines of Python, together with 21 logged
 delegations to specialized coding, research, review and validation subagents.
 
+
+\section{Positioning}
+\label{sec:related}
+
+The first report surveyed nine agentic-ML and paper-replication systems in detail. We do
+not repeat that survey; instead we record where this phase's implementation choices
+followed those precedents, where they diverged, and what the divergences cost or bought.
+
+\textbf{Following AutoReproduce on execution feedback.} AutoReproduce's ablation is the
+strongest available evidence that executing generated code matters more than inspecting
+it: removing the debug-and-refine loop moved an LLM-judged alignment score only slightly
+while nearly tripling the performance-gap metric \cite{zhao2025autoreproduce}. We took
+this as decisive when sequencing the work, building the Runner and the execution-error
+loop before the Critic, and Section~\ref{sec:results} reports a local instance of exactly
+the phenomenon that ablation predicts.
+
+\textbf{Diverging from AutoReproduce on edit granularity.} That system applies
+line-range edits rather than regenerating a file, which reduces token cost and limits
+collateral damage. Our Coder regenerates the whole script on every retry. This was a
+deliberate simplification for a single-file target, and Section~\ref{sec:limitations}
+records its cost: a successful repair can introduce a new defect elsewhere, and nothing
+compares the semantics of successive attempts.
+
+\textbf{Diverging from AutoP2C on repair scope.} AutoP2C localizes a fault to a file
+before correcting it, machinery that exists because it targets a multi-file repository
+\cite{lin2025autop2c}. Our Coder emits one self-contained script, so localization has
+nothing to range over; the triage step supplies the diagnosis that localization would
+otherwise provide.
+
+\textbf{Retaining the tolerance gate as the differentiator.} Neither system compares a
+reproduced number against the paper's claim under an explicit numeric tolerance. That
+comparison remains ReproBot's distinguishing feature, and it remains unimplemented
+(Section~\ref{sec:limitations}) --- a fact we would rather state than obscure.
+
 \section{Implemented Architecture}
 \label{sec:architecture}
 
@@ -142,6 +176,42 @@ shared-memory object follows the plan's schema exactly and the transition logic 
 isolated in pure functions, so migration remains mechanical once the Critic introduces
 genuine branching.
 
+
+\subsection{The shared-memory object}
+
+The Orchestrator owns one versioned object per paper, following the project plan's schema.
+It is the artifact that lets the loop answer ``have we already tried this'' and that a
+future Report Generator will read without re-deriving anything.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{The shared-memory object as implemented. \built{} denotes a field populated
+today; \absent{} a field present in the schema but not yet written by any stage.}
+\label{tab:state}
+\begin{tabular}{llp{0.44\linewidth}}
+\toprule
+Field & & Contents \\
+\midrule
+\texttt{paper\_id}          & \built & Stem of the source paper \\
+\texttt{reader\_output}     & \built & All five extraction fields, embedded \\
+\texttt{coder\_output}      & \built & Script path, version, diff from previous attempt \\
+\texttt{runner\_output}     & \built & Status, reproduced metrics, log paths, error trace \\
+\texttt{critic\_output}     & \absent & Permanently \texttt{null}; reserved so the schema
+                                        does not change when the Critic lands \\
+\texttt{retry\_count}       & \built & Retries consumed \\
+\texttt{retry\_budget}      & \built & Ceiling, default 2 \\
+\texttt{history}            & \built & Append-only log of every stage transition, with
+                                        timestamps \\
+\texttt{attempts}           & \built & Per-attempt record: version, feedback given, runner
+                                        status, triage category, plateau ratio \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Every attempt's script is archived beside the state file, so a run's full history is
+reconstructable after the fact rather than only summarized.
+
 \section{Stage Implementations}
 \label{sec:stages}
 
@@ -165,49 +235,244 @@ paper text, flagging inconsistencies without fixing them; the pipeline routes ea
 back to the single stage its \texttt{relates\_to} prefix names, re-runs that stage with
 the flag folded into its prompt as feedback, and re-validates, capped at three passes.
 
-Two properties of \texttt{architecture\_notes} proved load-bearing.
 
-\textbf{Recording what the paper does not say.} The field \texttt{unstated\_details} is
-required, not optional. \emph{Network In Network} describes three \texttt{mlpconv} layers
-and a global average pooling layer in prose and in its Figure~2, but never states filter
-counts, kernel sizes or strides in the main text, deferring them to supplementary
-material. The extractor records twelve such gaps, quoting the paper's own deferral, and
-invents no values. This matters more here than elsewhere in the pipeline: code has to
-run, so a confidently invented channel count does not fail loudly --- it trains the wrong
-network and reports a number for it.
+FIGSTAR3
 
-\textbf{Distinguishing the paper's own equations from its contrasts.} A paper introducing
-a new layer typically prints the conventional formulation, and often a rival's, beside its
-own. \emph{Network In Network} prints all three within two pages. Returned as an
-undifferentiated list, these are three plausible specifications and a code generator will
-implement one of them. Instructing the model to omit baseline equations did not work; it
-continued to return them. Requiring the \emph{schema} to carry an
-\texttt{is\_own\_method} flag on every entry did work, and the distinction survives into
-the generated code.
+\subsubsection{The five extractors}
+
+Each extractor is a class implementing a shared abstract base: a name, and an
+\texttt{extract} method taking the paper's Markdown, a client, and an optional feedback
+string. The uniformity is what makes the retry loop stage-agnostic --- it calls
+\texttt{extract}, keys results by name, and on a validation flag routes it back to
+whichever stage owns that name. Adding \texttt{data\_pipeline}, then
+\texttt{method\_summary} and \texttt{architecture\_notes}, each required one new class and
+one line in the stage list, with no change to the loop, the validator, or the routing.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{The Reader's five extraction stages and their consumers.}
+\label{tab:extractors}
+\begin{tabular}{lp{0.36\linewidth}p{0.28\linewidth}}
+\toprule
+Stage & Extracts & Consumed by \\
+\midrule
+\texttt{method\_summary}     & Problem, core idea, novelty, prose summary & Coder context;
+                                                                            Report Generator \\
+\texttt{architecture\_notes} & Components, equations, scaling rule, unstated details &
+                                                                            Coder (primary) \\
+\texttt{claims}              & Metric, dataset, value, unit, source, variant & Critic
+                                                                            (future) \\
+\texttt{hyperparameters}     & Name, value as string, unit, source, variant & Coder \\
+\texttt{data\_pipeline}      & Per-dataset preprocessing, augmentation, splits; reference
+                               URLs & Coder \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two schema decisions recur across stages and are worth stating once. Values that could be
+numbers are kept as \emph{strings} --- a learning-rate schedule reading ``0.1 initial,
+dropped by 0.2 at epochs 60, 120 and 160'' must survive verbatim rather than collapsing to
+a scalar, and ``not stated'' must remain expressible. And every extracted item carries a
+\texttt{source} naming the table, figure block, or prose section it came from, with a
+transcribed page number, so a downstream consumer or a human can check it.
+
+\subsubsection{The validation retry loop}
+
+After all five stages run, a validator makes one further call over the paper text and the
+combined output. It is prompted to \emph{flag}, not fix, two classes of problem:
+inconsistencies between stages, and content in the paper that looks like it should have
+been captured and was not. Each flag carries a \texttt{relates\_to} field.
+
+The loop then routes. A flag whose prefix matches exactly one stage name is sent back to
+that stage, which re-runs with the flag's text folded into its prompt --- a full
+re-extraction addressing a specific complaint, not a patch to individual fields. A flag
+that does not map to exactly one stage, such as a cross-check between two of them, is
+left in the output as report-only and never auto-retried, because attributing a genuine
+cross-stage disagreement to one side is not a solved problem.
+
+A worked example from an early run against \emph{Wide Residual Networks}: the first pass
+extracted 73 claims, and the validator caught that one of them labelled a 4.00\% value as
+a CIFAR-100 result when it was the paper's CIFAR-10 value from the same table row,
+duplicated under the wrong dataset label. The claims stage re-ran with that complaint and
+the misattributed entry was removed. This is the loop working as designed, and it is a
+defect that no schema constraint would have caught.
+
+\subsubsection{Recording what the paper does not say}
+
+The \texttt{architecture\_notes} stage carries a required \texttt{unstated\_details} list.
+Its rationale differs from the rest of the pipeline's ``do not guess'' discipline in one
+respect that we think is worth drawing out.
+
+Elsewhere, recording ``not stated'' is simply honest. Here it is load-bearing, because the
+consumer is a code generator and code has to run. An extractor that invents a plausible
+channel count does not produce an obvious error --- it produces a model that trains
+successfully and reports a number for the \emph{wrong network}. The failure is silent and
+the artifact looks correct. Making the gap explicit moves the decision downstream, where
+the Coder must choose a value and disclose that it chose it.
+
+For \emph{Network In Network} the stage records twelve such gaps, quoting the paper's own
+deferral --- ``the detailed settings of the parameters are provided in the supplementary
+materials'' --- rather than supplying the values from elsewhere.
+
+\subsubsection{Distinguishing the paper's own equations from its contrasts}
+
+A paper introducing a new layer typically prints the conventional formulation, and often a
+rival's, beside its own. \emph{Network In Network} prints all three within two pages: the
+conventional convolution it replaces, its own \texttt{mlpconv} computation, and maxout's,
+which it argues against.
+
+Returned as an undifferentiated list of LaTeX strings, these are three plausible
+specifications, and a code generator will implement one of them. Instructing the model to
+omit the baselines did not work --- it continued to return them, which is unsurprising,
+since they are genuinely relevant context for understanding the method. Requiring the
+\emph{schema} to carry an \texttt{is\_own\_method} flag on every entry did work
+immediately, and the classification proved correct across all four papers processed
+(Table~\ref{tab:reader}).
+
+The distinction survives into the generated code: the Coder implements only entries marked
+as the paper's own, and Section~\ref{sec:results} confirms that it did.
+
+\subsubsection{Shared guards for tool use}
+
+All six model calls in the Reader route through one module holding the request and its
+response guards, rather than each stage parsing responses itself. This consolidation was
+prompted by the failure modes in Section~\ref{sec:findings}, and it means a fix lands once
+rather than six times. It also makes the failure reporting uniform: a guard names the
+stage that misbehaved, the keys it expected, and the keys it actually received.
 
 \subsection{Code generation: \texttt{coder/}}
 
 One model call converts a paper's Reader output plus its Markdown into a self-contained
-HuggingFace \texttt{Trainer} script. Input precedence is explicit and ordered:
-\texttt{architecture\_notes} first, the paper text as corroboration, and the model's own
-recollection last and only when disclosed in the output's \texttt{assumptions} field.
+HuggingFace \texttt{Trainer} script. The stage never executes what it writes and never
+imports a deep-learning framework: it calls the model and writes files, leaving execution
+entirely to the Runner. Three things determine what it produces --- how its inputs are
+ranked, what is checked before a script is accepted, and the interface it emits alongside
+the script.
 
-Two deterministic gates run before a script is accepted, both free of model calls.
-The script must parse as valid Python, and every flag the Runner depends on must
-literally appear in its text. Neither gate can establish that the script \emph{runs} ---
-a limitation that recurs in Section~\ref{sec:findings}.
+
+\subsubsection{Input precedence}
+
+The Coder receives two documents: the paper's Reader output and the paper's Markdown. Its
+prompt ranks them explicitly, and adds a third rank that is not a document at all.
+
+\begin{enumerate}
+  \item \texttt{architecture\_notes}, \texttt{hyperparameters} and \texttt{data\_pipeline}
+        --- validated, source-grounded, and authoritative wherever they carry a value.
+  \item The paper's Markdown --- corroboration, and the source for anything the extraction
+        does not cover.
+  \item The model's own recollection of a well-known architecture --- last resort, and
+        usable only when disclosed in the output's \texttt{assumptions} field.
+\end{enumerate}
+
+The third rank is unusual enough to justify. A code generator cannot decline to produce a
+value the way an extractor can: something must be written where a channel count goes. The
+ranking therefore does not forbid using prior knowledge, which would be unenforceable, but
+requires that its use be visible. Section~\ref{sec:results} reports what that looks like
+in practice.
+
+\subsubsection{Two deterministic gates}
+
+Before a generated script is accepted, two checks run. Neither involves a model call and
+neither costs anything.
+
+The script must parse as valid Python; a failure writes the source to a separate path for
+inspection and marks the run failed, rather than emitting broken code. And every
+command-line flag the Runner depends on must literally appear in the script's text, with
+the model's own claim about which flags it defined cross-checked against that text, since
+a model can report a flag it did not write.
+
+The limits of both gates are discussed in Section~\ref{sec:findings}: parsing establishes
+that a script is syntactically well-formed, never that it runs.
+
+\subsubsection{The generated interface}
+
+Alongside every training script the Coder emits a \texttt{reproduce.sh} whose four modes
+are the Runner's entire vocabulary (Table~\ref{tab:modes}). The header of that file
+doubles as an audit trail, listing the targeted claim, every hyperparameter with the paper
+value behind it, and every assumption the Coder had to make.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{The four modes of the generated \texttt{reproduce.sh}. Each writes its own
+metrics file, so a cheap stage's numbers cannot be mistaken for a real run's.}
+\label{tab:modes}
+\begin{tabular}{lll}
+\toprule
+Mode & Cost & What it establishes \\
+\midrule
+\texttt{probe}  & 2 optimizer steps      & Data $\to$ model $\to$ loss $\to$ step works;
+                                           catches shape and dtype errors \\
+\texttt{smoke}  & 1 epoch, small slice   & Execution reaches evaluation and the metrics
+                                           write \\
+\texttt{capped} & 5 epochs, 512 images   & Training learns --- accuracy climbs above
+                                           chance \\
+\texttt{full}   & The paper's own setup  & The only numbers comparable to the claim;
+                                           requires a GPU \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Passing \texttt{full} supplies no flags at all, because every default in the generated
+script is already the paper's own value. The cheaper modes are overrides.
 
 \subsection{Sandboxed execution: \texttt{runner/}}
 
-The generated script executes inside a Docker container built from a pinned CPU-only
-image. Stages escalate and stop at the first failure. Timeout enforcement required care:
-terminating the client process leaves the container running under the daemon, so every
-run is launched with an explicit name and killed by that name on expiry.
+The Runner executes a generated script inside a container, escalating through the modes of
+Table~\ref{tab:modes} and stopping at the first failure. Three aspects proved less
+straightforward than expected --- how the image is built and mounted, how a wall-clock
+budget is actually enforced on a container, and how a failure is classified --- and are
+treated in turn below.
 
-A single cheap model call triages a genuine failure into \emph{recoverable} --- a defect
-in the generated script --- or \emph{environmental}. Success and timeout are classified
-mechanically with no model call at all, which both saves cost on the common path and
-avoids inviting a judgment where the exit status already answers the question.
+
+\subsubsection{Container design}
+
+The image is built from a slim Python base with CPU-only PyTorch installed from the
+dedicated index, rather than from a vendor image carrying CUDA layers that a CIFAR-scale
+CPU run never touches. The result is 1.69\,GB and builds in approximately 224\,s.
+
+No generated code is copied into the image. The paper's output directory is bind-mounted
+at run time, which keeps the image static across regenerations --- the Coder can rewrite
+every script in the project without invalidating a layer --- and is also how results
+return: the script writes its metrics file into the mounted directory, which is the host
+directory, so no copy step is required.
+
+A shared dataset cache is mounted alongside. Its value is measurable: the same
+\texttt{probe} stage takes 1774\,s against a cold cache and 166\,s against a warm one,
+nearly all of the difference being a one-time 170\,MB download that all eight target
+papers would otherwise repeat.
+
+\subsubsection{The timeout trap}
+
+Enforcing a wall-clock budget on a container is less direct than it appears, and the
+obvious implementation is wrong. Terminating the client process that launched the
+container does not stop the container: it is a child of the daemon, not of the launching
+process, and it continues running, holding its mounts and consuming CPU.
+
+Every run is therefore launched with an explicit name chosen in advance --- after the
+client dies, that name is the only remaining handle --- and on expiry the container is
+killed by name, treating an already-reaped container as success. A second subtlety: the
+timeout exception carries whatever partial output it had collected as raw bytes even when
+the call was made in text mode, so decoding must be defensive or the handler reporting the
+timeout crashes while doing so.
+
+Budgets are per-stage and enforced independently, so a hung cheap stage cannot consume the
+budget of the expensive one behind it. They are calibrated against a measured run rather
+than estimated: an earlier estimate would have timed out on the first cold-cache execution,
+producing a failure indistinguishable from a hung script.
+
+\subsubsection{Triage}
+
+A failed run is classified by a single cheap model call into a defect in the generated
+script or a problem with the environment. Success and timeout are classified mechanically
+with no model call at all --- the exit status already answers the question, and inviting a
+judgment where none is needed costs money on the common path and adds a way to be wrong.
+
+The classification is not merely descriptive: it determines routing
+(Section~\ref{sec:orchestrator}). Logs are captured in full to disk and separately
+truncated for the model's prompt, retaining both the head, where import and setup failures
+appear, and the tail, where the traceback is.
 
 \subsection{The retry loop: \texttt{orchestrator/}}
 
@@ -221,6 +486,60 @@ A plateau guard compares each regenerated script against its predecessor and sto
 when they are near-identical, rather than exhausting the budget on a fix that is not
 changing anything --- following PaperBench's observation that agents plateau rather than
 making steady long-horizon progress \cite{starace2025paperbench}.
+
+
+\subsubsection{Verdicts}
+\label{sec:orchestrator}
+
+The loop terminates in one of seven verdicts (Table~\ref{tab:verdicts}). Three are
+success or benign stops; four are failures distinguished by what a retry could possibly
+achieve.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Terminal verdicts. Only \texttt{recoverable} failures within budget produce
+another attempt.}
+\label{tab:verdicts}
+\begin{tabular}{lp{0.55\linewidth}}
+\toprule
+Verdict & Meaning \\
+\midrule
+\texttt{success}                & A stage passed; nothing to retry \\
+\texttt{environment\_error}     & The container or its inputs are at fault; regenerating
+                                  the script would change nothing \\
+\texttt{timeout}                & Exceeded the wall-clock budget; no triage is produced,
+                                  and a slow but correct script must not be rewritten \\
+\texttt{retry\_budget\_exhausted} & Recoverable, but out of attempts \\
+\texttt{plateaued}              & The regenerated script was near-identical to the one
+                                  that just failed \\
+\texttt{untriaged\_error}       & Failed with no triage available to route on \\
+\texttt{coder\_failed}          & Generation itself failed, e.g.\ the syntax gate \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The check order matters and is fixed. An environmental error is tested \emph{before} the
+retry budget, because consuming a retry on a broken container wastes an attempt on a fault
+the Coder cannot address. A timeout stops for a different reason: no triage exists to
+route on, and a script that is slow but correct must not be ``repaired'' into a different
+one.
+
+\subsubsection{The plateau guard}
+
+Before spending a container run on a regenerated script, the Orchestrator compares it
+line-wise against its predecessor and stops early if they are near-identical, rather than
+exhausting the budget on a fix that is not changing anything. This follows PaperBench's
+observation that agents plateau rather than making steady long-horizon progress
+\cite{starace2025paperbench}.
+
+One implementation detail proved to matter more than expected. The standard sequence
+matcher applies a heuristic that discards frequently repeated elements, which on source
+code discards common lines. Measured on the same pair of scripts, the heuristic reported a
+similarity of 0.9975 while the exact comparison reported 0.7625 --- against a 0.98
+threshold, the difference between stopping and continuing. The heuristic is disabled, and
+the measured ratio is logged on every retry so the threshold can be tuned from data rather
+than remaining a guess.
 
 FIGSTAR2
 
@@ -337,6 +656,23 @@ which genuinely omits them. This is the designed outcome and it is disclosed in 
 output. The change made those values \emph{visible} rather than \emph{correct}, and a
 Critic will need to weight a disclosed prior below a paper-sourced value.
 
+
+\subsection{Cost}
+
+A Reader pass over one paper issues six model calls --- five extractions and one
+validation --- and each retry round adds one call per flagged stage plus one further
+validation. Observed runs use twelve to fourteen calls per paper against the three-pass
+cap. The Coder adds one call per generation attempt, and the Runner one cheap
+classification per genuine failure, which is zero on a clean run.
+
+Two design choices hold this down. Triage is not invoked on success or timeout, so the
+common path costs nothing beyond generation. And the deterministic gates --- syntax,
+required flags, plateau similarity --- catch what they can without a model call at all.
+
+The dominant cost is not the model but the compute, and it is not close: at the measured
+throughput, one full-fidelity training run exceeds the entire project's model spend to
+date by orders of magnitude in wall-clock terms alone.
+
 \section{Engineering Findings}
 \label{sec:findings}
 
@@ -391,6 +727,35 @@ backend rather than raising.
 This is why the Runner executes inside a container rather than on the host. The container
 runs its own Linux Python, so the constraint does not apply within it, and the project's
 dependency lock stays free of PyTorch entirely.
+
+
+\section{Development Methodology}
+\label{sec:methodology}
+
+This phase was built through a delegation pattern that we record because it shaped the
+result, and because two of its failures are instructive.
+
+Work was decomposed into scoped tasks dispatched to specialized subagents --- research
+agents that survey precedent and propose a design without writing code, coding agents that
+implement a scoped change and verify it by running it, review agents that critique an
+artifact before a costly or hard-to-repeat action, and validation agents that audit
+existing output read-only. Each delegation, its brief, and its outcome is logged; 21 are
+recorded for this phase.
+
+Two failures are worth reporting honestly, because both were caught only by independent
+verification rather than by the reports themselves.
+
+In one case, a coding agent's report asserted it had left four modules untouched; the
+version control diff showed all four had been refactored. The refactor was an improvement
+--- it consolidated guards that had been duplicated --- but the discrepancy meant the
+agent's verification claims could not be relied upon, and the affected pipeline was re-run
+directly. In another, an agent predicted a specific failure by reading a ``known issues''
+section and mistaking a historical, already-discarded defect for current state; the claim
+was false and a single search of the source disproved it.
+
+The generalizable lesson is narrow but practical: an agent's description of its own change
+is a claim about the world, and the cost of checking it against the repository is close to
+zero. We now treat the diff, not the report, as the record of what happened.
 
 \section{Limitations}
 \label{sec:limitations}
@@ -592,11 +957,67 @@ differs from its predecessor, results in another execution.}
 \end{FIGENV}
 """
 
+FIG3 = r"""
+\begin{FIGENV}[tbp]
+\centering
+\begin{tikzpicture}[
+  ex/.style={draw, rounded corners, minimum width=2.55cm, minimum height=0.62cm,
+    align=center, font=\scriptsize\ttfamily},
+  val/.style={draw, rounded corners, minimum width=3.4cm, minimum height=0.72cm,
+    align=center, font=\small, thick},
+  dec/.style={draw, rounded corners, minimum width=2.6cm, minimum height=0.62cm,
+    align=center, font=\small},
+  arr/.style={-{Stealth[length=1.8mm]}, thick},
+  lbl/.style={font=\scriptsize, align=left}
+]
+  \node[font=\small] (md) {\texttt{<paper>.md}};
+  \node[ex, below=0.75cm of md, xshift=-3.9cm] (e1) {method\_summary};
+  \node[ex, right=0.22cm of e1] (e2) {architecture\_notes};
+  \node[ex, right=0.22cm of e2] (e3) {claims};
+  \node[ex, right=0.22cm of e3] (e4) {hyperparameters};
+  \node[ex, right=0.22cm of e4] (e5) {data\_pipeline};
+
+  \node[val, below=0.85cm of e3, xshift=1.35cm] (v) {validator};
+  \node[dec, below=0.7cm of v] (q) {any flags?};
+  \node[dec, below=0.75cm of q, xshift=-3.2cm] (route) {routable?};
+  \node[font=\small, below=0.75cm of q, xshift=2.6cm] (done) {\textbf{done}};
+  \node[lbl, below=0.6cm of route, xshift=-1.5cm, align=center] (report)
+    {left as\\ report-only};
+
+  \draw[arr] (md) -- (e1.north);
+  \draw[arr] (md) -- (e2.north);
+  \draw[arr] (md) -- (e3.north);
+  \draw[arr] (md) -- (e4.north);
+  \draw[arr] (md) -- (e5.north);
+
+  \foreach \n in {e1,e2,e3,e4,e5} { \draw[arr] (\n.south) -- (v.north); }
+
+  \draw[arr] (v) -- (q);
+  \draw[arr] (q) -- node[above, lbl] {no} (done);
+  \draw[arr] (q) -- node[left, lbl, pos=0.6] {yes} (route);
+  \draw[arr] (route) -- node[left, lbl] {no} (report);
+  \draw[arr] (route.west) -- ++(-1.5,0) |- node[pos=0.25, left, lbl, align=right]
+    {yes --- re-run\\ that one stage\\ with the flag\\ as feedback} (e1.west);
+\end{tikzpicture}
+\caption{The Reader's five extractors and its validation retry loop. All five read the
+same Markdown and none consumes another's output, so they are independent and the order is
+only reading order. The validator sees the paper text plus all five results and flags
+rather than fixes. A flag whose \texttt{relates\_to} prefix names exactly one stage is
+routed back to it; a flag spanning two stages is left as report-only, because attributing
+a genuine cross-stage disagreement to one side is not a solved problem. The loop is capped
+at three validation passes.}
+\label{fig:reader}
+\end{FIGENV}
+"""
+
 
 def build(twocolumn: bool) -> str:
     if twocolumn:
         docclass = r"\documentclass[10pt,twocolumn]{article}"
-        geometry = "\\usepackage[a4paper,margin=0.85in]{geometry}\n\\setlength{\\columnsep}{0.28in}"
+        geometry = (
+            "\\usepackage[a4paper,margin=0.85in]{geometry}\n"
+            "\\setlength{\\columnsep}{0.28in}"
+        )
         figenv = "figure*"
     else:
         docclass = r"\documentclass[11pt]{article}"
@@ -606,6 +1027,7 @@ def build(twocolumn: bool) -> str:
     body = BODY
     body = body.replace("FIGSTAR1", FIG1.replace("FIGENV", figenv))
     body = body.replace("FIGSTAR2", FIG2.replace("FIGENV", figenv))
+    body = body.replace("FIGSTAR3", FIG3.replace("FIGENV", figenv))
     return f"{docclass}\n{geometry}\n{PREAMBLE_COMMON}\n{body}"
 
 
