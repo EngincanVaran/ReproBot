@@ -1,18 +1,21 @@
-"""Streamlit viewer for the ocr/ and reader/ pipeline outputs.
+"""Streamlit viewer for the ocr/, reader/, and coder/ pipeline outputs.
 
-Mostly read-only: it loads files that `ocr/` and `reader/` have already
-written to `ocr/output/vlm/*.md` and `reader/output/*.json` and displays
-them, without altering how either stage extracts or operates. Two
-exceptions, both calling each stage's own entry-point function directly,
-unmodified, exactly as their CLIs do:
+Mostly read-only: it loads files that `ocr/`, `reader/`, and `coder/` have
+already written to `ocr/output/vlm/*.md`, `reader/output/*.json`, and
+`coder/output/*.json` and displays them, without altering how any stage
+extracts or operates. Three exceptions, each calling a stage's own
+entry-point function directly, unmodified, exactly as its CLI does:
 
 - The "Import a paper" section lets a user upload a new PDF and run OCR on
   it, via `ocr/vlm_extract.py`'s `run_vlm()`.
 - A paper with OCR done but no Reader output yet gets a "Run Reader
   extraction" button on its Overview tab, via `reader/pipeline.py`'s
   `run_pipeline()`.
+- A paper with Reader output but no Coder output yet gets a "Generate
+  code" button on its Overview tab, via `coder/pipeline.py`'s
+  `run_pipeline()`.
 
-Neither reimplements or changes the extraction logic itself.
+None of these reimplement or change the extraction/generation logic itself.
 
 Uploaded PDFs are saved to `viewer/uploads/`, not `dataset/` - `dataset/` is
 curated by someone else in parallel (see CLAUDE.md), so this app never
@@ -41,14 +44,16 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from loguru import logger
 
+from coder.pipeline import run_pipeline as run_coder_pipeline
 from ocr.vlm_extract import run_vlm
-from reader.pipeline import run_pipeline
+from reader.pipeline import run_pipeline as run_reader_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = REPO_ROOT / "dataset"
 UPLOADS_DIR = REPO_ROOT / "viewer" / "uploads"
 OCR_DIR = REPO_ROOT / "ocr" / "output" / "vlm"
 READER_DIR = REPO_ROOT / "reader" / "output"
+CODER_DIR = REPO_ROOT / "coder" / "output"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
 
@@ -84,12 +89,17 @@ def reader_json_path(paper: str) -> Path:
     return READER_DIR / f"{paper}.json"
 
 
+def coder_json_path(paper: str) -> Path:
+    return CODER_DIR / f"{paper}.json"
+
+
 @st.cache_data
-def load_reader_output(path_str: str, mtime: float) -> dict[str, Any]:
-    """`mtime` busts the cache when pipeline.py re-writes the file, e.g.
-    after a retry loop finishes with new content."""
+def load_json_output(path_str: str, mtime: float) -> dict[str, Any]:
+    """Shared loader for reader/'s and coder/'s output JSON - same shape,
+    just a different directory. `mtime` busts the cache when a pipeline
+    re-writes the file, e.g. after a retry loop finishes with new content."""
     path = Path(path_str)
-    logger.info("Loading reader output: {}", path)
+    logger.info("Loading JSON output: {}", path)
     return cast("dict[str, Any]", json.loads(path.read_text()))
 
 
@@ -134,7 +144,7 @@ def run_reader_extraction(markdown_path: Path, paper_name: str) -> None:
 
     with st.status(f"Running Reader extraction on '{paper_name}'...", expanded=False) as status:
         try:
-            output = run_pipeline(markdown_path, READER_DIR, client)
+            output = run_reader_pipeline(markdown_path, READER_DIR, client)
         except Exception as exc:  # noqa: BLE001 - surface any extraction error in the UI
             status.update(label=f"Reader extraction failed: {exc}", state="error")
             logger.error("Reader extraction failed for {}: {}", paper_name, exc)
@@ -144,6 +154,29 @@ def run_reader_extraction(markdown_path: Path, paper_name: str) -> None:
             state="complete",
         )
     logger.info("Reader extraction finished for {}", paper_name)
+    st.rerun()
+
+
+def run_coder_extraction(reader_output_path: Path, paper_name: str) -> None:
+    """Invoke coder/pipeline.py's own run_pipeline() unmodified - same
+    MethodTranslator/CodeSynthesizer/DependencyResolver chain as running
+    the CLI by hand."""
+    load_dotenv(REPO_ROOT / ".env")
+    try:
+        client = Anthropic()
+    except Exception as exc:  # noqa: BLE001 - surface any client-setup error in the UI
+        st.error(f"Could not create Anthropic client (check ANTHROPIC_API_KEY): {exc}")
+        return
+
+    with st.status(f"Generating code for '{paper_name}'...", expanded=False) as status:
+        try:
+            output = run_coder_pipeline(reader_output_path, CODER_DIR, client)
+        except Exception as exc:  # noqa: BLE001 - surface any generation error in the UI
+            status.update(label=f"Code generation failed: {exc}", state="error")
+            logger.error("Code generation failed for {}: {}", paper_name, exc)
+            return
+        status.update(label=f"Code generated -> {Path(output.script_path).name}", state="complete")
+    logger.info("Code generation finished for {}", paper_name)
     st.rerun()
 
 
@@ -185,7 +218,7 @@ def render_pipeline_status(papers: list[str]) -> None:
         has_reader = reader_path.exists()
         flags = 0
         if has_reader:
-            data = load_reader_output(str(reader_path), reader_path.stat().st_mtime)
+            data = load_json_output(str(reader_path), reader_path.stat().st_mtime)
             flags = len(data.get("validation", {}).get("flags", []))
         rows.append(
             {
@@ -248,23 +281,54 @@ def render_validation(data: dict[str, Any]) -> None:
         st.divider()
 
 
+def render_code(coder_data: dict[str, Any]) -> None:
+    model_choice = coder_data.get("code_plan", {}).get("model_choice", {})
+    if model_choice.get("caveats"):
+        st.warning(f"Fidelity caveat: {model_choice['caveats']}")
+
+    script_path = Path(coder_data["script_path"])
+    st.markdown(f"**Script:** `{script_path.name}`")
+    if script_path.exists():
+        st.code(script_path.read_text(), language="python")
+    else:
+        st.warning(f"Script file not found on disk: {script_path}")
+
+    requirements_path = Path(coder_data["requirements_path"])
+    if requirements_path.exists():
+        st.markdown("**Requirements**")
+        st.code(requirements_path.read_text(), language="text")
+
+    notes = coder_data.get("synthesis_notes")
+    if notes:
+        st.markdown("**Synthesis notes**")
+        st.markdown(notes)
+
+
 def render_paper(paper: str) -> None:
     reader_path = reader_json_path(paper)
     ocr_path = ocr_markdown_path(paper)
+    coder_path = coder_json_path(paper)
 
     if not reader_path.exists() and not ocr_path.exists():
         st.warning(f"No pipeline output yet for '{paper}'.")
         return
 
     data = (
-        load_reader_output(str(reader_path), reader_path.stat().st_mtime)
+        load_json_output(str(reader_path), reader_path.stat().st_mtime)
         if reader_path.exists()
+        else None
+    )
+    coder_data = (
+        load_json_output(str(coder_path), coder_path.stat().st_mtime)
+        if coder_path.exists()
         else None
     )
 
     tab_names = ["Overview"]
     if data is not None:
         tab_names += ["Claims", "Hyperparameters", "Data Pipeline", "Validation", "Raw JSON"]
+    if coder_data is not None:
+        tab_names.append("Code")
     if ocr_path.exists():
         tab_names.append("Raw OCR Markdown")
 
@@ -275,6 +339,7 @@ def render_paper(paper: str) -> None:
         st.markdown(f"### {paper}")
         st.markdown(f"- OCR Markdown: {'available' if ocr_path.exists() else 'not yet run'}")
         st.markdown(f"- Reader output: {'available' if data is not None else 'not yet run'}")
+        st.markdown(f"- Coder output: {'available' if coder_data is not None else 'not yet run'}")
         if data is not None:
             st.markdown(f"- Claims: {len(data.get('claims', {}).get('claims', []))}")
             st.markdown(
@@ -290,6 +355,18 @@ def render_paper(paper: str) -> None:
             if st.button("Run Reader extraction", key=f"run_reader_{paper}"):
                 run_reader_extraction(ocr_path, paper)
 
+        if coder_data is not None:
+            dependency_count = len(coder_data.get("dependencies", {}).get("requirements", []))
+            st.markdown(f"- Generated script: {Path(coder_data['script_path']).name}")
+            st.markdown(f"- Dependencies: {dependency_count}")
+        elif data is not None:
+            st.caption(
+                "Calls the Anthropic API (Method Translator + Code Synthesizer); "
+                "Dependency Resolver runs deterministically, no extra call."
+            )
+            if st.button("Generate code", key=f"run_coder_{paper}"):
+                run_coder_extraction(reader_path, paper)
+
     if data is not None:
         with tab_by_name["Claims"]:
             render_claims(data)
@@ -302,6 +379,10 @@ def render_paper(paper: str) -> None:
         with tab_by_name["Raw JSON"]:
             st.json(data)
 
+    if coder_data is not None:
+        with tab_by_name["Code"]:
+            render_code(coder_data)
+
     if ocr_path.exists():
         with tab_by_name["Raw OCR Markdown"]:
             st.markdown(load_markdown(str(ocr_path), ocr_path.stat().st_mtime))
@@ -311,9 +392,9 @@ def main() -> None:
     st.set_page_config(page_title="ReproBot Pipeline Viewer", layout="wide")
     st.title("ReproBot Pipeline Viewer")
     st.caption(
-        "Displays ocr/output/ and reader/output/ as-is; the import section "
-        "below can trigger ocr/vlm_extract.py's existing OCR backend on a "
-        "newly uploaded paper, unmodified."
+        "Displays ocr/output/, reader/output/, and coder/output/ as-is; the "
+        "import section below and the per-paper Overview buttons can trigger "
+        "each stage's own pipeline, unmodified."
     )
 
     papers = list_papers()
