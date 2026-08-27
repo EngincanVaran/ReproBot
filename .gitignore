@@ -228,3 +228,6 @@ reader/output/
 
 # ReproBot: papers imported through viewer/'s "Import a paper" section
 viewer/uploads/
+
+# ReproBot: generated Coder output (training scripts written from reader/ JSON)
+coder/output/

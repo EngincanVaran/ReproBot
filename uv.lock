@@ -1243,6 +1243,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+coder = [
+    { name = "anthropic" },
+    { name = "python-dotenv" },
+]
 pdfplumber = [
     { name = "pdfplumber" },
 ]
@@ -1273,6 +1277,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'coder'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'reader'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'viewer'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'vlm'", specifier = ">=0.69" },
@@ -1281,12 +1286,13 @@ requires-dist = [
     { name = "pdfplumber", marker = "extra == 'pdfplumber'", specifier = ">=0.11" },
     { name = "pypdfium2", marker = "extra == 'viewer'", specifier = ">=4.30" },
     { name = "pypdfium2", marker = "extra == 'vlm'", specifier = ">=4.30" },
+    { name = "python-dotenv", marker = "extra == 'coder'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'reader'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'viewer'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'vlm'", specifier = ">=1.0" },
     { name = "streamlit", marker = "extra == 'viewer'", specifier = ">=1.38" },
 ]
-provides-extras = ["pdfplumber", "vlm", "reader", "viewer"]
+provides-extras = ["pdfplumber", "vlm", "reader", "viewer", "coder"]
 
 [package.metadata.requires-dev]
 dev = [
