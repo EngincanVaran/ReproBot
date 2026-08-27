@@ -1,0 +1,222 @@
+<title>ReproBot Stage 1: OCR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=DM+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --stock:  #F4F3EF;
+    --card:   #FFFFFF;
+    --stock2: #E9E7E1;
+    --ink:    #101010;
+    --ink2:   #4A4A48;
+    --ink3:   #85847F;
+    --rule:   #D3D1CA;
+    --red:    #C8102E;
+    --green:  #14664B;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --stock:  #121211;
+      --card:   #1A1A18;
+      --stock2: #232320;
+      --ink:    #F2F1EC;
+      --ink2:   #B4B2AB;
+      --ink3:   #807E77;
+      --rule:   #33332E;
+      --red:    #FF5A6E;
+      --green:  #4FC79B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --stock:  #121211; --card: #1A1A18; --stock2: #232320;
+    --ink: #F2F1EC; --ink2: #B4B2AB; --ink3: #807E77;
+    --rule: #33332E; --red: #FF5A6E; --green: #4FC79B;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--stock); color: var(--ink);
+         font-family: Archivo, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  .page { max-width: 1000px; margin: 0 auto; padding: clamp(20px, 3vw, 36px); }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 8px;
+          padding: clamp(22px, 3vw, 38px);
+          display: flex; flex-direction: column; gap: clamp(16px, 2vw, 24px); }
+
+  /* header */
+  .top { display: flex; align-items: flex-start; justify-content: space-between;
+         gap: 20px; flex-wrap: wrap; padding-bottom: 16px;
+         border-bottom: 4px solid var(--red); }
+  .stagenum { font-family: "DM Mono", monospace; font-size: 0.72rem; letter-spacing: 0.2em;
+              text-transform: uppercase; color: var(--red); font-weight: 500; margin: 0 0 8px; }
+  h1 { font-size: clamp(1.9rem, 4.4vw, 3rem); font-weight: 800; letter-spacing: -0.03em;
+       line-height: 1; margin: 0; }
+  h1 .path { font-family: "DM Mono", monospace; font-weight: 500;
+             font-size: 0.5em; color: var(--ink3); letter-spacing: -0.01em; }
+  .badge { font-family: "DM Mono", monospace; font-size: 0.7rem; letter-spacing: 0.09em;
+           text-transform: uppercase; font-weight: 500; padding: 5px 11px;
+           border-radius: 3px; background: var(--green); color: var(--card);
+           white-space: nowrap; }
+
+  .oneliner { font-size: clamp(1.08rem, 1.9vw, 1.32rem); color: var(--ink); line-height: 1.45;
+              max-width: 60ch; margin: 0; font-weight: 500; }
+
+  h2 { font-family: "DM Mono", monospace; font-size: 0.72rem; letter-spacing: 0.15em;
+       text-transform: uppercase; color: var(--ink3); font-weight: 500; margin: 0 0 12px; }
+
+  /* flow strip */
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap;
+          border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+  .flow > div { flex: 1 1 160px; padding: 14px 16px; background: var(--stock2);
+                border-right: 1px solid var(--rule); }
+  .flow > div:last-child { border-right: none; }
+  .flow .lbl { font-family: "DM Mono", monospace; font-size: 0.66rem; letter-spacing: 0.1em;
+               text-transform: uppercase; color: var(--ink3); margin-bottom: 6px; }
+  .flow .val { font-size: 0.98rem; font-weight: 600; line-height: 1.3; }
+  .flow .val small { display: block; font-weight: 400; font-size: 0.82rem;
+                     color: var(--ink2); margin-top: 3px; }
+  .flow .mid { background: var(--card); }
+
+  /* bullets */
+  /* Marker is absolutely positioned rather than a grid/flex sibling: inside a grid or
+     flex li, the <strong> lead and the sentence after it become SEPARATE items and get
+     dealt into different cells, which wraps the text one word per line. Keeping the li
+     in normal flow means the whole sentence stays one continuous run. */
+  ul.pts { margin: 0; padding: 0; list-style: none;
+           display: flex; flex-direction: column; gap: 11px; }
+  ul.pts > li { position: relative; padding-left: 27px;
+                font-size: clamp(0.96rem, 1.4vw, 1.06rem); color: var(--ink2);
+                line-height: 1.55; }
+  ul.pts > li::before { content: "▪"; position: absolute; left: 4px; top: 0;
+                        color: var(--red); font-size: 0.9em; line-height: 1.55; }
+  ul.pts strong { color: var(--ink); font-weight: 600; }
+
+  /* stat row */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; }
+  .stat { border-top: 3px solid var(--ink); padding-top: 11px; }
+  .stat.red { border-top-color: var(--red); }
+  .stat .n { font-family: "DM Mono", monospace; font-size: clamp(1.5rem, 3vw, 2rem);
+             font-weight: 500; letter-spacing: -0.03em; line-height: 1;
+             font-variant-numeric: tabular-nums; }
+  .stat .n.red { color: var(--red); }
+  .stat .c { font-size: 0.85rem; color: var(--ink2); margin-top: 6px; line-height: 1.35; }
+
+  /* example box */
+  .example { background: var(--stock2); border-left: 4px solid var(--red);
+             padding: 16px 19px; border-radius: 0 5px 5px 0; }
+  .example .cap { font-family: "DM Mono", monospace; font-size: 0.66rem;
+                  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3);
+                  margin-bottom: 9px; }
+  .example code { font-family: "DM Mono", monospace; font-size: 0.85rem; color: var(--ink);
+                  line-height: 1.6; display: block; }
+  .example p { margin: 10px 0 0; font-size: 0.9rem; color: var(--ink2); line-height: 1.5; }
+
+  .note { border-left: 4px solid var(--ink3); background: var(--stock2);
+          padding: 14px 18px; border-radius: 0 5px 5px 0; }
+  .note p { margin: 0; font-size: 0.94rem; color: var(--ink2); line-height: 1.5; }
+  .note strong { color: var(--ink); }
+
+  code.inl { font-family: "DM Mono", monospace; font-size: 0.87em;
+             background: var(--stock2); padding: 0.1em 0.36em; border-radius: 2px; color: var(--ink); }
+
+  footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+           padding-top: 18px; border-top: 1px solid var(--rule);
+           font-family: "DM Mono", monospace; font-size: 0.72rem; color: var(--ink3); }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+          gap: clamp(20px, 3vw, 34px); }
+
+  /* Print / PDF: this is a one-page handout, so it must hold to a single sheet.
+     The card border, page background and outer padding are screen affordances and
+     are dropped here; type steps down slightly to buy the vertical room. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background: #fff; }
+    .page { padding: 0; max-width: none; }
+    .card { background: #fff; border: none; border-radius: 0; padding: 0; gap: 13px; }
+    .card > div, .cols > div, .example, .note, .flow { break-inside: avoid; }
+    .top { padding-bottom: 12px; }
+    h1 { font-size: 24pt; }
+    .oneliner { font-size: 11.6pt; }
+    ul.pts { gap: 8px; }
+    ul.pts > li { font-size: 10pt; line-height: 1.42; }
+    .flow .val { font-size: 9.8pt; }
+    .flow .val small, .example p, .note p, .stat .c { font-size: 8.8pt; }
+    .example code { font-size: 8.2pt; line-height: 1.5; }
+    .stat .n { font-size: 17pt; }
+    footer { font-size: 7.6pt; padding-top: 12px; }
+  }
+</style>
+
+<div class="page">
+  <div class="card">
+
+    <div class="top">
+      <div>
+        <p class="stagenum">ReproBot · Stage 1 of 5</p>
+        <h1>Reading the paper <span class="path">ocr/</span></h1>
+      </div>
+      <span class="badge">Built · working</span>
+    </div>
+
+    <p class="oneliner">A research paper is a PDF — a picture of a document, not data. This stage turns it into text a program can actually work with.</p>
+
+    <div>
+      <h2>What goes in, what comes out</h2>
+      <div class="flow">
+        <div>
+          <div class="lbl">Input</div>
+          <div class="val">A paper PDF<small>e.g. “Network In Network”, 10 pages</small></div>
+        </div>
+        <div class="mid">
+          <div class="lbl">What happens</div>
+          <div class="val">Each page → an image → Claude reads it<small>one call per page, ~13 seconds each</small></div>
+        </div>
+        <div>
+          <div class="lbl">Output</div>
+          <div class="val">One Markdown file<small>plain text, tables, figure descriptions</small></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2>The key points</h2>
+      <ul class="pts">
+        <li><strong>It looks at the page, it doesn't parse the file.</strong> Every page is rendered as an image and read by Claude — the same way a person reads a printed paper.</li>
+        <li><strong>Layout is handled deliberately.</strong> Two-column papers are read down each column rather than straight across, and page numbers, headers and the arXiv stamp are dropped instead of landing mid-sentence.</li>
+        <li><strong>Tables are copied cell by cell.</strong> They hold the results the paper is claiming, so a single wrong digit here would quietly corrupt every later stage.</li>
+        <li><strong>Figures come out as sentences</strong> — which is where the whole approach earns its keep, for the reason shown below.</li>
+        <li><strong>About two minutes per paper.</strong> Roughly 13 seconds a page, one call each.</li>
+      </ul>
+    </div>
+
+    <div class="cols">
+      <div>
+        <h2>Why that fourth point matters</h2>
+        <div class="example">
+          <div class="cap">From the output — a figure, as text</div>
+          <code>[Figure 2: The overall structure of Network In Network. The NINs include the stacking of three mlpconv layers and one global average pooling layer…]</code>
+          <p>That sentence is the paper's entire architecture. It exists <em>only</em> in the figure — no table or paragraph states it. A text-scraping tool would have missed it, and the stage that later writes the training code would have had nothing to build from.</p>
+        </div>
+      </div>
+
+      <div>
+        <h2>Where it stands</h2>
+        <div class="stats">
+          <div class="stat"><div class="n">6 / 8</div><div class="c">papers converted</div></div>
+          <div class="stat"><div class="n">320 KB</div><div class="c">of clean text</div></div>
+          <div class="stat red"><div class="n red">2</div><div class="c">blocked — below</div></div>
+        </div>
+        <div class="note" style="margin-top:18px">
+          <p><strong>The one real problem.</strong> Two papers refuse to convert. Both fail on page 2, every time, because Claude's safety filter flags the page image — even though the pages are ordinary academic text. We checked: it fails identically at a different image size and with a one-line prompt, so it isn't something we're doing wrong. Those two are stuck outside the pipeline for now.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <span>Next stage → <code class="inl">reader/</code> turns this text into structured data</span>
+      <span>ReproBot · inzva AI Projects #10</span>
+    </footer>
+
+  </div>
+</div>
