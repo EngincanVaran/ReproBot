@@ -71,6 +71,16 @@ class CodePlan:
 
 
 @dataclass
+class SynthesizedScript:
+    """Code Synthesizer's output: the full training script plus any
+    implementation-level notes (e.g. a workaround needed to fit the paper's
+    optimizer/schedule into transformers.Trainer's API)."""
+
+    script: str
+    notes: str | None
+
+
+@dataclass
 class Dependency:
     package: str
     version: str
