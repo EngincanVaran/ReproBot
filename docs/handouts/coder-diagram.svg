@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1620 636" width="1620" height="636" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#3A3A38"/>
+    </marker>
+    <marker id="arRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#C8102E"/>
+    </marker>
+    <marker id="arGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8A8A85"/>
+    </marker>
+  </defs>
+
+  <!-- ============ TOP FLOW ============ -->
+
+  <!-- 1 INPUTS -->
+  <rect x="30" y="70" width="250" height="150" rx="6" fill="none" stroke="#3A3A38" stroke-width="2"/>
+  <text x="50" y="103" font-size="15" fill="#8A8A85" letter-spacing="1.8">INPUTS</text>
+  <text x="50" y="139" font-size="21" fill="#111" font-weight="600">Extracted facts</text>
+  <text x="50" y="163" font-size="16" fill="#55554F">architecture, results,</text>
+  <text x="50" y="183" font-size="16" fill="#55554F">settings, known gaps</text>
+  <text x="50" y="209" font-size="17" fill="#111" font-weight="600">+ the paper itself</text>
+
+  <line x1="280" y1="145" x2="336" y2="145" stroke="#3A3A38" stroke-width="2.2" marker-end="url(#ar)"/>
+
+  <!-- 2 GENERATE -->
+  <rect x="342" y="70" width="268" height="150" rx="6" fill="#FBEEF0" stroke="#C8102E" stroke-width="2.6"/>
+  <text x="364" y="103" font-size="15" fill="#C8102E" letter-spacing="1.8">GENERATE</text>
+  <text x="364" y="139" font-size="21" fill="#111" font-weight="600">One model call</text>
+  <text x="364" y="166" font-size="16" fill="#55554F">writes the whole training</text>
+  <text x="364" y="186" font-size="16" fill="#55554F">script in a single pass</text>
+  <text x="364" y="209" font-size="15" fill="#8A8A85">~340 lines</text>
+
+  <line x1="610" y1="145" x2="666" y2="145" stroke="#3A3A38" stroke-width="2.2" marker-end="url(#ar)"/>
+
+  <!-- 3 + 4 GATES -->
+  <rect x="672" y="46" width="252" height="86" rx="6" fill="none" stroke="#8A8A85" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="692" y="76" font-size="14" fill="#8A8A85" letter-spacing="1.6">GATE 1 &#183; SYNTAX</text>
+  <text x="692" y="104" font-size="18" fill="#111" font-weight="600">Is it valid Python?</text>
+  <text x="692" y="123" font-size="15" fill="#55554F">invalid &#8594; rejected, run fails</text>
+
+  <rect x="672" y="158" width="252" height="86" rx="6" fill="none" stroke="#8A8A85" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="692" y="188" font-size="14" fill="#8A8A85" letter-spacing="1.6">GATE 2 &#183; INTERFACE</text>
+  <text x="692" y="216" font-size="18" fill="#111" font-weight="600">All 9 flags present?</text>
+  <text x="692" y="235" font-size="15" fill="#55554F">checked against the real source</text>
+
+  <text x="798" y="272" font-size="14" fill="#8A8A85" text-anchor="middle">deterministic &#183; no model call &#183; free</text>
+
+  <line x1="924" y1="145" x2="980" y2="145" stroke="#3A3A38" stroke-width="2.2" marker-end="url(#ar)"/>
+
+  <!-- 5 OUTPUTS -->
+  <rect x="986" y="46" width="300" height="62" rx="5" fill="none" stroke="#3A3A38" stroke-width="2"/>
+  <text x="1006" y="73" font-size="19" fill="#111" font-weight="600" font-family="Menlo, Consolas, monospace">train.py</text>
+  <text x="1006" y="94" font-size="15" fill="#55554F">the training script</text>
+
+  <rect x="986" y="118" width="300" height="62" rx="5" fill="none" stroke="#C8102E" stroke-width="2.4"/>
+  <text x="1006" y="145" font-size="19" fill="#C8102E" font-weight="600" font-family="Menlo, Consolas, monospace">reproduce.sh</text>
+  <text x="1006" y="166" font-size="15" fill="#55554F">probe &#183; smoke &#183; capped &#183; full</text>
+
+  <rect x="986" y="190" width="300" height="62" rx="5" fill="none" stroke="#3A3A38" stroke-width="2"/>
+  <text x="1006" y="217" font-size="19" fill="#111" font-weight="600" font-family="Menlo, Consolas, monospace">coder_output.json</text>
+  <text x="1006" y="238" font-size="15" fill="#55554F">every assumption, written down</text>
+
+  <text x="1136" y="272" font-size="14" fill="#8A8A85" text-anchor="middle">OUTPUTS</text>
+
+  <!-- handoff note -->
+  <line x1="1286" y1="149" x2="1342" y2="149" stroke="#C8102E" stroke-width="2.2" marker-end="url(#arRed)"/>
+  <text x="1352" y="134" font-size="16" fill="#C8102E" font-weight="600">The next stage runs</text>
+  <text x="1352" y="156" font-size="16" fill="#C8102E" font-weight="600">only reproduce.sh &#8212;</text>
+  <text x="1352" y="178" font-size="16" fill="#55554F">it never sees the script,</text>
+  <text x="1352" y="200" font-size="16" fill="#55554F">so a different paper</text>
+  <text x="1352" y="222" font-size="16" fill="#55554F">changes nothing there.</text>
+
+  <!-- ============ PRECEDENCE PANEL ============ -->
+  <line x1="476" y1="220" x2="476" y2="352" stroke="#C8102E" stroke-width="2.2" stroke-dasharray="6 5" marker-end="url(#arRed)"/>
+  <text x="492" y="292" font-size="15" fill="#C8102E" font-style="italic">what it is allowed to believe</text>
+
+  <rect x="30" y="360" width="1256" height="248" rx="8" fill="#F7F6F3" stroke="#DCD9D2" stroke-width="1.6"/>
+
+  <text x="62" y="400" font-size="15" fill="#8A8A85" letter-spacing="1.8">SOURCE PRECEDENCE</text>
+
+  <!-- rank 1 -->
+  <circle cx="80" cy="446" r="17" fill="#14664B"/>
+  <text x="80" y="452" font-size="17" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+  <text x="112" y="442" font-size="20" fill="#111" font-weight="600">The extracted facts</text>
+  <text x="112" y="466" font-size="16" fill="#55554F">Authoritative wherever they carry a value.</text>
+
+  <!-- rank 2 -->
+  <circle cx="80" cy="512" r="17" fill="#3A3A38"/>
+  <text x="80" y="518" font-size="17" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+  <text x="112" y="508" font-size="20" fill="#111" font-weight="600">The paper&#8217;s own text</text>
+  <text x="112" y="532" font-size="16" fill="#55554F">Corroboration, and anything the extraction missed.</text>
+
+  <!-- rank 3 -->
+  <circle cx="80" cy="578" r="17" fill="#C8102E"/>
+  <text x="80" y="584" font-size="17" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+  <text x="112" y="574" font-size="20" fill="#C8102E" font-weight="600">The model&#8217;s own memory &#8212; last resort</text>
+  <text x="112" y="598" font-size="16" fill="#55554F">Permitted only if disclosed in writing.</text>
+
+  <!-- the rationale, set apart -->
+  <line x1="700" y1="410" x2="700" y2="580" stroke="#DCD9D2" stroke-width="1.6"/>
+  <text x="736" y="424" font-size="15" fill="#8A8A85" letter-spacing="1.8">WHY RANK 3 EXISTS AT ALL</text>
+  <text x="736" y="462" font-size="18" fill="#111">A code generator cannot decline to answer the</text>
+  <text x="736" y="488" font-size="18" fill="#111">way an extractor can &#8212; something must be written</text>
+  <text x="736" y="514" font-size="18" fill="#111">where a missing number goes.</text>
+  <text x="736" y="556" font-size="19" fill="#C8102E" font-weight="600">So the rule is not &#8220;never guess&#8221;.</text>
+  <text x="736" y="582" font-size="19" fill="#C8102E" font-weight="600">It is &#8220;guess visibly&#8221;.</text>
+
+  <!-- ============ CAVEAT ============ -->
+  <line x1="798" y1="244" x2="798" y2="290" stroke="#8A8A85" stroke-width="0" />
+  <rect x="1316" y="360" width="274" height="248" rx="8" fill="none" stroke="#8A8A85" stroke-width="1.8" stroke-dasharray="7 5"/>
+  <text x="1344" y="400" font-size="15" fill="#8A8A85" letter-spacing="1.6">WHAT THE GATES MISS</text>
+  <text x="1344" y="438" font-size="18" fill="#111">Both check that the</text>
+  <text x="1344" y="462" font-size="18" fill="#111">script is well-formed.</text>
+  <text x="1344" y="492" font-size="18" fill="#111" font-weight="600">Neither proves it runs.</text>
+  <text x="1344" y="530" font-size="16" fill="#55554F">Two real bugs passed</text>
+  <text x="1344" y="552" font-size="16" fill="#55554F">both and only failed</text>
+  <text x="1344" y="574" font-size="16" fill="#55554F">once executed &#8212; which</text>
+  <text x="1344" y="596" font-size="16" fill="#55554F">is why a Runner exists.</text>
+</svg>

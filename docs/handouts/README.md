@@ -15,6 +15,24 @@ know what ReproBot does without reading the code.
 Each exists as `.html` (opens in a browser, supports dark mode) and `.pdf` (one A4
 page, ready to print or send).
 
+## Slide graphic
+
+`coder-diagram.svg` is a title-less diagram of the Coder stage, sized to drop straight
+into a presentation under your own slide heading. Also rendered as PNG at 1x and 2x with
+transparent backgrounds, so it sits on any slide colour.
+
+Use the SVG where the tool supports it (Keynote, PowerPoint, Google Slides all do) — it
+stays sharp at any projection size. Regenerate the PNGs after editing the SVG:
+
+```bash
+cd docs/handouts
+printf '<style>html,body{margin:0;background:transparent}img{display:block}</style>\n<img src="coder-diagram.svg" width="1620">' > _wrap.html
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu \
+  --screenshot="coder-diagram.png" --window-size=1620,636 \
+  --default-background-color=00000000 --hide-scrollbars "file://$PWD/_wrap.html"
+rm _wrap.html
+```
+
 ## Regenerating
 
 `01-ocr.html` was hand-written; sheets 02–05 come from `generate.py`, which holds the
