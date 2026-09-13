@@ -62,6 +62,10 @@ important missing piece.
 
 ## Next up
 
+- [ ] **Six new diversity papers in `extra-papers/`** (2026-09-13) — SVM, scikit-learn model zoo,
+      GCN, text CNN, TCN, soft decision tree; details in `extra-papers/README.md`. Two need
+      **scikit-learn support in `coder/`** (plan proposed to Engincan, awaiting go-ahead); none
+      is OCR'd yet (~68 VLM page calls for all six).
 - [ ] **Build `critic/`** — compare `metrics.json` `value` against `claims[].reported_value`
       under an explicit tolerance, using `higher_is_better` from the new metrics contract.
       Deliberately arithmetic, not an LLM judging numbers (project plan §2.5). Tang's
