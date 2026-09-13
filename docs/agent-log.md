@@ -1071,3 +1071,16 @@ papers, the SVM exactness check, and two findings (exactness where the library i
 the ladder does not fit non-iterative models).
 
 ---
+
+### Direct — soft decision tree: why it never learned (2026-09-13)
+
+Engincan suspected the running full job was not learning. `docker logs` on the live container:
+test accuracy 0.28% → 0.15% over four epochs, loss -1.56 → -3.01. Root cause: the paper prints
+Eq. 3 as `L = -log(Σ_ℓ P^ℓ Σ_k T_k log Q_k^ℓ)`, whose bracket is never positive. The Reader
+extracted it verbatim (correctly), the Coder implemented it faithfully and wrote
+`-log(-inner_sum)` to keep the log defined — which maximizes cross-entropy. The loss plateau
+-3.03 = -log(20.7), and 20.7 = -log(1e-9), the script's probability clamp. A copy with the one
+line replaced by the expected cross-entropy (`-inner_sum`) reached 54% test accuracy after 3
+epochs on 5,000 images. Report paragraph updated with the diagnosis.
+
+---

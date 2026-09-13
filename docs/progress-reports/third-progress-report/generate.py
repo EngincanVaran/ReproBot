@@ -821,9 +821,20 @@ than an exact reproduction.
 \textbf{Soft decision tree.} The generated script had to guess a dozen values the paper does not
 state, and disclosed each. After the retry repaired its crash, its three check stages all
 passed, yet its accuracy stayed between 5\% and 9\%, below the 10\% of random guessing, and
-its training loss was negative and identical to four decimal places across every epoch. That
-is a defect in the generated objective rather than slow learning, and the full 40-epoch run
-could not change it. The regeneration also silently changed several guessed values --- the
+its training loss was negative and identical to four decimal places across every epoch. The
+cause is instructive. The paper prints its loss as
+$L(\mathbf{x}) = -\log\bigl(\sum_{\ell} P^{\ell}(\mathbf{x}) \sum_k T_k \log Q^{\ell}_k\bigr)$,
+but the bracketed quantity is a weighted log-probability and therefore never positive, so its
+logarithm is undefined; the evident intent is the expected cross-entropy
+$-\sum_{\ell} P^{\ell}(\mathbf{x}) \sum_k T_k \log Q^{\ell}_k$. The Reader extracted the
+equation verbatim and marked it as the paper's own, and the Coder implemented it faithfully, as
+its rules require --- negating the bracket to keep the logarithm defined. The result minimizes
+the negative log of the cross-entropy, which \emph{maximizes} the cross-entropy: the tree is
+trained to be wrong. The full run confirmed it, with test accuracy falling to 0.15\% and the
+loss settling at $-\log(20.7)$, where 20.7 is exactly the negative log of the probability floor
+the script clamps to. Replacing the one line with the expected cross-entropy, outside the
+pipeline, produced a model that learned immediately: 54\% test accuracy after three epochs on
+5,000 images. The regeneration also silently changed several guessed values --- the
 learning rate from 0.01 to 0.1, the batch size from 128 to 32 and the penalty strength from 0.1
 to 0.01 --- none of which the triage feedback had asked for. We report no number for this
 claim.
@@ -1029,6 +1040,10 @@ consider correct, since a Critic without measurable results would have had nothi
 
 \textbf{The fidelity results are compared by hand, mostly from single runs.} Only the random forest reports a spread over runs, and no stage of the system performed any
 comparison.
+
+\textbf{A misprinted equation defeats faithful implementation.} No stage can currently tell an
+equation the paper printed wrongly from one it printed correctly; the soft-tree failure was
+diagnosed by hand.
 
 \textbf{Model-family coverage is still narrow.} No gradient-boosting library (XGBoost, LightGBM,
 CatBoost), sequence model, graph network or text model has yet been run, and one model family,

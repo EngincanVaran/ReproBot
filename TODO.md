@@ -151,7 +151,13 @@ Anything marked **cost** is actively wasting money or time on every run.
       but disclosed *instead of* followed. Could contribute to its RMSE gap; untested.
 - [ ] **Regeneration silently changes guessed hyperparameters.** The soft tree's retry was asked to fix an
       in-place op and also moved lr 0.01→0.1, batch 128→32, λ 0.1→0.01.
-- [ ] **Soft-tree objective generated wrong** — negative, constant loss; no gate catches a loss that never moves.
+- [ ] **Soft-tree objective generated wrong — root cause: the paper misprints Eq. 3.** It prints
+      `-log(Σ P·Σ T log Q)`, the log of a never-positive number. The Coder implemented it faithfully and
+      negated inside the log, so it minimized `-log(cross-entropy)` = **maximized** cross-entropy: full run
+      test accuracy fell to 0.15%, loss settled at -log(20.7) (the 1e-9 clamp floor). One-line fix
+      (`per_example_loss = -inner_sum`, expected CE) learned at once: 54% after 3 epochs on 5k images
+      (tested outside the pipeline; script in the session scratchpad, not in the repo). No stage can tell a
+      misprinted equation from a correct one.
 - [ ] **Prompt wording is copied literally.** The phrase "OpenML data_id and version" in
       the prompt produced `fetch_openml(data_id=531, version=1)`, which scikit-learn rejects.
       Fixed; worth auditing the rest of the prompt for the same kind of example.
