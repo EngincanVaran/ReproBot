@@ -112,3 +112,38 @@ the Coder instead would risk the model changing other things at the same time.
   probe→smoke→capped). The collapse needed thousands of steps.
 - **The `capped` stage's docstring says "does it actually learn?" but nothing reads
   `train_metric` to check.** It passed on exit code alone.
+
+## Result: the `C = 0.1` rerun replicates the claim (2026-09-13)
+
+The one-line change above was applied to the existing script (edit saved 21:31:18,
+container started 21:31:47; nothing else touched) and `full` was run in the Runner.
+It **passed in 3223 s** (~54 min — slower than the ~28 min estimate because the
+Wijaya run shared the CPU), with no collapse at any point:
+
+| Epoch | lr | train_loss | train_err |
+|---:|---:|---:|---:|
+| 1 | 0.1000 | 0.1790 | 27.44% |
+| 40 | 0.0903 | 0.0673 | 9.81% |
+| 100 | 0.0753 | 0.0402 | 5.49% |
+| 200 | 0.0503 | 0.0148 | 1.55% |
+| 300 | 0.0253 | 0.0050 | 0.27% |
+| 400 | 0.0003 | 0.0028 | 0.06% |
+
+**Final: test error 0.82% against the claimed 0.87%** (82 vs 87 misclassified
+digits out of 10,000; train error 0.062%). The test set is evaluated once, after
+the last epoch — no checkpoint is selected on it.
+
+**How to read it:**
+- **Consistent with the claim, not better than it.** For a test error near 0.85%
+  on 10,000 images, one standard error of binomial sampling noise is ≈ 0.09
+  percentage points; the 0.05-point gap is about half of that. One seed (42).
+- **This is not an autonomous result.** A human intervened between the collapse
+  and the rerun: the ablation chose `C`. The selection criterion was network
+  health (fraction of dead units, loss vs the input-ignoring floor), but the
+  ablation *did* log short-horizon test error (epochs 5 and 30), so the choice was
+  not made blind to the test set. The honest statement is "the generated
+  implementation replicates the claim once one unstated hyperparameter is
+  corrected", and the paper itself treats `C` as tuned.
+- **What the pipeline would have needed to do this alone:** notice the collapse
+  (a Critic, or a Runner that reads `train_metric`), attribute it to unstated
+  hyperparameters rather than to code, and search over them — none of which exists.

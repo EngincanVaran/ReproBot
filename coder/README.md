@@ -499,13 +499,17 @@ narrows from "nine CLI flags spelled exactly right" to "four mode names".
 ./reproduce.sh probe    # 2 optimizer steps  — does anything run at all?
 ./reproduce.sh smoke    # 1 full epoch       — does it reach eval + write metrics?
 ./reproduce.sh capped   # 5 epochs, 512 imgs — does it actually learn?
-./reproduce.sh full     # no flags           — the paper's real setup
+./reproduce.sh full     # no training flags  — the paper's real setup
 ```
 
 The modes are cumulative gates: run them in order, stop at the first non-zero
 exit. Each writes its **own** metrics file (`metrics.probe.json`,
-`metrics.smoke.json`, ...) so a cheap stage's numbers can never be mistaken for a
-real run's.
+`metrics.smoke.json`, `metrics.capped.json`, `metrics.full.json`) so a cheap
+stage's numbers can never be mistaken for a real run's. `full` passes no
+*training* flags but does still set `--metrics-output`: until 2026-09-13 it
+passed nothing, so the script wrote its default `metrics.json`, the Runner
+found no `metrics.full.json`, and the first two completed `full` runs were
+parsed only through the Runner's stdout fallback.
 
 `capped` is the one that carries real signal on a CPU: on a few hundred examples
 a network should overfit fast, so **`train_metric`** moving well past a trivial

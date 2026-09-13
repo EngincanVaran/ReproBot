@@ -988,3 +988,36 @@ code; and the escalation ladder cannot catch instability that needs thousands of
 steps to appear.
 
 ---
+
+### Direct — generalization test finished: the first two fidelity numbers (2026-09-13)
+
+Resumed from `TODO.md` in a fresh session, both runs at once. No subagents.
+
+**Wijaya 2023** (Orchestrator, `--claim-id c11 --max-stage full --retry-budget 2 --force`).
+Attempt 1's probe crashed in 7.5 s: `fetch_openml(data_id=531, version=1)` — scikit-learn
+rejects both together. The cause was our own prompt, which twice said "OpenML data_id and
+version"; the wording is fixed. Haiku triaged it `recoverable_error` with the correct
+one-line fix (verified against the traceback), the plateau guard measured 0.2207, and
+attempt 2 passed probe → smoke → capped → full, asserting dataset name and shape before
+training. **The retry loop's first repair of a bug nobody planted.** Result after 1000
+epochs: **test RMSE 4.48 vs claimed 3.02**, train RMSE 2.94 vs 2.69. Validation RMSE sat at
+~3.2–3.5 throughout, so the gap is at least partly the unstated 405/101 split; one seed
+can't say how much. Also seen: the Keras-defaults rule followed for Adam ε but not for
+BatchNorm or init.
+
+**Tang 2013** (`runner.pipeline --mode full`, `svm_C` 1.0 → 0.1 by hand, nothing else).
+No collapse; train error fell smoothly to 0.062%. **Test error 0.82% vs claimed 0.87%** —
+about half a binomial standard error, one seed. A human-in-the-loop result: the ablation
+picked `C`, and it had logged short-horizon test error. Detail appended to
+`docs/notes/tang-2013-ablation/README.md`.
+
+**Bug found and fixed:** `reproduce.sh full` ran the script with no flags, so it wrote
+`metrics.json` while the Runner reads `metrics.full.json`; both results above were
+recovered only through the Runner's stdout fallback (values verified identical to the
+file). The template now passes `--metrics-output metrics.full.json`; the four existing
+generated `reproduce.sh` files were patched the same way.
+
+**Cost of running both at once:** each container claimed every core — Wijaya's 1000
+tiny epochs took 1906 s and Tang 3223 s (estimate ~28 min).
+
+---

@@ -375,10 +375,13 @@ case "$MODE" in
       --metrics-output metrics.capped.json
     ;;
   full)
-    # Stage 4. No flags at all - every default in {script_name} is already the
-    # paper's own value. This is the only mode whose numbers are comparable to
-    # the paper's claim, and the only one that needs a GPU.
-    python {script_name}
+    # Stage 4. No training flags at all - every default in {script_name} is
+    # already the paper's own value. This is the only mode whose numbers are
+    # comparable to the paper's claim, and the only one that needs a GPU. The
+    # metrics path is still set, like every other mode: the Runner reads
+    # metrics.full.json, and a bare run would write the script's default path.
+    python {script_name} \\
+      --metrics-output metrics.full.json
     ;;
   *)
     echo "usage: $0 [probe|smoke|capped|full]" >&2

@@ -10,37 +10,25 @@ deep version of its known issues.
 
 ## Resume here
 
-Work stopped mid-way through **testing the generalized pipeline on two non-CIFAR papers**.
-Both runs are paused, each with a known next step, and **both wait on Engincan's go-ahead**
-because they cost API calls or long CPU runs.
+**The two-paper generalization test is finished (2026-09-13)** and produced ReproBot's
+**first two fidelity measurements**, compared by hand since the Critic doesn't exist:
 
-1. **Wijaya 2023 (house prices, tabular regression) — rerun.** Its first attempt failed in
-   5 s: the generated script fetched Boston Housing from CMU StatLib, which now answers
-   HTTP 403 to every client. Triage then called it `environment_error`, so the Orchestrator
-   stopped with no retries. **Both prompts are fixed and committed**: the Coder prefers
-   OpenML and must verify the dataset it fetched; triage now calls a dead URL
-   `recoverable_error`. Rerun (it regenerates the script, ~2 min):
-   ```bash
-   uv run --extra orchestrator python -m orchestrator.pipeline \
-     --input "reader/output/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction.json" \
-     --claim-id c11 --max-stage full --retry-budget 2 --force
-   ```
-   `--force` is needed because a finished (failed) state already exists. Claimed: **test RMSE
-   3.02**. Expect noise — the paper gives a 405/101 split but never says how rows were chosen.
-   Check its `assumptions` for the Keras-default translations: batch size 32, Glorot init,
-   BatchNorm momentum 0.99 / ε 1e-3, Adam ε 1e-7.
+| Paper | Claim | Reproduced (`full`) | Reading |
+|---|---|---|---|
+| **Tang 2013** — MNIST, L2-SVM loss | test error **0.87%** | **0.82%** | Replicates — gap is ~½ a binomial SE. **But** only after a human changed one unstated guess (`C` 1.0 → 0.1, from the ablation). |
+| **Wijaya 2023** — Boston Housing | test RMSE **3.02** | **4.48** (train 2.94 vs 2.69) | Does not replicate on this split. Validation RMSE sat at ~3.2–3.5 all run; the paper never says how its 405/101 split was drawn, so one seed can't separate "wrong model" from "unlucky split". |
 
-2. **Tang 2013 (MNIST, custom L2-SVM loss) — rerun `full` with `C = 0.1`.** Its first `full`
-   run collapsed into a dead network (loss sitting exactly on the input-ignoring optimum,
-   ~89% error vs. claimed **0.87%**). An ablation isolated the cause — full write-up in
-   [`docs/notes/tang-2013-ablation/`](docs/notes/tang-2013-ablation/README.md). Apply as a
-   controlled one-line change, **not** a Coder regeneration:
-   - edit `coder/output/2013-06 - Deep Learning using Linear Support Vector Machines/train.py`
-     line 174: `svm_C = 1.0` → `svm_C = 0.1`
-   - `uv run --extra runner python -m runner.pipeline --input "coder/output/2013-06 - Deep Learning using Linear Support Vector Machines" --mode full` (~28 min CPU)
+- **Wijaya** went through the Orchestrator: attempt 1 crashed (`fetch_openml` given both
+  `data_id` and `version` — my prompt's wording invited it, now fixed), triage returned the
+  right one-line fix, attempt 2 passed probe → smoke → capped → full. **The retry loop's
+  first repair of a bug nobody planted.**
+- **Tang** detail, epoch log and caveats: [`docs/notes/tang-2013-ablation/`](docs/notes/tang-2013-ablation/README.md).
+- Logs: `orchestrator/output/2023-10 - .../logs/attempt-{1,2}/`, `runner/output/2013-06 - .../logs/`.
 
-3. **Compare each reproduced number to its claim by hand** — the Critic doesn't exist yet.
-   These would be ReproBot's **first real fidelity measurements**.
+**Next: the third progress report** — outline proposed to Engincan on 2026-09-13, waiting on
+his answers: write now or after more work; whether Mert's `viewer/` gets a mention; the
+report date; any teammate work not in this repo. Base it on
+`docs/progress-reports/second-progress-report/generate.py` (one body, both column formats).
 
 ---
 
@@ -51,7 +39,7 @@ because they cost API calls or long CPU runs.
 8 PDFs  →  6 OCR'd  →  4 read  →  2 coded  →  2 executed  →  2 orchestrated
 ```
 **Generalization test set** (`extra-papers/`): Tang 2013 and Wijaya 2023 — both OCR'd,
-read and coded; Tang has run through `full`; Wijaya is waiting on a rerun (above).
+read, coded and run through `full` (Wijaya via the Orchestrator). Results above.
 
 | Stage | Status | Verified by |
 |---|---|---|
@@ -64,19 +52,22 @@ read and coded; Tang has run through `full`; Wijaya is waiting on a rerun (above
 | **report generator** | ❌ **not started** | — |
 
 **The honest summary:** the machinery works end to end, now for more than image
-classification. Nothing compares a reproduced number against a claim, and the first run long
-enough to produce a comparable number (Tang `full`) collapsed with **no stage noticing** —
-it would have been reported `success`. The Critic is now the most important missing piece.
+classification, and two reproduced numbers exist — one matching its claim, one not. Both
+comparisons were done by hand. The first `full` run (Tang, `C=1.0`) collapsed with **no
+stage noticing** and would have been reported `success`; the Critic is still the most
+important missing piece.
 
 ---
 
 ## Next up
 
-- [ ] **Finish the generalization test** — the three steps under *Resume here*.
+- [ ] **Third progress report** — see *Resume here*.
 - [ ] **Build `critic/`** — compare `metrics.json` `value` against `claims[].reported_value`
       under an explicit tolerance, using `higher_is_better` from the new metrics contract.
       Deliberately arithmetic, not an LLM judging numbers (project plan §2.5). Tang's
-      collapse is the concrete case it must catch.
+      collapse is the concrete case it must catch. **Wijaya shows a single run is not
+      enough:** the tolerance has to account for seed/split variance, so the Critic likely
+      needs several seeds before it can call a gap a failure.
 - [ ] **Make the Runner check learning, not just exit codes** — `capped` claims to answer
       "does it actually learn?" but nothing reads `train_metric`. Smaller than the Critic,
       and would have flagged a non-learning run early.
@@ -134,7 +125,15 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [ ] **Tang's generated setup is borderline unstable** — momentum 0.9 + `C=1.0` at lr 0.1
       collapses in a seed-dependent way. Each guess was a reasonable default; the pair was
       not. Longer term this argues for disclosing *combinations* of guesses, or a cheap
-      stability probe, not just listing each guess.
+      stability probe, not just listing each guess. (Worked around by hand for the rerun:
+      `C=0.1` in the gitignored script — a regeneration would bring `C=1.0` back.)
+- [ ] **The Keras-defaults rule is only partly followed.** Wijaya's script matched Keras's
+      Adam ε (1e-7) but used PyTorch's BatchNorm defaults (momentum 0.1, ε 1e-5) and default
+      Kaiming init instead of Keras's (0.99 / 1e-3, Glorot) — disclosed in `assumptions`,
+      but disclosed *instead of* followed. Could contribute to its RMSE gap; untested.
+- [ ] **Prompt wording is copied literally.** The phrase "OpenML data_id and version" in
+      the prompt produced `fetch_openml(data_id=531, version=1)`, which scikit-learn rejects.
+      Fixed; worth auditing the rest of the prompt for the same kind of example.
 
 ### `runner/`
 - [ ] **Success is decided on exit code alone** — see *Next up*.
@@ -144,13 +143,20 @@ Anything marked **cost** is actively wasting money or time on every run.
       torch's transitive deps are unpinned. Pin the base image by digest.
 - [ ] **Container runs as root** — hidden on macOS, visible on a Linux host.
 - [ ] **`--memory` / `--cpus` exposed but unset** — deliberate; exit 137 looks like a crash.
+      Cost of leaving it unset, measured 2026-09-13: two containers at once each claim every
+      core. Wijaya's 1000 epochs over 405 rows took **1906 s** (~1.9 s/epoch for 13 tiny
+      batches — thread oversubscription, not model cost) and Tang's `full` took 3223 s vs a
+      ~28 min estimate. Run one container at a time, or cap threads for small models.
 
 ### `orchestrator/`
 - [ ] **Retries regenerate rather than patch** — a fix can introduce a new defect elsewhere.
+      Measured on a real bug: triage's fix was *delete one keyword argument*, and the
+      regenerated Wijaya script was only **22% similar** to the one it replaced.
 - [ ] **3 of 7 verdicts never seen in the wild** — `timeout`, `untriaged_error`,
       `coder_failed`. (`environment_error` was hit for real on 2026-09-13 — wrongly, see
       the triage fix.)
-- [ ] **Plateau threshold has one data point** — 0.98, observed ratio 0.4079.
+- [ ] **Plateau threshold has two data points** — 0.98, observed ratios 0.4079 (injected
+      bug) and 0.2207 (real bug, Wijaya). Neither came near it.
 - [ ] **Skip-if-done also skips failed papers** — rerunning a failed paper needs `--force`.
 
 ---
@@ -173,7 +179,8 @@ Anything marked **cost** is actively wasting money or time on every run.
 ## Blockers and constraints
 
 - **GPU compute gates fidelity for the CIFAR-10 papers** — ~22 days per real WRN run on this
-  CPU. Tang (~28 min `full`) and Wijaya (~2 min) are small enough to measure on CPU.
+  CPU. Tang and Wijaya are small enough to measure on CPU: measured `full` 3223 s and
+  1906 s respectively, both while sharing the CPU with each other (alone, less).
 - **The dev machine cannot run generated scripts natively** (Intel Mac torch trap) — this is
   *why* `runner/` uses Docker. See CLAUDE.md's Tooling section.
 - **Docker Desktop isn't always running** — `open -a Docker` starts it, unless it's waiting
@@ -198,3 +205,7 @@ Anything marked **cost** is actively wasting money or time on every run.
       task-agnostic metrics contract, OpenML-first data loading, tabular deps in the image
 - [x] **First `full`-stage run** (Tang 2013), diagnosed via ablation
 - [x] Triage and data-source prompts hardened after the first real tabular failure
+- [x] **First two fidelity measurements** — Tang 0.82% vs 0.87% (after a manual `C` fix),
+      Wijaya RMSE 4.48 vs 3.02; first real (non-injected) bug repaired by the retry loop
+- [x] `reproduce.sh full` now writes `metrics.full.json` — it wrote `metrics.json`, so the
+      Runner only found `full` metrics through its stdout fallback (template + 4 outputs)

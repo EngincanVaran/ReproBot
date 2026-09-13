@@ -394,10 +394,11 @@ the model, and say which.
    - TABULAR AND OTHER DATASETS, in this order of preference - use the FIRST \
 that has the dataset:
      1. OpenML through `sklearn.datasets.fetch_openml(..., \
-data_home=args.data_dir, as_frame=True)`, pinned by `data_id` - or by `name` \
-together with an explicit `version`, since a bare name can resolve to a \
-different upload later. OpenML is versioned, maintained, and hosts most \
-classic tabular benchmarks (Boston Housing is `data_id=531`).
+data_home=args.data_dir, as_frame=True)`, pinned EITHER by `data_id` alone OR \
+by `name` together with an explicit `version` (a bare name can resolve to a \
+different upload later) - never `data_id` and `version` together, which \
+`fetch_openml` rejects with a ValueError. OpenML is versioned, maintained, and \
+hosts most classic tabular benchmarks (Boston Housing is `data_id=531`).
      2. A direct URL, ONLY if the dataset is on neither `torchvision.datasets` \
 nor OpenML. Download it once into `--data-dir` and read that file on every \
 later run.
@@ -427,7 +428,7 @@ download to); never rely on a library's own default cache location.
    - Whenever the paper does not name where its data came from (it names only \
 the dataset, or nothing), record the exact source you chose as an \
 `assumptions` entry: "data source: <what the paper says> - used <torchvision \
-class / OpenML data_id and version / URL> because <why>".
+class / OpenML data_id, or name and version / URL> because <why>".
    - SPLITS. Reproduce the paper's split as stated: the dataset's official \
 train/test split when that is what the paper used, the stated sizes or ratio \
 otherwise. When the paper states split SIZES or a RATIO but not HOW rows were \
@@ -628,7 +629,7 @@ SCRIPT_TOOL: dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "The dataset the script trains and evaluates on: its exact source "
-                    "(torchvision class, OpenML data_id/version, or URL), how it is "
+                    "(torchvision class, OpenML data_id or name+version, or URL), how it is "
                     "split, and how it is preprocessed, normalized and augmented."
                 ),
             },
