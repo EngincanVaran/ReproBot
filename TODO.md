@@ -25,10 +25,11 @@ deep version of its known issues.
 - **Tang** detail, epoch log and caveats: [`docs/notes/tang-2013-ablation/`](docs/notes/tang-2013-ablation/README.md).
 - Logs: `orchestrator/output/2023-10 - .../logs/attempt-{1,2}/`, `runner/output/2013-06 - .../logs/`.
 
-**Next: the third progress report** — outline proposed to Engincan on 2026-09-13, waiting on
-his answers: write now or after more work; whether Mert's `viewer/` gets a mention; the
-report date; any teammate work not in this repo. Base it on
-`docs/progress-reports/second-progress-report/generate.py` (one body, both column formats).
+**Third progress report written (13.09.2026)** —
+`docs/progress-reports/third-progress-report/`, single-column (14 pp) and two-column (11 pp),
+both built from `generate.py`. Covers everything above plus Mert's `viewer/` branch. Every page
+was rendered and checked by eye; wide floats set with `\raggedbottom` so two-column pages don't
+stretch. Regenerate rather than hand-editing either `.tex`.
 
 ---
 
@@ -61,7 +62,6 @@ important missing piece.
 
 ## Next up
 
-- [ ] **Third progress report** — see *Resume here*.
 - [ ] **Build `critic/`** — compare `metrics.json` `value` against `claims[].reported_value`
       under an explicit tolerance, using `higher_is_better` from the new metrics contract.
       Deliberately arithmetic, not an LLM judging numbers (project plan §2.5). Tang's
@@ -78,8 +78,10 @@ important missing piece.
       the exit-code bug below.
 - [ ] **Fix the progress report's rendering issues** — noted 2026-08-22, not catalogued.
       Regenerate via `docs/progress-reports/second-progress-report/generate.py`.
-- [ ] **Review Mert's `viewer/` branch** (`origin/mert/runner-agent`, a Streamlit dashboard)
-      — **deferred at Engincan's request**, 2026-09-13; focus is on our own stages for now.
+- [ ] **Review and merge Mert's `viewer/` branch** (`origin/mert/runner-agent`, a Streamlit
+      dashboard) — described in the third report at Engincan's request, but not reviewed or
+      merged. It predates `dc5a541`, so reconcile `pyproject.toml`/`uv.lock` first; it shows
+      OCR/Reader/Coder output only, not Runner/Orchestrator.
 
 ---
 

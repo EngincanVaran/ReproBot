@@ -1021,3 +1021,23 @@ generated `reproduce.sh` files were patched the same way.
 tiny epochs took 1906 s and Tang 3223 s (estimate ~28 min).
 
 ---
+
+### Direct — third progress report (2026-09-13)
+
+Written directly (no subagent — the content was this session's own work). Same
+construction as the second report: one body in
+`docs/progress-reports/third-progress-report/generate.py`, emitted as single- and
+two-column `.tex`, prose identical by construction (verified by diffing the two files:
+only float environments and geometry differ). The Tang and Wijaya training-curve plots
+are TikZ with coordinates computed in Python from the real run logs, since this TeX
+install has no pgfplots. Mert's `viewer/` branch was read for its own section
+(`git show origin/mert/runner-agent`), not merged.
+
+Every page of both PDFs was rendered and inspected. Fixed on inspection: overfull tables
+(narrower columns, ragged-right cells), a retry arrow crossing a row label, a legend
+touching a marker line, a claimed-value line coloured like the data series, and
+two-column vertical stretching on page 1 and pages 9–10 (`\raggedbottom`). A fact-check
+pass against the repo removed one false sentence (that the stage handouts match the
+current code — they predate the generalization) and qualified two others.
+
+---

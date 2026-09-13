@@ -90,7 +90,7 @@ whitened all std 1.0, mean ‖x‖² 70.0.
    collapse in 30 epochs; the real run did. They used different noise RNG streams,
    so collapse is seed-dependent — exactly what makes it hard to catch.
 
-## Recommended fix, not yet applied
+## Recommended fix (applied — see the result below)
 
 **`C = 0.1`**, changing nothing else. Healthiest network (4% dead), keeps momentum
 0.9 consistent with "SGD *with* momentum", and the paper itself treats `C` as tuned
