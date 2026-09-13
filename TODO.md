@@ -71,6 +71,34 @@ important missing piece.
 
 ## Next up
 
+### Future work agreed with Engincan (2026-09-13) — highest priority
+- [ ] **Runner live check-ups: read the container's logs WHILE it runs, and act.** Today two
+      doomed `full` runs (Tang collapse, soft-tree reversed loss) were caught by a person reading
+      `docker logs`, not by the pipeline. Stream the log during `full` (and `capped`), parse per-epoch
+      metrics, and stop early with a clear verdict on: loss not moving for N epochs, NaN/inf,
+      accuracy at or below chance, a cross-entropy loss that goes negative, a loss sitting on the
+      input-ignoring floor. Report the partial curve instead of waiting hours for exit code 0.
+- [ ] **Emit a learning-curve history from every generated script** — per-epoch (or per-stage)
+      train/eval loss and metric as JSON lines next to `metrics.json`, so the Runner's checks,
+      the Critic and the reports can plot curves without scraping logs.
+- [ ] **Build the Critic agent** — compare `value` with `claims[].reported_value` using
+      `higher_is_better`, with a tolerance that depends on the claim: near-exact for deterministic
+      library procedures (the SVM guide reproduced to 3 decimals at the paper's settings), a
+      seed-variance band for stochastic training (Wijaya: one split can't decide), mean ± spread when
+      the claim is itself a mean (Fashion-MNIST's 5 runs). Emit pass / retry / fail with a reason the
+      Coder can act on.
+- [ ] **Loop controls in the Orchestrator** — (1) patch rather than regenerate (real repairs
+      rewrote 73–78% of a script); (2) freeze guessed hyperparameters across regenerations unless the
+      feedback targets them (the soft-tree retry silently changed lr, batch size and λ); (3) abort a
+      running stage when the live check-up fails, instead of burning the full budget; (4) per-paper
+      time and API-cost budgets; (5) a human checkpoint before a manual fix is applied, recorded in
+      the state object.
+- [ ] **An escalation ladder for non-iterative models** — `smoke` and `capped` differ only in epochs,
+      so for SVMs/forests they gave identical numbers. Scale training-set size instead.
+- [ ] **Sanity-check own-method equations before implementing them** — the soft-tree paper prints
+      `-log` of a never-positive quantity; a domain check (log/sqrt arguments, probabilities in
+      [0,1]) would flag a misprint for disclosure instead of a silent sign flip.
+
 - [ ] **Nine new diversity papers in `extra-papers/`** (2026-09-13) — SVM, scikit-learn model zoo,
       GCN, text CNN, TCN, soft decision tree, XGBoost, CatBoost (LightGBM baselines), XGBoost-vs-RF-vs-GB;
       details in `extra-papers/README.md`. Five need **classical-ML support**: scikit-learn in

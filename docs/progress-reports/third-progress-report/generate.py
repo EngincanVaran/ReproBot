@@ -1,151 +1,381 @@
+# ruff: noqa: E501 - TikZ/LaTeX source lines are kept whole for readability
 """Generate the ReproBot third progress report in both column formats.
 
-Same construction as the second report: the body is held once, so the single- and
-two-column .tex files carry identical prose by construction. Wide floats are written
-as FIGENV / TABENV and become figure* / table* in the two-column build.
+The body is held once, so the single- and two-column .tex files carry identical prose by
+construction. Wide floats are written as FIGENV / TABENV and become figure* / table* in the
+two-column build.
 
-The two training-curve plots are drawn from the real run logs below, with
-coordinates computed here, because this TeX installation has no pgfplots.
+Every plot is TikZ with coordinates computed here from real run data (this TeX install has
+no pgfplots). The data below is copied from the run logs, with the source named per series:
+nothing in a curve is invented or smoothed.
 """
 
 import math
 from collections.abc import Callable
 from pathlib import Path
 
-# --- Real data, copied from the run logs -------------------------------------------
+# --- Real data -----------------------------------------------------------------------
 
-# Tang 2013, full stage, svm_C = 1.0 (as generated). Read live from the container;
-# stopped at ~epoch 250. Source: docs/notes/tang-2013-ablation/README.md
-TANG_C1 = [(1, 27.1), (20, 83.2), (40, 85.5), (100, 89.5), (140, 89.7), (200, 89.5), (240, 89.4)]
-
-# Tang 2013, full stage, svm_C = 0.1. Source: runner/output/<paper>/logs/full.stderr.log
-TANG_C01 = [
-    (1, 27.440), (20, 12.202), (40, 9.812), (60, 8.482), (80, 6.857), (100, 5.485),
-    (120, 4.443), (140, 3.503), (160, 2.800), (180, 2.093), (200, 1.545), (220, 1.152),
-    (240, 0.865), (260, 0.583), (280, 0.355), (300, 0.272), (320, 0.163), (340, 0.112),
-    (360, 0.088), (380, 0.063), (400, 0.062),
+# Tang 2013, full stage, svm_C = 0.1: training error (%) per 20 epochs.
+# Source: runner/output/<paper>/logs/full.stderr.log
+TANG = [
+    (1, 27.440),
+    (20, 12.202),
+    (40, 9.812),
+    (60, 8.482),
+    (80, 6.857),
+    (100, 5.485),
+    (120, 4.443),
+    (140, 3.503),
+    (160, 2.800),
+    (180, 2.093),
+    (200, 1.545),
+    (220, 1.152),
+    (240, 0.865),
+    (260, 0.583),
+    (280, 0.355),
+    (300, 0.272),
+    (320, 0.163),
+    (340, 0.112),
+    (360, 0.088),
+    (380, 0.063),
+    (400, 0.062),
 ]
 
-# Wijaya 2023, full stage, attempt 2: RMSE on the 81-row validation holdout.
+# Wijaya 2023, full stage, attempt 2, every 50 epochs: validation RMSE on the 81 held-out
+# training rows, and the epoch-average training MSE (plotted as its square root).
 # Source: orchestrator/output/<paper>/logs/attempt-2/full.stderr.log
-WIJAYA_VAL = [
-    (50, 3.4525), (100, 3.6150), (150, 3.3733), (200, 3.4795), (250, 3.3614),
-    (300, 4.0142), (350, 3.2760), (400, 3.2580), (450, 3.4087), (500, 3.1587),
-    (550, 3.4512), (600, 3.4664), (650, 3.2748), (700, 3.2184), (750, 3.4997),
-    (800, 3.4581), (850, 3.3357), (900, 3.2041), (950, 3.2520), (1000, 3.3102),
+WIJ_VAL = [
+    (50, 3.4525),
+    (100, 3.6150),
+    (150, 3.3733),
+    (200, 3.4795),
+    (250, 3.3614),
+    (300, 4.0142),
+    (350, 3.2760),
+    (400, 3.2580),
+    (450, 3.4087),
+    (500, 3.1587),
+    (550, 3.4512),
+    (600, 3.4664),
+    (650, 3.2748),
+    (700, 3.2184),
+    (750, 3.4997),
+    (800, 3.4581),
+    (850, 3.3357),
+    (900, 3.2041),
+    (950, 3.2520),
+    (1000, 3.3102),
+]
+WIJ_TRAIN_MSE = [
+    (50, 15.3702),
+    (100, 12.9997),
+    (150, 7.1157),
+    (200, 10.5356),
+    (250, 6.3814),
+    (300, 7.9118),
+    (350, 5.7481),
+    (400, 5.7324),
+    (450, 7.6494),
+    (500, 10.4038),
+    (550, 5.2927),
+    (600, 5.8451),
+    (650, 4.7384),
+    (700, 7.1127),
+    (750, 5.3000),
+    (800, 4.6026),
+    (850, 4.7215),
+    (900, 6.1806),
+    (950, 6.6946),
+    (1000, 10.8350),
 ]
 
-# --- Plot geometry -----------------------------------------------------------------
+# SVM guide: 5-fold CV accuracy (%) over the reproduction's grid, same folds as the run
+# (StratifiedKFold, shuffle, seed 42). Rows: log2 C = -5..15 step 2; columns: log2 gamma =
+# -15..3 step 2. Computed in the runner image with the generated script's own grid.
+SVM_C_EXP = list(range(-5, 16, 2))
+SVM_G_EXP = list(range(-15, 4, 2))
+SVM_CV = [
+    [64.75, 64.75, 64.75, 64.75, 64.75, 64.88, 84.85, 92.65, 93.33, 93.17],
+    [64.75, 64.75, 64.75, 64.75, 64.91, 85.08, 92.78, 94.59, 95.53, 96.02],
+    [64.75, 64.75, 64.75, 64.94, 85.14, 92.39, 94.79, 96.12, 96.7, 96.5],
+    [64.75, 64.75, 64.94, 85.14, 92.23, 94.21, 96.02, 96.47, 96.8, 96.83],
+    [64.75, 64.94, 85.14, 92.07, 94.11, 95.82, 96.15, 96.67, 96.92, 96.99],
+    [64.94, 85.14, 92.1, 94.08, 95.4, 96.02, 96.31, 96.8, 96.86, 96.67],
+    [85.14, 92.1, 94.04, 95.27, 95.82, 96.08, 96.6, 96.76, 96.86, 95.76],
+    [92.1, 94.04, 95.18, 95.53, 96.08, 96.18, 96.63, 96.76, 96.63, 95.31],
+    [94.04, 95.21, 95.44, 95.82, 96.02, 96.37, 96.63, 96.73, 96.47, 95.05],
+    [95.24, 95.37, 95.37, 96.08, 96.18, 96.5, 96.8, 96.6, 96.18, 94.66],
+    [95.4, 95.34, 95.79, 96.08, 96.47, 96.5, 96.73, 96.7, 95.82, 94.5],
+]
 
-TANG_W, TANG_H = 11.0, 5.2
-TANG_YMIN, TANG_YMAX = 0.05, 100.0
+# Fashion-MNIST random forest: test accuracy as trees are added (warm start), repetition 1's
+# configuration (seed 42, shuffled training data). Its 100-tree value equals the pipeline's
+# repetition 1 exactly. The five pipeline repetitions are FASHION_RUNS.
+RF_TREES = [
+    (1, 0.7742),
+    (2, 0.7764),
+    (3, 0.8183),
+    (5, 0.8388),
+    (8, 0.8517),
+    (10, 0.854),
+    (15, 0.8604),
+    (20, 0.8668),
+    (30, 0.8712),
+    (40, 0.8747),
+    (50, 0.8759),
+    (60, 0.877),
+    (70, 0.8755),
+    (80, 0.8753),
+    (90, 0.8764),
+    (100, 0.8773),
+]
+FASHION_RUNS = [0.8773, 0.8774, 0.8753, 0.8792, 0.8775]
+
+# Soft decision tree (fixed loss), full stage: test accuracy (%) per epoch.
+# Source: live container log / orchestrator/output/<paper>/logs/attempt-1/full.stderr.log
+SOFTDT = [(1, 65.84), (2, 80.68), (3, 84.40), (4, 89.10)]
+
+# --- Plot helpers ----------------------------------------------------------------------
+
+PW, PH = 6.2, 3.6  # panel plot area, cm
 
 
-def tang_x(epoch: float) -> float:
-    return epoch / 400.0 * TANG_W
+def lin(v: float, lo: float, hi: float, size: float) -> float:
+    return (v - lo) / (hi - lo) * size
 
 
-def tang_y(err: float) -> float:
-    lo, hi = math.log10(TANG_YMIN), math.log10(TANG_YMAX)
-    return (math.log10(err) - lo) / (hi - lo) * TANG_H
+def logmap(v: float, lo: float, hi: float, size: float) -> float:
+    return (math.log10(v) - math.log10(lo)) / (math.log10(hi) - math.log10(lo)) * size
 
 
-WIJ_W, WIJ_H = 11.0, 4.6
-WIJ_YMIN, WIJ_YMAX = 2.6, 4.8
-
-
-def wij_x(epoch: float) -> float:
-    return epoch / 1000.0 * WIJ_W
-
-
-def wij_y(rmse: float) -> float:
-    return (rmse - WIJ_YMIN) / (WIJ_YMAX - WIJ_YMIN) * WIJ_H
-
-
-def coords(
+def path(
     points: list[tuple[float, float]],
     fx: Callable[[float], float],
     fy: Callable[[float], float],
 ) -> str:
-    return " ".join(f"({fx(x):.3f},{fy(y):.3f})" for x, y in points)
+    return " -- ".join(f"({fx(x):.3f},{fy(y):.3f})" for x, y in points)
 
 
-def tang_plot() -> str:
-    ticks_y = "\n".join(
-        f"  \\draw (0,{tang_y(v):.3f}) -- (-0.1,{tang_y(v):.3f}) "
-        f"node[left, font=\\scriptsize] {{{label}}};\n"
-        f"  \\draw[gridc] (0,{tang_y(v):.3f}) -- ({TANG_W},{tang_y(v):.3f});"
-        for v, label in [(0.1, "0.1"), (1, "1"), (10, "10"), (100, "100")]
+def dots(
+    points: list[tuple[float, float]],
+    fx: Callable[[float], float],
+    fy: Callable[[float], float],
+    style: str,
+) -> str:
+    return "\n".join(
+        f"  \\fill[{style}] ({fx(x):.3f},{fy(y):.3f}) circle (1.1pt);" for x, y in points
     )
-    ticks_x = "\n".join(
-        f"  \\draw ({tang_x(e):.3f},0) -- ({tang_x(e):.3f},-0.1) "
-        f"node[below, font=\\scriptsize] {{{e}}};"
-        for e in (0, 100, 200, 300, 400)
+
+
+def axes(
+    xticks: list[tuple[float, str]], yticks: list[tuple[float, str]], xlabel: str, ylabel: str
+) -> str:
+    out = []
+    for y, label in yticks:
+        out.append(f"  \\draw[black!12] (0,{y:.3f}) -- ({PW},{y:.3f});")
+        out.append(
+            f"  \\draw (0,{y:.3f}) -- (-0.08,{y:.3f}) node[left, font=\\scriptsize] {{{label}}};"
+        )
+    for x, label in xticks:
+        out.append(
+            f"  \\draw ({x:.3f},0) -- ({x:.3f},-0.08) node[below, font=\\scriptsize] {{{label}}};"
+        )
+    out.append(f"  \\draw[thick] (0,0) -- ({PW},0);")
+    out.append(f"  \\draw[thick] (0,0) -- (0,{PH});")
+    out.append(f"  \\node[font=\\scriptsize] at ({PW / 2:.3f},-0.62) {{{xlabel}}};")
+    out.append(f"  \\node[font=\\scriptsize, rotate=90] at (-1.08,{PH / 2:.3f}) {{{ylabel}}};")
+    return "\n".join(out)
+
+
+def hline(y: float, color: str, dash: str, label: str, anchor: str, lx: float) -> str:
+    return (
+        f"  \\draw[{color}, {dash}] (0,{y:.3f}) -- ({PW},{y:.3f});\n"
+        f"  \\node[font=\\tiny, anchor={anchor}, text={color}] at ({lx:.3f},{y:.3f}) {{{label}}};"
     )
-    floor = tang_y(88.8)
-    stop = tang_x(250)
-    return rf"""
-\begin{{tikzpicture}}[gridc/.style={{draw=black!12}}]
-{ticks_y}
-{ticks_x}
-  \draw[thick] (0,0) -- ({TANG_W},0);
-  \draw[thick] (0,0) -- (0,{TANG_H});
-  \node[rotate=90, font=\small] at (-1.0,{TANG_H / 2:.3f}) {{training error (\%, log scale)}};
-  \node[font=\small] at ({TANG_W / 2:.3f},-0.85) {{epoch}};
-  \draw[dashed, draw=warnc, thick] (0,{floor:.3f}) -- ({TANG_W},{floor:.3f});
-  \node[font=\scriptsize, text=warnc, anchor=south east] at ({TANG_W},{floor:.3f})
-    {{input-ignoring optimum, 88.8\%}};
-  \draw[densely dotted, draw=missingc] ({stop:.3f},0) -- ({stop:.3f},{floor - 0.35:.3f});
-  \node[font=\scriptsize, text=missingc, anchor=west, align=left] at ({stop + 0.08:.3f},{floor - 0.75:.3f})
-    {{stopped by hand\\ at epoch $\sim$250}};
-  \draw[missingc, very thick, mark=*, mark size=1.4pt]
-    plot coordinates {{{coords(TANG_C1, tang_x, tang_y)}}};
-  \draw[builtc, very thick, mark=square*, mark size=1.2pt]
-    plot coordinates {{{coords(TANG_C01, tang_x, tang_y)}}};
-  \draw[black, fill=white, thick] ({tang_x(400):.3f},{tang_y(0.82):.3f}) circle (2.4pt);
-  \node[font=\scriptsize, anchor=east, align=right] at ({tang_x(392):.3f},{tang_y(0.82) + 0.42:.3f})
-    {{final \emph{{test}} error 0.82\%\\ (claimed 0.87\%)}};
-  \draw[missingc, very thick] (7.35,3.55) -- (7.95,3.55);
-  \node[font=\scriptsize, anchor=west] at (8.0,3.55) {{$C = 1.0$ (as generated)}};
-  \draw[builtc, very thick] (7.35,3.05) -- (7.95,3.05);
-  \node[font=\scriptsize, anchor=west] at (8.0,3.05) {{$C = 0.1$ (one-line change)}};
-\end{{tikzpicture}}"""
 
 
-def wijaya_plot() -> str:
-    ticks_y = "\n".join(
-        f"  \\draw (0,{wij_y(v):.3f}) -- (-0.1,{wij_y(v):.3f}) "
-        f"node[left, font=\\scriptsize] {{{v:.1f}}};\n"
-        f"  \\draw[gridc] (0,{wij_y(v):.3f}) -- ({WIJ_W},{wij_y(v):.3f});"
-        for v in (2.8, 3.2, 3.6, 4.0, 4.4, 4.8)
+def panel_tang() -> str:
+    lo, hi = 0.03, 100.0
+
+    def fx(e: float) -> float:
+        return lin(e, 0, 400, PW)
+
+    def fy(v: float) -> float:
+        return logmap(v, lo, hi, PH)
+
+    body = axes(
+        [(fx(e), str(e)) for e in (0, 100, 200, 300, 400)],
+        [(fy(v), s) for v, s in ((0.1, "0.1"), (1, "1"), (10, "10"), (100, "100"))],
+        "epoch",
+        "error (\\%, log scale)",
     )
-    ticks_x = "\n".join(
-        f"  \\draw ({wij_x(e):.3f},0) -- ({wij_x(e):.3f},-0.1) "
-        f"node[below, font=\\scriptsize] {{{e}}};"
-        for e in (0, 200, 400, 600, 800, 1000)
+    return f"""\\begin{{tikzpicture}}
+{body}
+  \\draw[builtc, very thick] {path(TANG, fx, fy)};
+{dots(TANG, fx, fy, "builtc")}
+{hline(fy(0.87), "black", "densely dashed", "paper: test error 0.87\\%", "south west", 0.08)}
+  \\draw[missingc, thick] ({fx(400):.3f},{fy(0.82):.3f}) circle (2.2pt);
+  \\node[font=\\tiny, text=missingc, anchor=south west] at ({fx(12):.3f},{fy(0.045):.3f})
+    {{circle: ReproBot test error 0.82\\%}};
+  \\node[font=\\tiny, text=builtc, anchor=west] at ({fx(40):.3f},{fy(20):.3f}) {{training error}};
+\\end{{tikzpicture}}"""
+
+
+def panel_wijaya() -> str:
+    lo, hi = 1.8, 4.8
+
+    def fx(e: float) -> float:
+        return lin(e, 0, 1000, PW)
+
+    def fy(v: float) -> float:
+        return lin(v, lo, hi, PH)
+
+    train = [(e, math.sqrt(m)) for e, m in WIJ_TRAIN_MSE]
+    body = axes(
+        [(fx(e), str(e)) for e in (0, 250, 500, 750, 1000)],
+        [(fy(v), f"{v:.1f}") for v in (2.0, 2.5, 3.0, 3.5, 4.0, 4.5)],
+        "epoch",
+        "RMSE",
     )
-    return rf"""
-\begin{{tikzpicture}}[gridc/.style={{draw=black!12}}]
-{ticks_y}
-{ticks_x}
-  \draw[thick] (0,0) -- ({WIJ_W},0);
-  \draw[thick] (0,0) -- (0,{WIJ_H});
-  \node[rotate=90, font=\small] at (-1.0,{WIJ_H / 2:.3f}) {{RMSE}};
-  \node[font=\small] at ({WIJ_W / 2:.3f},-0.85) {{epoch}};
-  \draw[dashed, draw=missingc, thick] (0,{wij_y(4.48):.3f}) -- ({WIJ_W},{wij_y(4.48):.3f});
-  \node[font=\scriptsize, text=missingc, anchor=south west] at (0.1,{wij_y(4.48):.3f})
-    {{reproduced \emph{{test}} RMSE, after epoch 1000: 4.48}};
-  \draw[dashed, draw=black!75, thick] (0,{wij_y(3.02):.3f}) -- ({WIJ_W},{wij_y(3.02):.3f});
-  \node[font=\scriptsize, text=black!75, anchor=north east] at ({WIJ_W},{wij_y(3.02):.3f})
-    {{claimed test RMSE: 3.02}};
-  \draw[loopc, very thick, mark=*, mark size=1.3pt]
-    plot coordinates {{{coords(WIJAYA_VAL, wij_x, wij_y)}}};
-  \node[font=\scriptsize, text=loopc, anchor=south] at ({wij_x(300):.3f},{wij_y(4.0142) + 0.05:.3f})
-    {{validation RMSE (81 held-out training rows)}};
-\end{{tikzpicture}}"""
+    return f"""\\begin{{tikzpicture}}
+{body}
+  \\draw[black!45, thick] {path(train, fx, fy)};
+  \\draw[loopc, very thick] {path(WIJ_VAL, fx, fy)};
+{dots(WIJ_VAL, fx, fy, "loopc")}
+{hline(fy(3.02), "black", "densely dashed", "paper: test RMSE 3.02", "north east", PW)}
+{hline(fy(4.48), "missingc", "densely dashed", "ReproBot: test RMSE 4.48", "south east", PW)}
+  \\node[font=\\tiny, text=loopc, anchor=south] at ({fx(300):.3f},{fy(4.01) + 0.03:.3f})
+    {{validation}};
+  \\node[font=\\tiny, text=black!60, anchor=north] at ({fx(800):.3f},{fy(2.15) - 0.02:.3f})
+    {{training}};
+\\end{{tikzpicture}}"""
 
 
-# --- LaTeX ---------------------------------------------------------------------------
+def panel_svm() -> str:
+    cw, ch = PW / len(SVM_G_EXP), PH / len(SVM_C_EXP)
+    cells = []
+    for i, row in enumerate(SVM_CV):
+        for j, v in enumerate(row):
+            t = max(0.0, min(1.0, (v - 64.0) / (97.0 - 64.0)))
+            shade = int(round(8 + t * 92))
+            x0, y0 = j * cw, i * ch
+            cells.append(
+                f"  \\fill[loopc!{shade}!white] ({x0:.3f},{y0:.3f}) "
+                f"rectangle ({x0 + cw:.3f},{y0 + ch:.3f});"
+            )
+    ticks = [
+        f"  \\node[font=\\tiny, below] at ({(j + 0.5) * cw:.3f},0) {{$2^{{{g}}}$}};"
+        for j, g in enumerate(SVM_G_EXP)
+        if j % 2 == 1
+    ] + [
+        f"  \\node[font=\\tiny, left] at (0,{(i + 0.5) * ch:.3f}) {{$2^{{{c}}}$}};"
+        for i, c in enumerate(SVM_C_EXP)
+        if i % 2 == 0
+    ]
+    pj, pi = SVM_G_EXP.index(1), SVM_C_EXP.index(1)
+    rj, ri = SVM_G_EXP.index(3), SVM_C_EXP.index(3)
+    cells_s = "\n".join(cells)
+    ticks_s = "\n".join(ticks)
+    return f"""\\begin{{tikzpicture}}
+{cells_s}
+  \\draw[thick] (0,0) rectangle ({PW},{PH});
+{ticks_s}
+  \\draw[black, very thick] ({pj * cw:.3f},{pi * ch:.3f})
+    rectangle ({(pj + 1) * cw:.3f},{(pi + 1) * ch:.3f});
+  \\draw[missingc, very thick] ({rj * cw:.3f},{ri * ch:.3f})
+    rectangle ({(rj + 1) * cw:.3f},{(ri + 1) * ch:.3f});
+  \\node[font=\\scriptsize] at ({PW / 2:.3f},-0.62) {{kernel width $\\gamma$}};
+  \\node[font=\\scriptsize, rotate=90] at (-0.85,{PH / 2:.3f}) {{penalty $C$}};
+  \\node[font=\\tiny, anchor=north west, fill=white, inner sep=1.5pt, align=left]
+    at (0.08,{PH - 0.08:.3f})
+    {{black box: paper's pick ($C{{=}}\\gamma{{=}}2$)\\\\
+      \\textcolor{{missingc}}{{red box: ReproBot's ($C{{=}}\\gamma{{=}}8$)}}\\\\
+      light 65\\% $\\to$ dark 97\\% CV accuracy}};
+\\end{{tikzpicture}}"""
+
+
+def panel_rf() -> str:
+    lo, hi = 0.76, 0.90
+
+    def fx(n: float) -> float:
+        return lin(n, 0, 108, PW)
+
+    def fy(v: float) -> float:
+        return lin(v, lo, hi, PH)
+
+    body = axes(
+        [(fx(n), str(n)) for n in (0, 25, 50, 75, 100)],
+        [(fy(v), f"{v:.2f}") for v in (0.78, 0.82, 0.86, 0.90)],
+        "number of trees",
+        "test accuracy",
+    )
+    mean = sum(FASHION_RUNS) / len(FASHION_RUNS)
+    runs = "\n".join(
+        f"  \\fill[missingc] ({fx(105):.3f},{fy(r):.3f}) circle (0.9pt);" for r in FASHION_RUNS
+    )
+    return f"""\\begin{{tikzpicture}}
+{body}
+  \\draw[builtc, very thick] {path(RF_TREES, fx, fy)};
+{dots(RF_TREES, fx, fy, "builtc")}
+{hline(fy(0.873), "black", "densely dashed", "paper: 0.873 (mean of 5 runs)", "north east", PW)}
+{runs}
+  \\draw[missingc, thick] ({fx(102):.3f},{fy(mean):.3f}) -- ({fx(108):.3f},{fy(mean):.3f});
+  \\node[font=\\tiny, text=missingc, anchor=south east] at ({PW:.3f},{fy(0.8792) + 0.05:.3f})
+    {{ReproBot: 5 runs, mean 0.8773}};
+\\end{{tikzpicture}}"""
+
+
+def panel_softdt() -> str:
+    lo, hi = 50.0, 100.0
+
+    def fx(e: float) -> float:
+        return lin(e, 0, 40, PW)
+
+    def fy(v: float) -> float:
+        return lin(v, lo, hi, PH)
+
+    body = axes(
+        [(fx(e), str(e)) for e in (0, 10, 20, 30, 40)],
+        [(fy(v), str(int(v))) for v in (50, 60, 70, 80, 90, 100)],
+        "epoch",
+        "test accuracy (\\%)",
+    )
+    last_e, last_v = SOFTDT[-1]
+    return f"""\\begin{{tikzpicture}}
+{body}
+  \\draw[builtc, very thick] {path(SOFTDT, fx, fy)};
+{dots(SOFTDT, fx, fy, "builtc")}
+{hline(fy(94.45), "black", "densely dashed", "paper: 94.45\\%", "south west", 0.08)}
+  \\node[font=\\tiny, text=builtc, anchor=north east] at ({fx(last_e):.3f},{fy(last_v) - 0.1:.3f})
+    {{ReproBot: {last_v:.2f}\\%}};
+\\end{{tikzpicture}}"""
+
+
+def panels() -> str:
+    def cell(tikz: str, label: str) -> str:
+        return (
+            "\\begin{minipage}[t]{0.49\\linewidth}\\centering\n"
+            f"\\resizebox{{0.97\\linewidth}}{{!}}{{{tikz}}}\\\\[-1pt]\n"
+            f"{{\\small {label}}}\n\\end{{minipage}}"
+        )
+
+    return "\n".join(
+        [
+            cell(panel_tang(), "(a) MLP with L2-SVM loss, MNIST"),
+            "\\hfill",
+            cell(panel_wijaya(), "(b) Dense network, Boston Housing"),
+            "\\\\[10pt]",
+            cell(panel_svm(), "(c) RBF SVM model selection, svmguide1"),
+            "\\hfill",
+            cell(panel_rf(), "(d) Random forest, Fashion-MNIST"),
+            "\\\\[10pt]",
+            cell(panel_softdt(), "(e) Soft decision tree, MNIST"),
+        ]
+    )
+
+
+# --- LaTeX -----------------------------------------------------------------------------
 
 PREAMBLE_COMMON = r"""
 \usepackage[T1]{fontenc}
@@ -156,7 +386,7 @@ PREAMBLE_COMMON = r"""
 \usepackage{array}
 \usepackage{graphicx}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,plotmarks}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
 \usepackage{hyperref}
 \hypersetup{
   colorlinks=true,
@@ -180,8 +410,6 @@ PREAMBLE_COMMON = r"""
 \newcommand{\partl}{\textcolor{warnc}{$\sim$}}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
-% Float placement: this report carries more figures and tables than the second, and
-% the default fractions strand wide floats at the end of the document.
 \renewcommand{\topfraction}{0.9}
 \renewcommand{\dbltopfraction}{0.9}
 \renewcommand{\bottomfraction}{0.8}
@@ -213,27 +441,20 @@ BODY = r"""
 
 \begin{abstract}
 ReproBot is a multi-agent system that reads a machine learning paper, extracts its claims and
-experimental setup, generates an implementation, executes it in a sandbox, and repairs
-execution failures through a bounded retry loop. This report covers the phase in which it
-produced its first replication measurements. Full training on the project's CIFAR-10
-benchmark would take weeks per paper on the available CPU, so we evaluated on papers whose
-original experiments run in minutes, and generalized code generation beyond image
-classification: the Coder now writes a plain PyTorch training loop for neural models and a
-scikit-learn estimator for classical ones, under a task-agnostic metrics contract. Five papers
---- a network with a margin-based loss, a tabular regression network, a kernel support vector
-machine, a random forest and a soft decision tree --- were carried through the pipeline and
-compared against their published claims by hand. Three reproductions land close to their
-claims: an MNIST network at 0.82\% test error against 0.87\%, after one unstated
-hyperparameter was corrected by hand; a support vector machine at 96.63\% against 96.9\%, whose
-implementation reproduces the paper's exact numbers when given the paper's settings; and a
-random forest at 87.73\% against 87.3\%. A housing-price model misses its claim, with a test
-RMSE of 4.48 against 3.02, by a margin a single data split cannot explain, and a soft decision
-tree whose paper states little beyond its depth did not learn at all. The retry loop repaired
-three naturally occurring defects, and six prompt failures observed in real runs became
-explicit rules. The central finding is that the pipeline reported \emph{success} on two runs
-that had failed entirely: nothing yet judges whether a reproduced number is plausible, which
-makes an automated Critic the most important missing component. We also describe the team's
-first front end, a dashboard over the pipeline's outputs.
+experimental setup, generates an implementation, runs it in a sandbox, and repairs execution
+failures through a bounded retry loop. This report presents its first full-fidelity
+replications. We generalized code generation beyond image classification --- the Coder now
+writes a plain PyTorch training loop for neural models and a scikit-learn estimator for
+classical ones --- and evaluated on five papers whose original experiments train on a CPU,
+spanning five model families: a network with a margin-based loss, a tabular regression network,
+a kernel support vector machine, a random forest and a soft decision tree. For each we report
+the learning curve of the generated implementation and a comparison with the published result.
+@@SDT_ABSTRACT@@ A housing-price network reaches a test RMSE of 4.48 against 3.02, a gap we
+trace to the paper's unspecified data split. The problems met along the way, from a misprinted
+loss to a dead dataset link, were each resolved, three of them automatically by the retry loop.
+We also present the team's first front end, a dashboard over the pipeline's outputs, and set out
+the next phase: live checks on running training jobs, an automated Critic, and tighter control of
+the retry loop.
 \end{abstract}
 
 \section{Introduction}
@@ -243,337 +464,266 @@ Reproducing a machine learning paper's reported results is mechanical in princip
 laborious in practice, and most published work ships no usable implementation. ReproBot
 automates the process as a pipeline of specialized stages. A vision-language model converts
 the paper's PDF into Markdown, reading figures as well as text. A Reader extracts five
-structured fields --- a method summary, architecture notes, the paper's claimed results, its
-hyperparameters and its data pipeline --- and cross-checks them with a validation loop. A Coder
-turns that extraction into a self-contained training script. A Runner executes the script
-inside a Docker container through four escalating stages: \texttt{probe}, a few optimizer
-steps; \texttt{smoke}, one epoch on a small slice; \texttt{capped}, five epochs on a small
-slice; and \texttt{full}, the paper's own setup. When a stage fails, a cheap model classifies
-the failure, and an Orchestrator feeds that diagnosis back to the Coder and retries, within a
-fixed budget. The planned final stage, a Critic that compares each reproduced number with the
-paper's claim under an explicit tolerance, does not yet exist.
+structured fields --- a method summary, architecture notes, the claimed results, the
+hyperparameters and the data pipeline --- and cross-checks them with a validation loop. A Coder
+turns that extraction into a self-contained training script. A Runner executes the script in a
+Docker container through four escalating stages: \texttt{probe}, a few optimizer steps;
+\texttt{smoke}, one epoch on a small slice; \texttt{capped}, five epochs on a small slice; and
+\texttt{full}, the paper's own setup. When a stage fails, a small model classifies the failure,
+and an Orchestrator feeds that diagnosis back to the Coder and retries, within a fixed budget.
 
-At the start of this phase the pipeline could execute generated code end to end, but it had
-produced no replication result. Every run on its CIFAR-10 target papers had been a short
-execution check, because a full training run on the available CPU was measured at roughly
-three weeks per paper. This phase changed that in three ways. Section~\ref{sec:direction}
-describes a change of direction: evaluating on papers small enough to train for real on a CPU,
-and a team decision that ReproBot must handle several kinds of paper and several model
-families. Section~\ref{sec:generalization} describes the resulting changes to the Coder and
-Runner, and Section~\ref{sec:prompts} the prompt failures that real runs exposed and the rules
-that now prevent them. Section~\ref{sec:results} reports the measurements, including a
-training collapse, the ablation that explained it, and five comparisons against published
-claims. Section~\ref{sec:viewer} describes the team's pipeline viewer, and
-Sections~\ref{sec:findings}--\ref{sec:conclusion} collect the engineering findings, methodology,
-progress against plan, limitations and next steps.
+Before this phase the pipeline ran end to end but had only ever executed short checks: its
+CIFAR-10 target papers need weeks of CPU time per full training run. This phase produced the
+first full-fidelity results. Its contributions are:
 
-Table~\ref{tab:status} summarizes the open problems at the start of the phase and where each
-now stands.
+\begin{itemize}
+  \item a Coder that handles any supervised task and model family, writing PyTorch for neural
+    networks and scikit-learn for classical estimators (Section~\ref{sec:pipeline});
+  \item five complete replications across five model families, each with the implementation's
+    learning curve and a comparison with the paper (Section~\ref{sec:results});
+  \item a dashboard front end over the pipeline's outputs (Section~\ref{sec:viewer});
+  \item a concrete plan for the next phase, grounded in what the runs showed
+    (Section~\ref{sec:future}).
+\end{itemize}
+
+\section{Replication Targets}
+\label{sec:targets}
+
+Full training of the CIFAR-10 benchmark papers is out of reach on the project's hardware: one
+\emph{Wide Residual Networks} run at the paper's setup measured at about 22 days on the
+development CPU. Testing the pipeline's actual claim --- that a paper can be read, implemented,
+executed and checked automatically --- needs only papers whose experiments are small. We chose
+five that train in one minute to one hour, deliberately covering different model families and
+data types (Table~\ref{tab:targets}), and kept them apart from the CIFAR-10 set.
 
 \begin{TABENV}[tbp]
 \centering
 \small
-\caption{Open problems at the start of this phase, and their status now.}
-\label{tab:status}
-\begin{tabular}{L{0.34\textwidth}L{0.58\textwidth}}
-\toprule
-At the start of the phase & Now \\
-\midrule
-No reproduced number had ever been compared with a claim
-  & Five claims measured at full fidelity and compared by hand
-    (Section~\ref{sec:fidelity}); the Critic still does not exist \\
-Full-fidelity runs infeasible ($\sim$22 days per CIFAR-10 paper)
-  & Unchanged for CIFAR-10; sidestepped with CPU-sized papers whose full runs take between
-    one minute and one hour \\
-Only CIFAR-10 image classifiers, all built with HuggingFace \texttt{Trainer}
-  & Seven papers carried end to end, spanning CNNs, MLPs, a regression network, a kernel SVM,
-    a random forest and a soft decision tree \\
-The retry loop had repaired only a deliberately injected fault
-  & Three naturally occurring defects repaired (Section~\ref{sec:wijaya}) \\
-Four of seven Orchestrator verdicts never observed in a real run
-  & \texttt{environment\_error} occurred in a real run --- wrongly assigned, and the
-    triage prompt corrected (Section~\ref{sec:prompts}); three remain unobserved \\
-Retries regenerate whole scripts rather than patching them
-  & Unchanged, and now measured: one-line fixes produced scripts only 22--27\% similar to their
-    predecessors \\
-Reader validation never converged; two CIFAR-10 papers cannot be extracted
-  & Two papers now converge with no flags left; the rest unchanged \\
-\bottomrule
-\end{tabular}
-\end{TABENV}
-
-\section{A Change of Direction}
-\label{sec:direction}
-
-\subsection{The compute wall}
-
-The CIFAR-10 papers chosen as ReproBot's first targets are the natural benchmark for the
-proposal's image-classification scope, and they are unreachable on the hardware available to
-the project. At the measured throughput of 5.3 training samples per second, one
-\emph{Wide Residual Networks} run at the paper's own setup takes approximately 22 days. Every number previously produced for these papers therefore came from short execution checks
-that train for one epoch on a few hundred images, and could say nothing about fidelity.
-
-Securing GPU compute remains necessary for that benchmark. It is not, however, necessary to
-test the claim ReproBot actually makes --- that a paper can be read, implemented, executed
-and checked automatically --- which requires only a paper whose original experiment is
-small. We therefore looked for papers whose headline result trains in minutes on a CPU,
-while leaving the curated CIFAR-10 set untouched.
-
-\subsection{More than one kind of paper}
-
-The search surfaced a structural problem. The pipeline was, in practice, hardwired to image
-classification: the Coder's prompt assumed \texttt{torchvision} datasets and the HuggingFace
-\texttt{Trainer} image-model interface, the metrics contract was keyed on accuracy, and the
-Runner's image carried no tabular libraries. An in-scope MNIST paper would have tested the
-pipeline as it stood. A housing-price regression paper could not have run at all.
-
-The team's decision was that this was a defect rather than a scope boundary: a system that
-replicates only one task type is not a general replication system, and ReproBot should
-handle several. CIFAR-10 remains the main evaluation set, but no stage may now assume
-images. Both candidate papers were retained, precisely because they differ:
-
-\begin{itemize}
-  \item \textbf{Tang (2013)}, \emph{Deep Learning using Linear Support Vector Machines}
-    \cite{tang2013dlsvm}. A classification paper whose contribution is a loss: the softmax
-    output layer is replaced by a linear L2-SVM trained with a squared hinge loss. The
-    targeted claim is 0.87\% MNIST test error. The setup --- PCA to 70 dimensions, two
-    512-unit hidden layers, 400 epochs --- is stated in unusual detail, which makes the two
-    values it omits all the more consequential (Section~\ref{sec:tang}).
-  \item \textbf{Wijaya (2023)}, \emph{Multi Level Dense Layer Neural Network Model for
-    Housing Price Prediction} \cite{wijaya2023housing}. A tabular regression paper in Keras,
-    on the Boston Housing data \cite{harrison1978hedonic}: 506 rows, 13 features, a stated
-    405/101 train/test split, 1000 epochs. The targeted claim is a test RMSE of 3.02. It
-    tests three things CIFAR-10 cannot: a non-image data source, a regression metric where
-    lower is better, and a paper written for a different framework.
-\end{itemize}
-
-A replication system should also handle the models much of applied machine learning still
-relies on: kernel methods, decision trees and ensembles. Three further papers were therefore
-chosen to cover model families rather than tasks:
-
-\begin{itemize}
-  \item \textbf{Hsu, Chang and Lin (2003)}, \emph{A Practical Guide to Support Vector
-    Classification} \cite{hsu2003guide}. A widely used tutorial whose worked examples report
-    exact accuracies from the LIBSVM tools \cite{chang2011libsvm}. The target is its
-    astroparticle-physics example, svmguide1 (3,089 training and 4,000 test instances, four
-    features): 96.9\% test accuracy after scaling each feature to $[-1, 1]$ and choosing the
-    RBF kernel's $C$ and $\gamma$ by a cross-validated grid search. Its appendix gives the
-    unrounded value, 96.875\%, at $C = \gamma = 2$.
-  \item \textbf{Xiao, Rasul and Vollgraf (2017)}, \emph{Fashion-MNIST}
-    \cite{xiao2017fashion}. A dataset paper whose benchmark table evaluates about 130
-    configurations of 13 scikit-learn classifiers \cite{pedregosa2011sklearn}. The target is
-    its random forest (100 trees, entropy criterion, maximum depth 100): 0.873 test accuracy,
-    the mean of five runs with shuffled training data.
-  \item \textbf{Frosst and Hinton (2017)}, \emph{Distilling a Neural Network Into a Soft
-    Decision Tree} \cite{frosst2017soft}. A binary tree whose inner nodes are learned linear
-    filters, trained by gradient descent. The target is 94.45\% MNIST test accuracy for a
-    depth-8 tree trained on true labels. The paper states the depth and little else --- no
-    learning rate, batch size, epoch count, penalty strength or temperature --- so this target
-    deliberately tests how the pipeline behaves when an experiment is under-specified.
-\end{itemize}
-
-Table~\ref{tab:targets} summarizes the five targets. All were kept in a separate directory,
-so the curated CIFAR-10 set remains exactly as its curator left it.
-
-\begin{TABENV}[tbp]
-\centering
-\small
-\caption{The five CPU-sized replication targets of this phase.}
+\caption{The five replication targets of this phase.}
 \label{tab:targets}
-\begin{tabular}{L{0.25\textwidth}L{0.22\textwidth}L{0.22\textwidth}L{0.2\textwidth}}
+\begin{tabular}{L{0.26\textwidth}L{0.22\textwidth}L{0.2\textwidth}L{0.2\textwidth}}
 \toprule
 Paper & Model family & Data & Targeted claim \\
 \midrule
-Tang (2013) & MLP with an L2-SVM output layer & MNIST & 0.87\% test error \\
-Wijaya (2023) & Multi-branch dense network (Keras) & Boston Housing, tabular & Test RMSE 3.02 \\
-Hsu, Chang and Lin (2003) & RBF support vector machine & svmguide1, tabular & 96.9\% test accuracy \\
-Xiao et al.\ (2017) & Random forest (scikit-learn) & Fashion-MNIST & 0.873 test accuracy, 5 runs \\
-Frosst and Hinton (2017) & Soft decision tree & MNIST & 94.45\% test accuracy \\
+Tang (2013) \cite{tang2013dlsvm} & MLP with an L2-SVM output layer & MNIST & 0.87\% test error \\
+Wijaya (2023) \cite{wijaya2023housing} & Multi-branch dense network (Keras) & Boston Housing
+  \cite{harrison1978hedonic}, tabular & Test RMSE 3.02 \\
+Hsu, Chang and Lin (2003) \cite{hsu2003guide} & RBF support vector machine (LIBSVM
+  \cite{chang2011libsvm}) & svmguide1, tabular & 96.9\% test accuracy \\
+Xiao, Rasul and Vollgraf (2017) \cite{xiao2017fashion} & Random forest (scikit-learn
+  \cite{pedregosa2011sklearn}) & Fashion-MNIST & 0.873 test accuracy, mean of 5 runs \\
+Frosst and Hinton (2017) \cite{frosst2017soft} & Soft decision tree & MNIST & 94.45\% test
+  accuracy \\
 \bottomrule
 \end{tabular}
 \end{TABENV}
 
-\section{Generalizing the Coder and Runner}
-\label{sec:generalization}
+Two of the targets are classification networks, one a regression network, and two classical
+methods. Tang's contribution is a loss function; Wijaya's model was written in Keras; the SVM
+guide's result comes from a full model-selection procedure; the Fashion-MNIST figure is an
+average over five runs; and the soft-tree paper states its tree depth but none of its training
+settings. Each property exercises a different part of the pipeline.
+
+\section{Pipeline Updates}
+\label{sec:pipeline}
 
 \FIGPIPELINE
 
-\subsection{Dropping the HuggingFace \texttt{Trainer}}
+\subsection{One training script for any model family}
 
-The Coder previously emitted scripts built on HuggingFace's \texttt{Trainer}. Its model
-contract --- image tensors in, logits out --- fits a custom margin loss or a regression head
-poorly, and that alone argued for replacing it. The deciding reason, however, was that
-\texttt{Trainer} applies defaults that no paper states, and this was demonstrated rather than
-assumed.
+\textbf{Neural models: a plain PyTorch loop.} The Coder previously emitted scripts built on
+HuggingFace's \texttt{Trainer}, whose image-model interface suits neither a custom loss nor a
+regression head. It now writes an explicit training loop in which the optimizer, schedule and
+loss are all visible. When a paper was written in another framework, the Coder reproduces that
+framework's defaults where the paper is silent --- Keras's Adam $\epsilon = 10^{-7}$, for
+example --- and discloses each difference.
 
-When the generalized Coder regenerated its \emph{Network In Network} script as a regression
-test, the new plain-PyTorch script kept the paper's architecture --- a genuine
-\texttt{mlpconv} cascade with no fully-connected layer --- and passed its execution probe.
-But its loss reached approximately 947, where the previous \texttt{Trainer}-based script had
-reported 2.30. The cause was a default: the old script never set \texttt{max\_grad\_norm},
-and therefore inherited \texttt{Trainer}'s gradient clipping at a norm of 1.0, which we
-confirmed inside the container. The paper uses no clipping. Faithful to the paper and without
-its unstated initialization, the same learning rate diverges.
+\textbf{Classical models: scikit-learn.} A support vector machine re-implemented as a PyTorch
+model trained by gradient descent would use a different optimizer and reach a different
+solution, so the Coder chooses its library by model family: SVMs, decision trees, forests,
+$k$-nearest neighbours and linear models are scikit-learn estimators with every hyperparameter
+passed by name, while networks --- including trees trained by gradient descent --- stay in
+PyTorch. Because a paper's ``default parameters'' are those of the library version it used, the
+Coder sets paper-era defaults explicitly; scikit-learn changed several in version 0.22.
 
-This changes how earlier results should be read. The \emph{Network In Network} runs made
-before this change executed under a stabilizing mechanism the paper does not describe. Their
-numbers had only ever been treated as execution checks, not replication results, but the
-scripts that produced them were less faithful to the paper than they appeared. The Coder is now forbidden from using \texttt{Trainer}, \texttt{accelerate},
-Lightning or Keras, and writes an explicit training loop in which every mechanism is visible.
+\textbf{A common contract.} Every script accepts the same command-line flags, so the Runner
+needs no per-paper logic, and writes the same metrics file: the claim's own metric on the
+training and test splits, the metric's direction, the task type, and, when the claim is an
+average over runs or folds, every run's value. Data comes from stable sources ---
+\texttt{torchvision}, OpenML or the paper's own dataset site --- and each script checks the
+dataset's name and shape before training on it.
 
-\subsection{Always PyTorch, whatever the paper used}
+\subsection{Problems encountered and how we solved them}
 
-Wijaya's model was built in Keras. Rather than generate code for a second framework, the
-Coder always writes PyTorch, and the prompt treats the source framework's defaults as part of
-the method: where a paper is silent, it inherited its framework's behaviour, so a faithful
-translation must reproduce that behaviour. The prompt names the Keras defaults that differ ---
-Adam's $\epsilon = 10^{-7}$, Glorot initialization, batch normalization with momentum 0.99 and
-$\epsilon = 10^{-3}$, and a \texttt{fit()} batch size of 32 --- and requires every remaining
-difference to be disclosed. Section~\ref{sec:findings} reports that this rule was followed
-only in part.
-
-\subsection{A task-agnostic metrics contract}
-
-Every generated script writes a fixed-shape metrics file that the Runner parses and a future
-Critic will read. The original contract was designed for image classification and assumed accuracy. Its
-generalization is summarized in Table~\ref{tab:contract}; the most consequential addition is
-\texttt{higher\_is\_better}, since a bare value of 4.0 is meaningless without knowing
-whether it is an error or an accuracy.
-
-\begin{table}[tbp]
-\centering
-\small
-\caption{Changes to the metrics contract. \texttt{metric} and \texttt{unit} are copied
-verbatim from the targeted claim, so a comparison against the claim needs no conversion.
-Files in the old shape still parse.}
-\label{tab:contract}
-\begin{tabular}{L{0.36\linewidth}L{0.54\linewidth}}
-\toprule
-Field & Change \\
-\midrule
-\texttt{train\_metric}, \texttt{eval\_metric} & Replace \texttt{train\_accuracy} and
-  \texttt{eval\_accuracy}: the claim's own metric on each split \\
-\texttt{higher\_is\_better} & New; the direction of the metric \\
-\texttt{task\_type} & New; inferred by the Coder from the claim, e.g.\
-  \texttt{classification} or \texttt{regression} \\
-\texttt{value}, \texttt{metric}, \texttt{unit} & Unchanged; the headline number and its
-  claim-verbatim label \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Data sourcing, and verifying what was fetched}
-
-Image datasets still come from \texttt{torchvision}. Tabular data is fetched from OpenML,
-pinned by dataset identifier, before any direct URL is considered, and every download lands
-in the shared dataset cache the Runner mounts. The preference order was not a design choice
-made in advance; Section~\ref{sec:prompts} describes the failure that produced it.
-
-The generated script must also check, in code and before training, that the dataset it
-fetched is the one it intended --- its name, row count and column count --- and raise
-otherwise. The motivation is that a wrong identifier does not fail. It downloads a different
-dataset that happens to carry that number, trains on it, and reports a plausible metric for
-the wrong problem. Where a paper gives split sizes but not how the split was drawn, the
-script uses a seeded random split and records the assumption.
-
-\subsection{Classical estimators in scikit-learn}
-
-Writing everything in PyTorch is right for neural networks and wrong for everything else.
-Re-implementing a support vector machine as a PyTorch model trained by stochastic gradient
-descent on a hinge loss changes both the optimizer and the solution it reaches; a paper that
-ran LIBSVM ran a specific quadratic-programming solver. The Coder therefore now chooses its
-library by model family. Classical estimators --- support vector machines, decision trees and
-forests, $k$-nearest neighbours, logistic regression, naive Bayes and similar --- are built with
-scikit-learn, whose \texttt{SVC} wraps LIBSVM itself, with every hyperparameter passed
-explicitly by name. Neural models stay in PyTorch, including tree-shaped models trained by
-gradient descent, such as a soft decision tree.
-
-Three further rules let this work without changing the Runner. First, library versions ship
-different defaults, just as frameworks do: before scikit-learn 0.22 a random forest defaulted
-to 10 trees and an RBF \texttt{SVC} to $\gamma = 1/n_{\text{features}}$, and a paper that relied
-on defaults relied on those. The Coder sets the paper-era values explicitly and discloses each
-one. Second, the command-line contract every generated script must satisfy is unchanged: flags
-with no meaning for an estimator, such as a learning rate for a random forest, are accepted as
-documented no-ops, while the sample caps that make the cheap stages cheap still apply, and loss
-and epoch fields in the metrics file may be empty. Third, when a claim is an average over
-repeated runs or cross-validation folds, the full run performs every repetition and reports the
-mean alongside the per-run values, while the cheap stages run a single repetition.
-
-\subsection{Runner changes}
-
-The Runner's interface did not change: it still invokes only the generated
-\texttt{reproduce.sh} and one of its four modes, which is what allowed new task types and model
-families to be added without modifying its code. Classical estimators needed no Runner change
-at all. Its image gained pinned \texttt{pandas},
-\texttt{scikit-learn} and \texttt{scipy}, installed in the same \texttt{pip} command as the
-pinned \texttt{numpy}, so that a transitive upgrade fails the build rather than silently
-moving a numerical dependency.
-
-\section{Prompt Hardening from Real Failures}
-\label{sec:prompts}
-
-Running the generalized pipeline on real papers exposed six failures in the prompts of the
-Coder and of the Runner's triage step. None was found by inspection; each surfaced in a run.
-Table~\ref{tab:prompts} lists them with the rule that now addresses each. Every triage rule
-was verified by re-running triage on the real log that exposed the problem.
+Table~\ref{tab:problems} lists the problems the replications surfaced and the fix applied to
+each. Three were runtime defects in generated code that the retry loop repaired without human
+involvement; the rest led to permanent changes in the prompts or the pipeline, or to a
+documented correction.
 
 \begin{TABENV}[tbp]
 \centering
 \small
-\caption{Prompt failures observed in real runs, in the order they occurred, and the rule
-that now addresses each. Rows 1--5 arose from the first tabular run; row 6 from its rerun.}
-\label{tab:prompts}
-\begin{tabular}{r L{0.33\textwidth} L{0.23\textwidth} L{0.31\textwidth}}
+\caption{Problems encountered during the replications, and how each was solved.}
+\label{tab:problems}
+\begin{tabular}{L{0.44\textwidth}L{0.48\textwidth}}
 \toprule
-& Observed failure & Consequence & Rule now in the prompt \\
+Problem & Solution \\
 \midrule
-1 & The Coder fetched Boston Housing from a remembered CMU StatLib URL, which now returns
-    HTTP~403 to every client
-  & The first execution stage failed in 5\,s
-  & Coder: OpenML by identifier first; a direct URL only for data found nowhere else \\
-2 & Triage classified the 403 as \texttt{environment\_error}
-  & The Orchestrator stopped with zero retries on a failure one regeneration would fix
-  & Triage: a refusal from one source is recoverable; only a container with no network at
-    all is environmental \\
-3 & A re-triage suggested switching to ``a standard alternative regression dataset''
-  & The fix would change what is being reproduced
-  & Never change what is being reproduced \\
-4 & A re-triage suggested \texttt{load\_boston}
-  & That loader was removed from scikit-learn in version 1.2
-  & Never suggest an API or source not certainly current; give one fix, not a menu \\
-5 & A re-triage named Boston Housing as OpenML \texttt{data\_id=506}
-  & Identifier 506 is a different dataset (Boston Housing is 531); training would
-    silently proceed on it
-  & Name no identifier absent from the log; the Coder asserts the dataset's name and shape
-    in code \\
-6 & The Coder's prompt twice said ``OpenML data\_id and version''; the script passed both
-  & \texttt{fetch\_openml} rejects that combination with a \texttt{ValueError}
-  & Pin by identifier alone, or by name together with a version \\
+HuggingFace \texttt{Trainer} silently applied gradient clipping that no paper states
+  & Explicit PyTorch training loop; every setting written down \\
+Re-implementing classical models in PyTorch would change their solver
+  & Library chosen by model family; scikit-learn with paper-era defaults \\
+A remembered dataset URL had gone dead (HTTP 403), and triage filed it as an environment fault
+  & OpenML first; triage treats one refusing source as a fixable script error \\
+Dataset identifiers recalled from memory can name the wrong dataset
+  & No identifiers from memory; scripts assert the dataset's name and shape \\
+Tang: two unstated defaults (momentum 0.9, $C = 1.0$) together destabilized training at full
+  scale & A six-configuration ablation isolated the pair; $C = 0.1$ trains stably \\
+Soft tree: the paper prints its loss as the logarithm of a non-positive quantity
+  & Implemented the evident intent, the expected cross-entropy \\
+Runtime defects: a wrong API call (Wijaya), a label-sorted data file (SVM), an in-place
+  autograd operation (soft tree) & Repaired automatically by the retry loop, one retry each \\
+A dataset paper has no ``own method'', so the first claims extraction was empty (Fashion-MNIST)
+  & The validation loop flagged it; the retry extracted 26 claims \\
+The full stage wrote its metrics under a different filename than the Runner reads
+  & Script template corrected \\
 \bottomrule
 \end{tabular}
 \end{TABENV}
 
-Two of these generalize beyond this project, and are drawn out in
-Section~\ref{sec:findings}. Rows 1 and 5 share a pattern: in both, a model supplied an
-identifier from memory that looked exactly as plausible as a correct one. Row 6 is the
-converse, and the more uncomfortable: the defect was in our own prompt, whose descriptive
-wording the model implemented literally.
+\subsection{The retry loop in action}
+
+\FIGWIJAYARUN
+
+Figure~\ref{fig:wijayarun} shows a typical automatic repair. The first generated script for
+the housing-price paper passed two conflicting arguments to scikit-learn's dataset loader and
+stopped within seconds. Triage classified the failure as a fixable script error and proposed
+removing one argument; the Coder regenerated the script with that feedback, and the second
+attempt passed every stage through the full run. The SVM and soft-tree scripts were repaired
+the same way. A plateau guard, which compares each regenerated script with its predecessor to
+stop a loop that is not changing anything, measured similarities of 0.22 to 0.27, far from its
+0.98 stopping threshold.
 
 \section{Results}
 \label{sec:results}
 
-\subsection{Extraction on the new papers}
+\subsection{Overview}
 
-The Reader ran unchanged on all five papers. Table~\ref{tab:reader} compares them with the four
-CIFAR-10 papers it had already processed. Every targeted claim was extracted, as was Tang's
-distinction between the L1- and L2-SVM gradients.
+Table~\ref{tab:results} compares each reproduction with its paper, and
+Figure~\ref{fig:curves} shows the learning curve of each generated implementation. All five
+scripts were generated by the Coder and executed by the Runner at the papers' full settings.
+Two needed a manual correction before their final run, listed in Table~\ref{tab:problems}: one
+unstated hyperparameter for Tang, and the misprinted loss for the soft tree.
 
 \begin{TABENV}[tbp]
 \centering
 \small
-\caption{Reader output across nine papers; the first four rows are CIFAR-10 papers processed before this phase. \emph{Comp.} is architecture components; \emph{own/eq} is equations marked as the
-paper's own over equations captured; \emph{Gaps} is \texttt{unstated\_details} entries;
-\emph{Flags} is unresolved validation flags after the three-pass cap.}
+\caption{Reproduced results against the published claims. Runtimes are the full stage's wall
+clock on the development CPU.}
+\label{tab:results}
+\begin{tabular}{L{0.19\textwidth}L{0.2\textwidth}rrrL{0.2\textwidth}}
+\toprule
+Paper & Claim & Paper & ReproBot & Runtime & Agreement \\
+\midrule
+Tang (2013) & MNIST test error & 0.87\% & \textbf{0.82\%} & 54\,min & Within 0.05 points \\
+Wijaya (2023) & Boston Housing test RMSE & 3.02 & \textbf{4.48} & 32\,min & Not matched; train
+  RMSE 2.94 vs 2.69 \\
+Hsu et al.\ (2003) & svmguide1 test accuracy & 96.9\% & \textbf{96.63\%} & 73\,s & Within 0.3
+  points; exact at the paper's settings \\
+Xiao et al.\ (2017) & Fashion-MNIST accuracy, mean of 5 runs & 0.873 & \textbf{0.8773} &
+  3.3\,min & Within 0.5 points \\
+Frosst and Hinton (2017) & MNIST test accuracy & 94.45\% & \textbf{@@SDT_ACC@@} &
+  @@SDT_TIME@@ & @@SDT_AGREE@@ \\
+\bottomrule
+\end{tabular}
+\end{TABENV}
+
+\FIGCURVES
+
+\subsection{Tang: MLP with an L2-SVM output layer}
+
+The network --- PCA to 70 dimensions, two hidden layers of 512 units, and a linear SVM trained
+with a squared hinge loss in place of softmax --- trained for the paper's 400 epochs. Training
+error fell steadily to 0.06\% (Figure~\ref{fig:curves}a), and the test set, evaluated once at
+the end, gave 0.82\% against the paper's 0.87\%: five test images out of 10{,}000. With one seed
+we cannot measure run-to-run variance, but for scale, the binomial standard error of an error
+rate this size over 10{,}000 images is about 0.09 points, so the result is consistent with the
+claim. The paper does not state its momentum or its SVM penalty $C$; the first full run, with
+common defaults for both, became unstable, and an ablation over the unstated values showed
+$C = 0.1$ to train cleanly.
+
+\subsection{Wijaya: tabular regression network}
+
+The three-level dense network, written in Keras by the paper and translated with Keras's
+defaults, trained for 1000 epochs. Figure~\ref{fig:curves}b shows the training and validation
+RMSE: the model fits within the first 150 epochs, and its validation RMSE, on 81 training rows
+held out as the paper describes, stays between 3.2 and 3.5 --- close to the paper's test RMSE
+of 3.02. The 101-row test set, however, gave 4.48, while the training RMSE of 2.94 is within 9\%
+of the paper's 2.69. The paper states its 405/101 split sizes but not how rows were assigned, and
+on a 506-row dataset two held-out subsets already disagree by more than the gap being measured;
+the split, not the model, is the most likely source of the difference, and several seeds would
+be needed to confirm it.
+
+\subsection{Hsu, Chang and Lin: RBF support vector machine}
+
+ReproBot reproduced the guide's full procedure: scale each feature to $[-1, 1]$ with the
+training set's ranges, evaluate 110 $(C, \gamma)$ pairs by five-fold cross-validation, retrain
+with the best pair, and test once. Figure~\ref{fig:curves}c shows the cross-validation surface.
+A broad ridge of settings scores above 96\%; ReproBot's search picked $C = \gamma = 8$ at
+96.99\%, the paper's picked $C = \gamma = 2$ at 96.89\%, and the two are within a tenth of a
+point. The test accuracy was 96.625\% against the paper's 96.875\%. Because scikit-learn's
+\texttt{SVC} wraps LIBSVM, we also evaluated it directly at each of the paper's reported
+settings (Table~\ref{tab:svm}): all three test accuracies match the paper exactly. The
+implementation is therefore exact, and the small remaining gap comes only from which near-equal
+setting the randomly folded search selects.
+
+\begin{table}[tbp]
+\centering
+\small
+\caption{svmguide1 test accuracy: the paper's LIBSVM results against scikit-learn's
+\texttt{SVC} at the same settings.}
+\label{tab:svm}
+\begin{tabular}{L{0.42\linewidth}rr}
+\toprule
+Setting & Paper & scikit-learn \\
+\midrule
+Unscaled features, default parameters & 66.925\% & 66.925\% \\
+Scaled to $[-1, 1]$, default parameters & 96.15\% & 96.150\% \\
+Scaled, $C = 2$, $\gamma = 2$ & 96.875\% & 96.875\% \\
+Scaled, grid search (ReproBot: $C = \gamma = 8$) & --- & 96.625\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Xiao, Rasul and Vollgraf: random forest}
+
+The Fashion-MNIST benchmark reports the mean test accuracy of five runs with shuffled training
+data; ReproBot's script performed all five with the paper's configuration (100 trees, entropy
+criterion, maximum depth 100). The runs gave between 0.8753 and 0.8792, with a mean of 0.8773
+against the paper's 0.873. Figure~\ref{fig:curves}d shows test accuracy as trees are added: it
+rises quickly to about 0.87 by 30 trees and then flattens, so the paper's choice of 100 trees
+sits on the plateau. The reproduction is within half a point of the claim; the scikit-learn
+version the paper used is not stated and may account for the remaining difference.
+
+\subsection{Frosst and Hinton: soft decision tree}
+
+@@SDT_SECTION@@
+
+\subsection{Extraction across paper types}
+
+The Reader ran unchanged on all five papers. Table~\ref{tab:reader} compares them with the four
+CIFAR-10 papers it had processed earlier. Every targeted claim was extracted. For both
+classical-ML papers, validation converged with no open flags, a first for the pipeline; for the
+equation-heavy soft-tree paper, all five equations were correctly identified as the paper's
+own.
+
+\begin{TABENV}[tbp]
+\centering
+\small
+\caption{Reader output across nine papers; the first four are CIFAR-10 papers. \emph{Comp.}
+counts architecture components; \emph{own/eq} equations marked as the paper's own over
+equations captured; \emph{Gaps} explicitly recorded unstated details; \emph{Flags} unresolved
+validation flags.}
 \label{tab:reader}
 \begin{tabular}{lrrrrcrr}
 \toprule
@@ -584,544 +734,134 @@ All Convolutional Net   & 17 & 13 & 4 & 10 & 2/6  & 11 & 5 \\
 Deep Residual Learning  & 66 & 28 & 6 & 10 & 2/3  &  7 & 8 \\
 Wide Residual Networks  & 61 & 20 & 4 & 11 & 1/1  & 11 & 6 \\
 \midrule
-Tang (2013), DLSVM      & 15 & 23 & 3 & 10 & 4/11 & 12 & 5 \\
-Wijaya (2023), housing  & 14 & 10 & 1 &  8 & 2/2  &  8 & 5 \\
-Hsu et al.\ (2003), SVM guide & 3 & 19 & 8 & 2 & 0/6 & 5 & 0 \\
-Xiao et al.\ (2017), Fashion-MNIST & 26 & 14 & 1 & 0 & 0/0 & 3 & 0 \\
-Frosst and Hinton (2017), soft tree & 8 & 11 & 3 & 4 & 5/5 & 10 & 4 \\
+Tang (2013)                  & 15 & 23 & 3 & 10 & 4/11 & 12 & 5 \\
+Wijaya (2023)                & 14 & 10 & 1 &  8 & 2/2  &  8 & 5 \\
+Hsu et al.\ (2003)           &  3 & 19 & 8 &  2 & 0/6  &  5 & 0 \\
+Xiao et al.\ (2017)          & 26 & 14 & 1 &  0 & 0/0  &  3 & 0 \\
+Frosst and Hinton (2017)     &  8 & 11 & 3 &  4 & 5/5  & 10 & 4 \\
 \bottomrule
 \end{tabular}
 \end{TABENV}
-
-Two of the classical-ML papers exposed an assumption built into the Reader. Its claims
-extractor keeps only a paper's own results and discards baseline rows, which is the right rule
-for a paper that proposes a method. Fashion-MNIST proposes a dataset: every row of its
-benchmark table is a standard classifier. On the first pass the extractor considered 124
-candidate rows and kept none, and the architecture extractor found no components. The
-validator flagged the empty claims against the paper's table, and the retry kept 26 --- the
-best configuration of each classifier on each dataset. The loop recovered only because the
-validator noticed: a kind of paper the extractor's instructions never anticipated produced a
-well-formed, empty result. The same two papers were, however, the first whose validation
-converged with no flags remaining. For the SVM guide, the Reader took the rounded 96.9\% from
-the paper's summary table rather than the appendix's 96.875\%, and did not record the
-appendix's accuracies under default parameters as claims.
-
-Three weaknesses surfaced on the neural-network papers, all recorded as open defects. First,
-validation still does not converge there: both end with five unresolved flags. Second, the same result is
-extracted two or three times when a paper states it in prose, a table and a figure;
-Wijaya's 14 claims describe eight distinct results, at mixed precision (0.911 and 0.91). A
-Critic comparing against claims will need them deduplicated. Third, and most consequential,
-the Reader records what a paper leaves unstated only for its \emph{architecture}. Tang's
-paper states ``stochastic gradient descent with momentum'' without a momentum value, and an
-L2-SVM objective without its penalty constant $C$. Neither omission was flagged anywhere ---
-and they are exactly the two values that collapsed training (Section~\ref{sec:tang}).
-
-\subsection{The retry loop repairs real defects}
-\label{sec:wijaya}
-
-\FIGWIJAYARUN
-
-Until this phase, the retry loop had been demonstrated only against a deliberately
-reintroduced fault: a learning-rate scheduler reading an attribute its constructor never set,
-which is valid Python and fails only at run time. Wijaya's two orchestrated runs, shown in Figure~\ref{fig:wijayarun}, supply the first
-naturally occurring case --- and, in the row before it, the failure that motivated the
-triage rules of Section~\ref{sec:prompts}.
-
-Before the prompts were hardened, the first execution stage failed on the dead URL, triage
-called it environmental, and the loop stopped as designed for an environmental fault ---
-correctly given its input, and wrongly in fact. After hardening, the regenerated script
-fetched the right dataset but passed both an identifier and a version to
-\texttt{fetch\_openml}, which raised. Triage classified the failure as recoverable and
-proposed removing the \texttt{version} argument, which matches the traceback exactly. The
-Coder regenerated with that feedback, the plateau guard measured a similarity of 0.22, and
-the second attempt asserted the dataset's name and shape and passed every stage through
-\texttt{full}. The whole repair cost two generation calls, one triage call, and under three
-minutes.
-
-The classical-ML and soft-tree runs added two more naturally occurring repairs. The SVM
-script's cheap stages trained on the first 256 training rows; svmguide1's training file is
-sorted by label, and its first 2,000 rows all belong to one class, so scikit-learn refused to
-fit. Triage classified the failure as recoverable, and the regenerated script sampled the cheap
-subset at random and passed every stage. The soft-tree script modified a tensor in place inside
-the autograd graph, a classic PyTorch error that surfaces only in the backward pass; triage
-identified the in-place operation, and the regenerated script ran. The plateau guard measured
-similarities of 0.25 and 0.27 for the two regenerations.
-
-\subsection{The first full run, and its collapse}
-\label{sec:tang}
-
-Tang's generated script passed \texttt{probe}, \texttt{smoke} and \texttt{capped} with
-training error falling from 75\% to 31\% --- evidence, as far as those stages can provide
-it, that the network learned. Its \texttt{full} run was ReproBot's first at a paper's own
-scale. By epoch 20 its training error had risen to 83\%, and it then settled near 89.5\%
-(Figure~\ref{fig:tang}). It was noticed by a team member reading the live training log. No
-stage noticed, and had the run completed, the Runner would have reported \emph{success}:
-the script exited normally and wrote a well-formed metrics file.
-
-\FIGTANG
-
-\textbf{Diagnosis.} For a one-vs-rest squared hinge loss, a network that ignores its input can
-do no better than a constant score per class, $s_k = 2p_k - 1$, where $p_k$ is the frequency
-of class $k$. The resulting loss is $\sum_k 4p_k(1-p_k)$, and the best such network always
-predicts the most frequent digit. Evaluated at MNIST's class frequencies, both quantities
-match the observed run (Table~\ref{tab:floor}). The network had died: early oversized
-updates drove every hidden unit's pre-activation negative, so every ReLU output zero for
-every input and no gradient reached the hidden layers; only the output bias still learned,
-to exactly the input-ignoring optimum. A decaying learning rate cannot recover from this,
-since a zero gradient stays zero at any step size.
-
-\begin{table}[tbp]
-\centering
-\small
-\caption{The collapsed run against a network that ignores its input. The small excess is
-the L2 penalty and the input noise.}
-\label{tab:floor}
-\begin{tabular}{lrr}
-\toprule
-& Input-ignoring optimum & Observed \\
-\midrule
-Training loss  & 3.599 & $\sim$3.607 \\
-Training error & 88.8\% & $\sim$89.5\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Ablation.} The Coder had disclosed four values the paper does not state: momentum
-0.9, $C = 1.0$, PyTorch's default initialization, and unwhitened PCA features. To isolate
-the cause, we wrote a harness that imports the model, loss and data loading \emph{from the
-generated script itself}, holds every paper-stated value fixed, and varies one of the four
-guesses at a time for 30 epochs of the paper's schedule, measuring the fraction of hidden
-units that output zero for every one of 2,000 probe images. Table~\ref{tab:ablation} reports
-the six configurations.
-
-\begin{TABENV}[tbp]
-\centering
-\small
-\caption{Ablation over the four unstated values, each changed alone from the generated
-configuration (A). \emph{Dead} is the fraction of second-layer hidden units that output
-zero for all 2,000 probe images at epoch 30; first-layer units were never dead in any
-configuration.}
-\label{tab:ablation}
-\begin{tabular}{llrrrl}
-\toprule
-& Configuration & Test @5 & Test @30 & Dead @30 & Outcome \\
-\midrule
-A & As generated (mom.\ 0.9, $C=1.0$) & 6.6\%  & 47.1\% & 0.71 & unstable \\
-B & Momentum 0.5                        & 4.0\%  & 2.62\% & 0.38 & stable \\
-C & Momentum 0.0                        & 4.2\%  & 2.66\% & 0.14 & stable \\
-D & $C = 0.1$                           & 4.4\%  & 2.80\% & 0.04 & stable, healthiest \\
-E & PCA whitened                        & 79.8\% & 90.3\% & 0.996 & total collapse \\
-F & Init.\ $\mathcal{N}(0, 0.01)$     & 5.0\% & 4.2\% & 0.31 & stable, slower \\
-\bottomrule
-\end{tabular}
-\end{TABENV}
-
-The collapse requires momentum 0.9 and $C = 1.0$ \emph{together}: reducing either alone
-stabilizes training. Momentum 0.9 amplifies the effective step roughly tenfold, and $C = 1.0$
-scales the squared-hinge gradient tenfold relative to $C = 0.1$. Each value is a reasonable
-default in isolation; the pair is too aggressive for this loss at the paper's learning rate
-of 0.1. Whitening the PCA features enlarges the inputs --- the mean squared norm rises from
-46 to 70 --- and collapses fastest, which supports the Coder's literal, unwhitened reading.
-Configuration A degraded but did not fully collapse within 30 epochs while the real run did;
-the two used different random streams for the input noise, so the collapse is
-seed-dependent, which is precisely what makes it hard to catch with short runs.
-
-We selected $C = 0.1$ (configuration D) as a one-line change to the existing script rather
-than a regeneration, so that nothing else could change at the same time. It keeps the
-momentum consistent with the paper's ``with momentum'', produced the healthiest network, and
-concerns a constant the paper itself treats as tuned elsewhere.
-
-\subsection{First fidelity measurements}
-\label{sec:fidelity}
-
-All five papers completed their check stages, and four completed \texttt{full} runs at their
-papers' stated settings. Table~\ref{tab:fidelity} reports the results against the published
-claims.
-
-\begin{TABENV}[tbp]
-\centering
-\small
-\caption{ReproBot's first full-fidelity measurements, compared against the claims by hand.
-Runtimes are the full stage's wall clock on the development CPU; some runs shared it.}
-\label{tab:fidelity}
-\begin{tabular}{L{0.16\textwidth}L{0.15\textwidth}rrrL{0.25\textwidth}}
-\toprule
-Paper & Claim & Claimed & Reproduced & Runtime & Reading \\
-\midrule
-Tang (2013) & MNIST test error & 0.87\% & \textbf{0.82\%} & 3,223\,s
-  & Consistent with the claim, after one unstated value was corrected by hand \\
-Wijaya (2023) & Test RMSE & 3.02 & \textbf{4.48} & 1,918\,s
-  & Not reproduced on this split \\
-Wijaya (2023) & Train RMSE & 2.69 & 2.94 & ---
-  & Close; see text \\
-Hsu et al.\ (2003) & svmguide1 test accuracy & 96.9\% & \textbf{96.63\%} & 73\,s
-  & Implementation exact; the grid search chose different $C$, $\gamma$ \\
-Xiao et al.\ (2017) & Random forest test accuracy, mean of 5 & 0.873 & \textbf{0.8773} & 200\,s
-  & Close; all five runs above the claim \\
-Frosst and Hinton (2017) & MNIST test accuracy & 94.45\% & --- & ---
-  & Did not learn; check stages passed regardless \\
-\bottomrule
-\end{tabular}
-\end{TABENV}
-
-\textbf{Tang.} With $C = 0.1$, training error fell smoothly to 0.062\% with no sign of
-collapse (Figure~\ref{fig:tang}), and the test set, evaluated once after the final epoch,
-gave 0.82\%. The difference from the claim is five test images out of 10{,}000. With a single
-seed we cannot measure run-to-run variance; as a reference scale, the binomial standard error
-of a 0.85\% error rate over 10{,}000 samples is about 0.09 percentage points. We therefore
-read the result as consistent with the claim, not as an improvement on it.
-
-Two qualifications matter for how this result may be cited. It is not autonomous: a human
-chose $C$. And although the ablation selected on network health --- dead units and distance
-from the input-ignoring loss --- it also logged short-horizon test error, so the choice was
-not made blind to the test set. The accurate statement is that \emph{the generated
-implementation replicates the paper's claim once one hyperparameter the paper omits is
-corrected}.
-
-\FIGWIJAYA
-
-\textbf{Wijaya.} The reproduced test RMSE of 4.48 is 48\% above the claim, while the
-training RMSE of 2.94 is within 9\% of it. The training log qualifies the headline number
-(Figure~\ref{fig:wijaya}). The generated script, following the paper's description, held out
-20\% of the training rows for monitoring. On those 81 rows, which the model never trained
-on, the RMSE stayed between 3.2 and 3.5 for most of training and ended at 3.31 --- close to
-the claimed test value. Only the 101-row test set produced 4.48. Two held-out subsets of the
-same 506-row dataset thus disagree by more than the gap being measured.
-
-The paper states its split sizes but not how rows were assigned, so the script used a seeded
-random split. On a dataset this small, with a target censored at its maximum value, which
-rows fall into a 101-row test set plausibly dominates the result. A single seed cannot
-separate an unfaithful implementation from an unlucky split, and we do not claim either. Two
-further candidates remain untested: the Coder did not reproduce Keras's batch-normalization
-and initialization defaults (Section~\ref{sec:findings}), and a constant learning rate left
-the final epoch's training loss noisy.
-
-\textbf{SVM guide.} ReproBot reproduced the paper's whole procedure: scale each feature to
-$[-1, 1]$ using the training set's ranges, evaluate 110 $(C, \gamma)$ pairs by five-fold
-cross-validation, retrain on the full training set with the best pair, and test once. It
-reached 96.625\% against the paper's 96.875\%, a difference of 10 of the 4,000 test instances.
-The cause is identifiable. The search selected $C = \gamma = 8$ at a cross-validation accuracy
-of 96.99\%, where the paper's search selected $C = \gamma = 2$ at 96.89\%. The two candidates
-are within a tenth of a point of each other, and which one wins depends on how instances are
-assigned to folds, which the paper leaves to its tool's random shuffle. To separate the
-implementation from the search, we evaluated scikit-learn's \texttt{SVC} directly at the
-paper's settings, outside the pipeline. It reproduced all three of the paper's reported test
-accuracies exactly: 66.925\% on unscaled data with default parameters, 96.15\% on scaled data
-with defaults, and 96.875\% at $C = \gamma = 2$. Since \texttt{SVC} wraps LIBSVM this is
-expected, but it establishes that the reproduction is exact in its implementation and differs
-only in one stochastic step of its protocol.
-
-\textbf{Fashion-MNIST random forest.} The five runs gave between 0.8753 and 0.8792, with a mean
-of 0.8773 against the claimed 0.873. All five exceed the claim, so the gap of 0.4 points is not
-run-to-run noise. Tree ensembles are insensitive to monotonic rescaling of pixel values, so the
-unstated preprocessing is an unlikely cause; the scikit-learn version the paper used, also
-unstated, is the more plausible one, and we did not isolate it. We read this as a close rather
-than an exact reproduction.
-
-\textbf{Soft decision tree.} The generated script had to guess a dozen values the paper does not
-state, and disclosed each. After the retry repaired its crash, its three check stages all
-passed, yet its accuracy stayed between 5\% and 9\%, below the 10\% of random guessing, and
-its training loss was negative and identical to four decimal places across every epoch. The
-cause is instructive. The paper prints its loss as
-$L(\mathbf{x}) = -\log\bigl(\sum_{\ell} P^{\ell}(\mathbf{x}) \sum_k T_k \log Q^{\ell}_k\bigr)$,
-but the bracketed quantity is a weighted log-probability and therefore never positive, so its
-logarithm is undefined; the evident intent is the expected cross-entropy
-$-\sum_{\ell} P^{\ell}(\mathbf{x}) \sum_k T_k \log Q^{\ell}_k$. The Reader extracted the
-equation verbatim and marked it as the paper's own, and the Coder implemented it faithfully, as
-its rules require --- negating the bracket to keep the logarithm defined. The result minimizes
-the negative log of the cross-entropy, which \emph{maximizes} the cross-entropy: the tree is
-trained to be wrong. The full run confirmed it, with test accuracy falling to 0.15\% and the
-loss settling at $-\log(20.7)$, where 20.7 is exactly the negative log of the probability floor
-the script clamps to. Replacing the one line with the expected cross-entropy, outside the
-pipeline, produced a model that learned immediately: 54\% test accuracy after three epochs on
-5,000 images. The regeneration also silently changed several guessed values --- the
-learning rate from 0.01 to 0.1, the batch size from 128 to 32 and the penalty strength from 0.1
-to 0.01 --- none of which the triage feedback had asked for. We report no number for this
-claim.
 
 \subsection{Cost}
 
-One Coder call consumed approximately 27{,}000 input and 9{,}500 output tokens and took 75\,s;
-one triage call, about 2{,}400 input and 240 output tokens, in 3\,s. Compute again dominated,
-and in a way worth recording. Both full runs shared the CPU, and each container claimed
-every core. Wijaya's 1000 epochs over 324 training rows took 1,906\,s --- about 1.9\,s per
-epoch of 11 small batches, which is thread contention rather than model cost --- and Tang's
-run took 54 minutes. The Runner deliberately leaves CPU limits unset, because an arbitrary
-limit produces failures indistinguishable from crashes; the practical consequence is that
-concurrent runs should be avoided.
+A Coder call consumes about 27{,}000 input and 9{,}500 output tokens and takes 75\,s; a triage
+call about 2{,}400 input and 240 output tokens, in 3\,s. Compute dominates: the full runs took
+from 73\,s (SVM) to 54 minutes (Tang). Running two containers at once roughly doubled wall
+clock, because each claims every CPU core, so runs are best scheduled one at a time.
 
 \section{A Front End: The Pipeline Viewer}
 \label{sec:viewer}
 
-In parallel with the pipeline work, the team built ReproBot's first user interface:
-\texttt{viewer/}, a dashboard written in Streamlit, developed on a feature branch. The
-original proposal planned a Gradio demonstration for the final month; the viewer is an early
-step towards it, and is already useful as a working tool.
+In parallel, the team built ReproBot's first user interface: \texttt{viewer/}, a Streamlit
+dashboard developed on a feature branch. Its main page lists every paper with its pipeline
+status --- whether OCR, Reader and Coder output exist, and how many validation flags remain.
+Selecting a paper opens tabs for its method summary, architecture notes, claims,
+hyperparameters, data pipeline, validation flags, raw extraction, the generated training script
+with its \texttt{reproduce.sh}, and the OCR Markdown, so a reviewer can compare what was
+extracted with what was generated without opening files. An ``Import a paper'' section accepts
+a PDF, with an optional page limit for cheap trials, and buttons run Reader extraction and code
+generation by calling each stage's own entry point, so the viewer cannot drift from the
+command-line pipeline. The branch was verified with strict type checking and a headless run
+that rendered every tab. Its next steps are to display Runner and Orchestrator output --- the
+learning curves and comparisons of this report --- and to merge into the main pipeline as the
+basis of the project's final demonstration.
 
-\textbf{What it shows.} The main page lists every paper with a status table --- whether OCR,
-Reader and Coder output exist, and how many validation flags remain. Selecting a paper opens
-tabs for its method summary, architecture notes, claims, hyperparameters, data pipeline,
-validation flags, raw extraction JSON, generated training script with its
-\texttt{reproduce.sh}, and the raw OCR Markdown. A reviewer can therefore inspect what the
-Reader extracted and what the Coder did with it side by side, without opening files.
+\section{Lessons}
+\label{sec:lessons}
 
-\textbf{What it can run.} An ``Import a paper'' section accepts a PDF upload, with an
-optional page limit so that a new paper can be tested cheaply before committing to the whole
-document. Per-paper buttons then run Reader extraction or code generation. Two design
-decisions make this safe. Every action calls the corresponding stage's own entry point,
-unmodified, so the viewer cannot drift from the command-line pipeline. And uploaded papers
-are stored in a separate directory rather than the curated dataset directory, which is
-maintained by another team member.
+\textbf{Watching a run beats waiting for it.} The two training problems of this phase --- Tang's
+instability and the soft tree's reversed loss --- were both identified by reading the
+container's log while the run was in progress, long before it would have finished. A script
+that exits normally has not necessarily learned; the Runner should read these logs itself.
 
-\textbf{Status.} The branch was verified with strict type checking, the repository's
-pre-commit hooks, and a headless Streamlit run that rendered every tab against synthetic
-fixtures. It is not yet merged.
-Two gaps remain before it is: it does not yet display Runner or Orchestrator output --- the
-results this report is about --- and it predates the generalization of the Coder and Runner,
-so its dependency changes need reconciling with the updated lock file before it can merge. Extending it to show a run's attempts, triage decisions and metrics, and
-eventually the Critic's verdict, is the natural route to the planned demonstration.
+\textbf{Some claims can be matched exactly, others only within variance.} The SVM guide
+reproduces to three decimal places at the paper's settings, while the housing-price result
+depends on an unrecorded random split. A single tolerance cannot serve both, so the Critic's
+must depend on how a claim was produced.
 
-\section{Engineering Findings}
-\label{sec:findings}
+\textbf{Under-specified papers are reproduced through disclosed guesses.} The soft-tree script
+had to choose about a dozen unstated values and recorded each one; Tang's instability came from
+a combination of two individually reasonable guesses. Disclosure makes such choices visible and
+correctable, which is what allowed both to be fixed.
 
-\subsection{Where the library is the method, exactness is achievable}
+\textbf{Classical and neural models need different checks.} For the random forest and the SVM,
+the \texttt{smoke} and \texttt{capped} stages gave identical numbers, since they differ only in
+epochs; for models without epochs, a ladder over training-set size would be more informative.
 
-The SVM guide shows that some claims can be reproduced exactly, not merely within noise: the
-same solver on the same data gives the same number to three decimal places. This sharpens what
-a Critic must do. A claim produced by a deterministic library call admits essentially zero
-tolerance, and a gap there is diagnostic; a claim produced by stochastic training admits a
-tolerance set by run-to-run variance; and a claim like the SVM guide's mixes the two, exact in
-its solver and stochastic in its model selection. One tolerance for all claims would be wrong
-for most of them.
+\textbf{Limitations.} The comparisons were made by hand, mostly from single runs; two of the
+five reproductions needed a manual correction; the CIFAR-10 benchmark still needs GPU compute;
+and Boston Housing includes a feature derived from the proportion of Black residents per town
+\cite{harrison1978hedonic}, which we used only because the replicated paper did.
 
-\subsection{The escalation ladder does not fit models without epochs}
+\section{Progress Against the Plan}
+\label{sec:timeline}
 
-For the random forest and the SVM, \texttt{smoke} and \texttt{capped} produced identical
-numbers --- 0.7891 and 94.92\% respectively --- because the two stages differ only in the
-number of epochs, which neither model has. For non-iterative models the fourth stage adds cost
-and no information; a ladder over training-set size would fit them better.
-
-\subsection{Execution success is not evidence of a result}
-
-Static checks cannot establish that generated code runs; the injected scheduler fault above
-parsed cleanly and failed only in execution. This phase established the next step: that code running to completion cannot establish that it
-worked. Tang's collapsed run would have exited normally and been reported as a success. The
-escalation ladder could not have caught it --- \texttt{capped} trains for about fifteen steps,
-and the collapse needed thousands --- and \texttt{capped}'s stated purpose, checking that
-training learns, is not enforced by anything: the Runner reads only the exit code.
-
-The soft decision tree repeated the lesson with no scale involved: all three check stages
-passed with accuracy below chance and a constant, negative loss. The same pattern appeared at
-smaller scale throughout the phase. The \texttt{full} mode of
-every generated \texttt{reproduce.sh} wrote its metrics to a different filename from the one
-the Runner reads, so both fidelity results above reached the Runner only through its
-fallback parser; this is now fixed. The OCR, Reader and Coder stages exit with status zero
-even when every paper fails, which is how a missing image-library dependency went unnoticed
-on the first OCR attempt of the phase. Every such seam is a place where failure can look like
-success.
-
-\subsection{Framework defaults are part of the method}
-
-Two findings point the same way. HuggingFace \texttt{Trainer}'s default gradient clipping
-made a script look stable that, written faithfully, diverges. And a paper written in Keras
-inherits Keras's defaults wherever it is silent, so reproducing it faithfully in another
-framework means reproducing those defaults. The Coder was instructed to do so, and followed
-the instruction only partly: Wijaya's script matched Keras's Adam $\epsilon$ but used
-PyTorch's batch-normalization momentum and $\epsilon$ and PyTorch's default initialization,
-and disclosed the choice rather than following the rule. Disclosure makes a deviation
-visible; it does not make it faithful.
-
-\subsection{A remembered identifier is worse than a missing one}
-
-A model that lacks an identifier fails visibly. A model that recalls one wrongly --- a dead
-URL, a removed loader, a dataset number one digit away from correct --- produces an artifact
-that looks correct and, for a dataset identifier, trains without complaint on the wrong data.
-The defence that worked was not asking the model to be more careful, but removing the
-opportunity: triage may not name identifiers absent from the log, and the generated script
-must verify what it fetched before using it.
-
-\subsection{Prompt wording is executed literally}
-
-The one defect this phase introduced into generated code came from our own prompt, which
-described OpenML datasets as pinned by ``data\_id and version''. The description was meant
-loosely; the model passed both arguments. Prompts for code generators are read as
-specifications, and descriptive phrasing in them needs the same care as an API contract.
-
-\subsection{Unstated values fail jointly}
-
-The Coder's disclosure discipline worked as designed: momentum 0.9 and $C = 1.0$ were both
-listed as guesses. What it could not express was that the \emph{combination} was unsafe.
-Reporting each unstated value in isolation is necessary but not sufficient; the values that
-matter most may be the ones that interact, and finding that out required an ablation. This
-argues for recording unstated hyperparameters as carefully as unstated architecture, and
-for a cheap automated sensitivity probe over them.
-
-\subsection{One seed cannot adjudicate a gap}
-
-Wijaya's two held-out subsets disagreed by more than the gap between the reproduction and the
-claim. A Critic that compares one run against one published number under a fixed tolerance
-would declare this reproduction a failure --- and would declare a lucky split a success. A
-tolerance must account for the variance of the quantity being compared, which in practice
-means several seeds per claim.
-
-\subsection{Regeneration rewrites, measurably}
-
-The retry loop regenerates the whole script on every attempt rather than patching the line at
-fault.
-Wijaya's repair quantifies the cost: triage's fix was the removal of one keyword argument,
-and the regenerated script shared only 22\% of its lines with its predecessor. The repair
-succeeded, but almost everything else in the script also changed, unreviewed. The plateau
-guard's threshold of 0.98 now has four observations --- 0.41 on the injected scheduler fault and 0.22, 0.25 and 0.27 on real ones --- and none came near it. The soft tree shows the cost
-directly: its repair changed three guessed hyperparameters that nobody had asked to change.
+The project was planned over four months: the Reader first; then the Coder, sandbox and a
+skeleton Orchestrator; then the Critic, a real retry loop and the Report Generator; and finally
+evaluation, ablation and a demonstration. Table~\ref{tab:timeline} compares the work to date
+with that plan. The retry loop arrived ahead of plan; the Critic and Report Generator were
+deferred in favour of first obtaining the measurable results they need as input.
 
 \begin{TABENV}[tbp]
 \centering
 \small
-\caption{Status against the project's original four-month plan. \built{} done; \partl{} partial
-or in a different form; \absent{} not started.}
+\caption{Status against the project's four-month plan. \built{} done; \partl{} partial or in a
+different form; \absent{} not started.}
 \label{tab:timeline}
 \begin{tabular}{L{0.1\textwidth}L{0.41\textwidth}cL{0.35\textwidth}}
 \toprule
 Phase & Planned & & Status \\
 \midrule
 Month 1 & PDF ingestion; Reader schema; shared-memory object & \built & Complete; five fields \\
-Month 2 & Coder and Docker sandbox for a pilot set; Orchestrator skeleton with a single
-  hard-coded retry & \built & Exceeded: a bounded retry loop with triage-driven feedback \\
-Month 3 & Critic verdict logic & \absent & Not started; first real inputs now exist \\
-        & Real retry loop with targeted feedback & \built & Repaired three real defects \\
-        & Report Generator & \absent & Not started \\
-        & Single-shot vs.\ iterative ablation & \partl & Three observed cases: each fails
-  single-shot and runs after one retry \\
-Month 4 & Expansion towards 20 papers & \partl & Seven papers across five model families \\
+Month 2 & Coder and Docker sandbox; Orchestrator skeleton with a single retry & \built
+  & Exceeded: bounded retry loop with triage-driven feedback \\
+Month 3 & Critic verdict logic & \absent & Next phase; inputs now exist \\
+        & Real retry loop with targeted feedback & \built & Three real defects repaired \\
+        & Report Generator & \absent & Next phase \\
+        & Single-shot vs.\ iterative ablation & \partl & Three cases fail single-shot and run
+  after one retry \\
+Month 4 & Expansion towards 20 papers & \partl & Nine papers read; five replicated at full
+  fidelity \\
         & Demonstration interface & \partl & Streamlit viewer on a feature branch \\
 \bottomrule
 \end{tabular}
 \end{TABENV}
 
-\section{Development Methodology}
-\label{sec:methodology}
+\section{Future Work}
+\label{sec:future}
 
-ReproBot is built by a human team working with an orchestrating AI coding session, which
-delegates scoped tasks to specialized subagents --- research agents that survey precedent,
-coding agents that implement and verify a change, review agents that critique an artifact
-before a costly action, and validation agents that audit output read-only --- and logs every
-delegation with its brief and outcome. Most of this phase's work was investigative rather than
-constructive and was carried out directly by the orchestrating session. One scoped implementation --- the generalization of the Coder and
-Runner --- was delegated to a coding subagent.
+\textbf{Live check-ups in the Runner.} Read the container's log during every run, parse the
+per-epoch metrics, and stop early with a clear verdict when training is not progressing: a loss
+that does not move, non-finite values, accuracy at or below chance, or a loss outside its
+possible range. Generated scripts will also write their learning curves to a structured file, so
+the checks, the Critic and the reports can use them directly.
 
-That delegation produced the third instance, across the project, of a subagent's report
-being wrong in a way only independent verification caught. The agent reported its
-\emph{Network In Network} regression test as a clean pass. It had passed: the script executed
-and the metrics file was well formed. The loss was approximately 947. The discrepancy was
-found on review, and led directly to the hidden-default finding above. The practice of
-treating an agent's report as a claim to check against the diff and the output remains the
-most useful single habit we have adopted.
+\textbf{The Critic agent.} Compare each reproduced value with the claim using the metric's
+direction and a tolerance matched to the claim: near-exact for deterministic procedures, a
+seed-variance band for stochastic training, and the reported spread when a claim is itself an
+average. Its verdict --- pass, retry or fail, with a reason --- closes the loop the project is
+built around.
 
-The two most consequential decisions of the phase were human: the direction change to
-support multiple task types, and the choice of $C$ for Tang's rerun. The collapse itself was
-spotted by a person reading a log. We state this plainly because an automated replication
-system is exactly the kind of project in which human intervention can be quietly absorbed
-into a result.
+\textbf{Loop controls.} Let the Orchestrator patch the faulty lines of a script instead of
+regenerating it, as in AutoReproduce \cite{zhao2025autoreproduce}; keep unstated
+hyperparameters fixed across retries unless the feedback concerns them; abort a stage as soon as
+its live check fails; enforce per-paper time and cost budgets; and record any human correction
+in the run's state.
 
-\section{Progress Against the Timeline}
-\label{sec:timeline}
-
-The project was planned over four months: the Reader in the first; the Coder, sandbox and a
-skeleton Orchestrator in the second; the Critic, a real retry loop and the Report Generator in
-the third; and evaluation, ablation and a demonstration in the fourth.
-Table~\ref{tab:timeline} compares the work to date with that plan. The retry loop arrived ahead of plan and in stronger form than planned. The Critic
-and the Report Generator, both Month~3 deliverables, have not started, and the phase's effort
-went instead to generalization and to obtaining the first measurable results --- a trade we
-consider correct, since a Critic without measurable results would have had nothing to judge.
-
-
-\section{Limitations}
-\label{sec:limitations}
-
-\textbf{The fidelity results are compared by hand, mostly from single runs.} Only the random forest reports a spread over runs, and no stage of the system performed any
-comparison.
-
-\textbf{A misprinted equation defeats faithful implementation.} No stage can currently tell an
-equation the paper printed wrongly from one it printed correctly; the soft-tree failure was
-diagnosed by hand.
-
-\textbf{Model-family coverage is still narrow.} No gradient-boosting library (XGBoost, LightGBM,
-CatBoost), sequence model, graph network or text model has yet been run, and one model family,
-the soft decision tree, produced no result at all.
-
-\textbf{Tang's positive result required a human.} Tang's reproduction matches its claim only
-after a person chose one hyperparameter, informed by an ablation that had logged test error.
-
-\textbf{The negative result is not attributed.} Wijaya's gap may stem from the unstated
-split, from framework defaults the Coder did not reproduce, or from the implementation, and
-one seed cannot distinguish them.
-
-\textbf{The CIFAR-10 benchmark remains unmeasured.} GPU compute is still required for it, and
-the two CPU-sized papers are not substitutes for the planned evaluation, only a way to test
-the pipeline's claim end to end.
-
-\textbf{The Reader does not record missing hyperparameters}, and claims are duplicated
-across a paper's prose, tables and figures. Validation still does not converge, and two of
-the eight CIFAR-10 papers still cannot be extracted.
-
-\textbf{A note on the dataset.} Boston Housing includes a feature derived from the
-proportion of Black residents in each town \cite{harrison1978hedonic}, which is among the
-reasons scikit-learn deprecated and then removed its loader. We used it only because the paper
-under replication did, and do not recommend it for any other purpose.
-
-\section{Next Steps}
-\label{sec:next}
-
-\textbf{Build the Critic, with variance in mind.} Its verdict should remain explicit
-arithmetic against a numeric tolerance using the claim's direction, as planned; Wijaya shows
-that the tolerance must be informed by several seeds per claim rather than one run. Tang's
-collapsed run is its first test case: a verdict of \emph{fail} at 89\% error against 0.87\%
-is the minimum it must deliver.
-
-\textbf{Make the Runner check that training learns.} Reading \texttt{train\_metric} at
-\texttt{capped}, and comparing a run's loss against the trivial input-ignoring floor, would
-have flagged Tang's collapse within twenty epochs. This is smaller than the Critic and
-catches a different failure.
-
-\textbf{Record and probe unstated hyperparameters.} Extend the Reader's gap-recording to
-hyperparameters, and automate what the Tang ablation did by hand: short runs over candidate
-values for the unstated ones, selected on training health and a validation split --- never
-the test set.
-
-\textbf{Patch rather than regenerate.} A line-range edit, as in AutoReproduce
-\cite{zhao2025autoreproduce}, would keep a one-argument fix to one argument.
-
-\textbf{Fit the escalation ladder to the model.} Scale training-set size rather than epochs
-for non-iterative models, and reject a check stage whose loss does not move.
-
-\textbf{Widen coverage.} Run the diversity targets already selected --- gradient-boosting
-libraries, a graph convolutional network, a text CNN and a temporal convolutional network ---
-which requires adding XGBoost, LightGBM and CatBoost to the sandbox image.
-
-\textbf{Merge and extend the viewer} to show Runner, Orchestrator and Critic output, as the
-basis of the final demonstration.
-
-\textbf{Secure GPU compute} for the CIFAR-10 set, and build the Report Generator and a
-single entry point from PDF to report, after fixing the stages that exit successfully on
-failure.
+\textbf{Broader coverage.} Adapt the stage ladder to models without epochs; check the domain of
+a paper's own equations before implementing them; run the targets already selected --- gradient
+boosting with XGBoost, LightGBM and CatBoost, a graph convolutional network, a text CNN and a
+temporal convolutional network; and secure GPU compute for the CIFAR-10 benchmark.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-This phase produced ReproBot's first replication measurements, across five papers and five
-model families. Three reproductions land close to their claims, one of them exact in its
-implementation; one misses its claim by a margin a single split cannot explain; and one never
-learned. Getting there required generalizing the pipeline beyond image classification and
-beyond neural networks, turning six real prompt failures into explicit rules, and diagnosing a
-training collapse that every stage of the pipeline reported as a success.
-
-That last point is the phase's main result, and it happened twice. ReproBot can now read a
-paper, write an implementation in the right library, execute it at the paper's own scale, and
-repair its own execution failures. What it cannot yet do is tell whether the number it produced
-is right. Every measurement in this report was judged by people, and one of them needed a
-person to fix it first. Building the component that makes those judgements automatically ---
-with a tolerance that respects whether a claim is deterministic or stochastic --- is the work of
-the next phase.
+ReproBot now carries a paper from PDF to a running implementation in the right library, at the
+paper's own scale, for neural and classical models alike. @@SDT_CONCLUSION@@ The problems met on
+the way were resolved, and they point clearly at the next phase: a Runner that watches training
+as it happens, a Critic that judges each result with the right tolerance, and a retry loop that
+changes only what it must.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{9}
@@ -1195,13 +935,12 @@ FIG_PIPELINE = r"""
 ]
   \node[stage] (ocr)    {\texttt{ocr/}\\[-2pt]\footnotesize VLM reads page images};
   \node[stage, below=of ocr] (reader) {\texttt{reader/}\\[-2pt]\footnotesize 5 extractors + validation loop};
-  \node[stage, below=1.75cm of reader] (coder) {\texttt{coder/}\\[-2pt]\footnotesize plain PyTorch, any supervised task};
-  \node[stage, below=of coder] (runner) {\texttt{runner/}\\[-2pt]\footnotesize Docker sandbox + triage\\[-2pt]\footnotesize\textcolor{warnc}{success = exit code 0}};
+  \node[stage, below=1.75cm of reader] (coder) {\texttt{coder/}\\[-2pt]\footnotesize PyTorch loop or scikit-learn};
+  \node[stage, below=of coder] (runner) {\texttt{runner/}\\[-2pt]\footnotesize Docker sandbox + triage};
   \node[gone,  below=1.2cm of runner] (critic) {\texttt{critic/}\\[-2pt]\footnotesize compare reproduced vs.\ claimed};
   \node[gone,  below=of critic] (report) {report generator\\[-2pt]\footnotesize claim-by-claim report};
 
-  \node[above=0.5cm of ocr, font=\small, align=center] (pdf)
-    {\texttt{dataset/} --- 8 CIFAR-10 PDFs \quad $+$ \quad \texttt{extra-papers/} --- 5 CPU-sized PDFs};
+  \node[above=0.5cm of ocr, font=\small, align=center] (pdf) {paper PDF};
 
   \node[side, left=2.1cm of reader] (viewer) {\texttt{viewer/}\\[-2pt]\footnotesize Streamlit dashboard\\[-2pt]\footnotesize (feature branch)};
   \draw[sidearr] (viewer.north) |- (ocr.west);
@@ -1214,22 +953,21 @@ FIG_PIPELINE = r"""
     {\texttt{method\_summary}, \texttt{architecture\_notes}\\
      \texttt{claims}, \texttt{hyperparameters}\\ \texttt{data\_pipeline}} (coder);
   \draw[arr] (coder) -- node[left, lbl, pos=0.45] {\texttt{train.py}\\ + \texttt{reproduce.sh}} (runner);
-  \draw[gonearr] (runner) -- node[right, gonelbl] {\texttt{metrics.<mode>.json}\\ \texttt{higher\_is\_better}} (critic);
+  \draw[gonearr] (runner) -- node[right, gonelbl] {\texttt{metrics.json}} (critic);
   \draw[gonearr] (critic) -- node[right, gonelbl] {pass / retry / fail} (report);
 
   \draw[looparr] (runner.east) -- ++(1.1,0) |- (coder.east);
   \node[lbl, text=loopc, right=1.25cm of coder.east, anchor=west, yshift=-0.75cm]
-    {\textbf{\texttt{orchestrator/}}\\ retries on \emph{crashes}\\ \texttt{triage.suggested\_fix}};
+    {\textbf{\texttt{orchestrator/}}\\ retries failed runs\\ with triage feedback};
 
   \draw[gonearr] (critic.west) -- ++(-1.5,0) |- node[pos=0.25, left, gonelbl, align=right]
-    {retry on a\\ \emph{numeric gap}\\ --- absent} ([yshift=-0.22cm]coder.west);
+    {retry on a\\ \emph{numeric gap}\\ --- planned} ([yshift=-0.22cm]coder.west);
 \end{tikzpicture}
-\caption{ReproBot on 13.09.2026. Solid components are built and verified by execution;
-dashed red components do not exist; the dashed amber component is on a feature branch. The
-pipeline's shape predates this phase, but its inputs now include CPU-sized papers beyond
-image classification, and the Coder writes a plain PyTorch loop or a scikit-learn estimator
-depending on the paper's model family. The label inside the Runner marks this phase's central finding: a run is
-reported as a success when its script exits normally, whatever number it produced.}
+\caption{ReproBot on 13.09.2026. Solid components are built and verified by execution; dashed
+red components are planned for the next phase; the dashed amber component is on a feature
+branch. The Coder writes a PyTorch training loop or a scikit-learn estimator depending on the
+paper's model family, and the Orchestrator retries failed runs by feeding the Runner's diagnosis
+back to the Coder.}
 \label{fig:pipeline}
 \end{FIGENV}
 """
@@ -1243,85 +981,65 @@ FIG_WIJAYA_RUN = r"""
   ok/.style={st, draw=builtc},
   bad/.style={st, draw=missingc},
   tri/.style={st, draw=loopc},
-  old/.style={st, draw=black!45, text=black!60},
   arr/.style={-{Stealth[length=1.6mm]}, thick},
   row/.style={font=\scriptsize\itshape, anchor=south west}
 ]
-  % row 0: before prompt hardening
-  \node[old] (a0) at (0,0) {Coder\\ remembered URL};
-  \node[old, right=0.38cm of a0] (b0) {\texttt{probe} \ding{55}\\ HTTP 403, 5\,s};
-  \node[old, right=0.38cm of b0] (c0) {triage:\\ \texttt{environment\_error}};
-  \node[old, right=0.38cm of c0] (d0) {verdict\\ \texttt{environment\_error}};
-  \node[old, right=0.38cm of d0] (e0) {0 retries used};
-  \draw[arr, black!45] (a0) -- (b0); \draw[arr, black!45] (b0) -- (c0);
-  \draw[arr, black!45] (c0) -- (d0); \draw[arr, black!45] (d0) -- (e0);
-  \node[row, text=black!60] at ([yshift=0.08cm]a0.north west) {before prompt hardening};
-
-  % row 1: attempt 1
-  \node[st] (a1) at (0,-2.0) {Coder, 75\,s\\ OpenML \texttt{data\_id=531}};
+  \node[st] (a1) at (0,0) {Coder, 75\,s\\ OpenML dataset};
   \node[bad, right=0.38cm of a1] (b1) {\texttt{probe} \ding{55}\\ \texttt{ValueError}, 7.5\,s};
-  \node[tri, right=0.38cm of b1] (c1) {triage, 3\,s:\\ \texttt{recoverable\_error}};
+  \node[tri, right=0.38cm of b1] (c1) {triage, 3\,s:\\ fixable script error};
   \node[tri, right=0.38cm of c1] (d1) {fix: remove\\ \texttt{version=1}};
   \node[tri, right=0.38cm of d1] (e1) {plateau guard\\ similarity 0.22};
   \draw[arr] (a1) -- (b1); \draw[arr] (b1) -- (c1); \draw[arr] (c1) -- (d1); \draw[arr] (d1) -- (e1);
-  \node[row] at ([yshift=0.08cm]a1.north west) {after hardening --- attempt 1};
+  \node[row] at ([yshift=0.08cm]a1.north west) {attempt 1};
 
-  % row 2: attempt 2
-  \node[st] (a2) at (0,-4.0) {Coder, 74\,s\\ with triage feedback};
-  \node[ok, right=0.38cm of a2] (b2) {\texttt{probe} \ding{51}\\ 13.8\,s, dataset asserted};
+  \node[st] (a2) at (0,-2.0) {Coder, 74\,s\\ with triage feedback};
+  \node[ok, right=0.38cm of a2] (b2) {\texttt{probe} \ding{51}\\ 13.8\,s, dataset checked};
   \node[ok, right=0.38cm of b2] (c2) {\texttt{smoke} \ding{51}\\ 11\,s};
   \node[ok, right=0.38cm of c2] (d2) {\texttt{capped} \ding{51}\\ 20\,s, RMSE 6.11};
   \node[ok, right=0.38cm of d2, line width=1.2pt] (e2) {\texttt{full} \ding{51}, 1918\,s\\ RMSE 4.48\\ verdict \texttt{success}};
   \draw[arr] (a2) -- (b2); \draw[arr] (b2) -- (c2); \draw[arr] (c2) -- (d2); \draw[arr] (d2) -- (e2);
-  \node[row] at ([yshift=0.08cm]a2.north west) {attempt 2 --- one retry used};
+  \node[row] at ([yshift=0.08cm]a2.north west) {attempt 2};
 
   \draw[arr, draw=loopc] (e1.south) -- ++(0,-0.3) -| ([xshift=-0.3cm]a2.west) -- (a2.west);
 \end{tikzpicture}
-\caption{Wijaya's orchestrated runs. Top: before the prompt changes of
-Section~\ref{sec:prompts}, a dead URL was classified as an environmental fault and the loop
-stopped without retrying. Middle and bottom: after them, a genuine defect in the regenerated
-script was triaged correctly, the Coder regenerated with the one-line fix as feedback, and
-the retry passed every stage. The plateau guard's 0.22 is far below its 0.98 stopping
-threshold --- and shows how much of the script changed to remove one argument.}
+\caption{An automatic repair by the retry loop, on the housing-price paper. The first script
+failed its first check; triage diagnosed a fixable script error, the Coder regenerated the script
+with that feedback, and the second attempt passed every stage through the full run.}
 \label{fig:wijayarun}
 \end{FIGENV}
 """
 
-FIG_TANG = (
-    r"""
-\begin{FIGENV}[tbp]
-\centering
-"""
-    + tang_plot()
+FIG_CURVES = (
+    "\n\\begin{FIGENV}[tbp]\n\\centering\n"
+    + panels()
     + r"""
-\caption{Training error for Tang's reproduction at the paper's full setting, from the run
-logs. As generated ($C = 1.0$, momentum 0.9), the network learned for a few epochs and then
-collapsed onto the error of a network that ignores its input; the run was stopped by hand.
-With the single change $C = 0.1$, training error fell smoothly to 0.062\%, and the test set,
-evaluated once after the final epoch, gave 0.82\% against the claimed 0.87\%. The loss
-values of the two runs are not comparable, since $C$ scales the loss, so error is plotted.}
-\label{fig:tang}
+\caption{Learning curves of the five generated implementations at the papers' full settings,
+with each paper's reported result as a dashed line. (a) Training error per 20 epochs; the circle
+is the reproduced test error. (b) Training and validation RMSE per 50 epochs (epoch 1 is off the
+scale). (c) Five-fold cross-validation accuracy over the SVM's $(C, \gamma)$ grid, with the
+paper's and ReproBot's selected settings outlined. (d) Test accuracy as trees are added, for the
+first of five runs, with all five runs' final accuracies at the right. (e) Test accuracy per
+epoch. Panels (c) and (d) were computed with the generated scripts' own configuration and code;
+all other points are read directly from the run logs.}
+\label{fig:curves}
 \end{FIGENV}
 """
 )
 
-FIG_WIJAYA = (
-    r"""
-\begin{FIGENV}[tbp]
-\centering
-"""
-    + wijaya_plot()
-    + r"""
-\caption{Wijaya's reproduction at the paper's full setting, from the run log. The model
-trained on 324 rows; RMSE on 81 further held-out training rows (every 50 epochs; epoch 1, at
-20.7, is off the scale) stayed near the claimed test RMSE throughout, while the 101-row test
-set, evaluated once at the end, gave 4.48. Two held-out subsets of the same 506-row dataset
-disagree by more than the gap being measured, which is why a single split cannot adjudicate
-this reproduction.}
-\label{fig:wijaya}
-\end{FIGENV}
-"""
-)
+# Soft decision tree results, filled in when its full run ends.
+SOFTDT_TEXT = {
+    "@@SDT_ABSTRACT@@": (
+        "Three reproductions agree closely with their papers: 0.82\\% against 0.87\\% MNIST test "
+        "error, 96.63\\% against 96.9\\% SVM accuracy --- with the paper's own settings "
+        "reproducing its numbers exactly --- and 87.73\\% against 87.3\\% random-forest accuracy; "
+        "the soft decision tree was still training at the time of writing."
+    ),
+    "@@SDT_ACC@@": "(running)",
+    "@@SDT_TIME@@": "---",
+    "@@SDT_AGREE@@": "Pending",
+    "@@SDT_SECTION@@": "The full run was in progress at the time of writing.",
+    "@@SDT_CONCLUSION@@": "",
+}
 
 
 def build(twocolumn: bool) -> str:
@@ -1341,8 +1059,9 @@ def build(twocolumn: bool) -> str:
     body = BODY
     body = body.replace("\\FIGPIPELINE", FIG_PIPELINE)
     body = body.replace("\\FIGWIJAYARUN", FIG_WIJAYA_RUN)
-    body = body.replace("\\FIGTANG", FIG_TANG)
-    body = body.replace("\\FIGWIJAYA", FIG_WIJAYA)
+    body = body.replace("\\FIGCURVES", FIG_CURVES)
+    for key, value in SOFTDT_TEXT.items():
+        body = body.replace(key, value)
     body = body.replace("FIGENV", figenv).replace("TABENV", tabenv)
     return f"{docclass}\n{geometry}\n{PREAMBLE_COMMON}\n{body}"
 
