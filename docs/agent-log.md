@@ -864,3 +864,127 @@ retry budget, since the validator flags it every run. Cost has risen materially
 — five extractors plus a validator inside a retry loop, ~3 passes per paper.
 
 ---
+
+### Coding Agent — wire the Coder to build from `architecture_notes` (2026-08-22, `9729c7e`)
+
+**Asked:** Make the Coder prompt consume the new `architecture_notes` field as its
+primary architecture source, and verify on Network In Network — deliberately not
+Wide ResNet, which a model rebuilds from memory and would prove nothing.
+
+**Result:** Three-level source precedence (extraction → paper Markdown → disclosed
+model memory). The NIN script built a real mlpconv cascade with zero `nn.Linear` and
+excluded both decoy equations by name. Two caveats recorded: channel widths still
+came from memory (disclosed, so visible rather than verified), and the bookkeeping
+described stage 3 as `192→192→10` while the code built `192→10→10`.
+
+---
+
+### Direct — progress report, handouts, slides (2026-08-22 → 2026-08-27)
+
+Second progress report written in both LaTeX column formats from one generator
+(`docs/progress-reports/second-progress-report/generate.py`), then expanded to 15
+pages. One-page handouts per stage in `docs/handouts/`, a title-less Coder slide
+diagram, and several claude.ai artifacts (pipeline audit, developer handoff,
+checkpoint deck). Two CSS traps found and recorded in the handouts README.
+
+---
+
+### Direct — correct stale `CLAUDE.md` claims (2026-09-13, `95515f9`)
+
+Several statements described landed work as future or missing, including that the
+Coder didn't use `architecture_notes`. Each correction was checked against the code
+first, and every edit was guarded to match exactly once — after an earlier edit on
+the handouts silently matched nothing while still reporting success.
+
+---
+
+### Direct — find non-CIFAR papers to test the pipeline end to end (2026-09-13)
+
+**Asked (Engincan):** a basic ML paper, e.g. house price prediction, that can be
+tested end to end. **Finding first:** the pipeline was hardwired to image
+classification — the Coder prompt (torchvision, `pixel_values`, `Trainer`), the
+metrics contract (`train_accuracy`), and the Runner image (no pandas/sklearn).
+Recommended an in-scope MNIST paper (Tang 2013) to test the pipeline as it was.
+**Engincan overruled:** ReproBot must handle multiple paper types — fix the stages
+and run both Tang and a house-price paper (Wijaya 2023). Wijaya caveats recorded up
+front: an unstated 405/101 split method on a small dataset (noisy metric), and
+Boston Housing's racially-derived feature, which is why scikit-learn removed it.
+
+---
+
+### Coding Agent — generalize `coder/` and `runner/` beyond image classification (2026-09-13, `dc5a541`)
+
+**Asked:** Four design decisions handed down: plain PyTorch loop instead of HF
+`Trainer`; always PyTorch, disclosing framework-default differences; `task_type`
+inferred by the Coder; a task-agnostic metrics contract (`train_metric`/`eval_metric`,
+`task_type`, `higher_is_better`). Plus dataset-agnostic loading and tabular deps in
+the image. Regression-test NIN into a scratch directory without clobbering outputs.
+
+**Result:** Implemented; all gates pass; image rebuilt with pinned pandas,
+scikit-learn and scipy in the same pip step as numpy. NIN regression script kept its
+mlpconv architecture and zero `nn.Linear`, and its probe passed — verified
+independently (contract keys, schema, no `Trainer`/`transformers`/`pixel_values` left).
+
+**Found on review, not by the agent:** the regression probe's loss was **~947**
+where the old script reported 2.30. Traced to the old `Trainer` script never setting
+`max_grad_norm`, so it inherited clipping at 1.0 (confirmed inside the image) — which
+the paper never uses. The old "working" result was partly an artifact of a hidden
+default, which is precisely the stated reason for dropping `Trainer`.
+
+**Also found (direct, in parallel):** the `vlm` OCR extra never declared Pillow,
+needed by `bitmap.to_pil()`; it only worked because the `pdfplumber` extra pulls
+Pillow in transitively. OCR on both new papers failed on every paper with exit code
+0 — surfacing that `ocr/`, `reader/` and `coder/` never signal failure.
+
+---
+
+### Direct — Reader on the two new papers (2026-09-13)
+
+Both extracted exactly (Tang's `Softmax: 0.99% / DLSVM: 0.87%` and Wijaya's Table 3
+verbatim). Tang's equation roles were right, including the subtle L1- vs
+L2-gradient distinction. Three Reader defects logged in `TODO.md`: no field records
+a missing **hyperparameter** (so Tang's momentum and SVM `C` went unflagged — the
+exact two guesses that later collapsed training); the same result claimed two or
+three times across prose/table/figure; and the exit-code bug above.
+
+---
+
+### Direct — first tabular run fails; triage misroutes it (2026-09-13)
+
+Wijaya's probe failed in 5 s: the generated script fetched Boston Housing from CMU
+StatLib, which returns HTTP 403 to every client (verified with curl and urllib, with
+and without a user agent). Triage classified it `environment_error`, so the
+Orchestrator stopped with **zero retries** on a failure one regeneration would fix.
+
+Fixes, each verified by re-triaging the real log: download failures from one refusing
+source are now `recoverable_error`; the Coder prefers OpenML over remembered URLs and
+must assert it fetched the intended dataset. Iterating on `suggested_fix` exposed
+three more hazards, each fixed with a rule: it offered "a standard alternative
+regression dataset" (changes what is reproduced), suggested the removed `load_boston`,
+and then confidently named Boston Housing as OpenML **`data_id=506`** — which is
+actually `analcatdata_gsssexsurvey` (Boston is 531). A wrong id doesn't fail; it
+silently trains on the wrong data. Wijaya rerun pending.
+
+---
+
+### Direct — Tang's first `full` run collapses; ablation isolates the cause (2026-09-13)
+
+ReproBot's **first `full`-stage run**. Tang learned through probe → smoke → capped,
+then collapsed by epoch ~20 to ~89% error against a claimed 0.87%. The loss sat on
+the exact optimum of a network ignoring its input (3.599 predicted vs ~3.607
+observed; always predicting digit "1", 88.8% error) — dead ReLUs. Stopped at ~epoch
+250 (orchestrator killed first, so it could not triage and regenerate).
+
+A six-config ablation, importing the real generated script and varying only the four
+unstated guesses, showed the collapse needs **momentum 0.9 and `C=1.0` together** —
+reducing either alone stabilizes it (2.6–2.8% test error at epoch 30). Damage is
+always in layer 2; PCA whitening collapses fastest. Recommended `C=0.1` as a
+one-line controlled change. Full write-up, script and raw data:
+`docs/notes/tang-2013-ablation/`. Rerun pending.
+
+**Pipeline lessons:** nothing judges whether a number is sane — the run would have
+been reported `success`; `capped` claims to check learning but reads only the exit
+code; and the escalation ladder cannot catch instability that needs thousands of
+steps to appear.
+
+---

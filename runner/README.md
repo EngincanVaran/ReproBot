@@ -297,6 +297,33 @@ Orchestrator needs:
 - **`environment_error`** — the fault is in the container or its inputs;
   regenerating the script would change nothing.
 
+**A failed download is decided by whether a different script could succeed.** If
+the network works but one specific source refused — HTTP 403/404/410/5xx from a
+particular URL — that is `recoverable_error`, because a rewritten script can fetch
+the same data elsewhere. Only a container with no network at all is an
+`environment_error`. This rule exists because the old prompt listed "a
+network/download failure" under `environment_error` without qualification, and the
+first tabular run hit exactly that: a dead Boston Housing URL was triaged
+`environment_error`, so the Orchestrator stopped immediately with zero retries —
+on a failure one regeneration would have fixed. Re-triaging the same real log with
+the corrected prompt returns `recoverable_error`.
+
+**Four rules constrain `suggested_fix`**, since it is handed verbatim to the model
+that rewrites the script:
+
+1. **Never change what is being reproduced.** Same dataset, model, task and
+   metric. The first corrected triage run suggested, among its options, switching
+   to "a standard alternative regression dataset" — a fix that makes the run pass
+   while silently measuring a different experiment.
+2. **One fix, not a menu** — the rewriter may pick the wrong item.
+3. **No API or source it is unsure still exists** — the same run also suggested
+   `sklearn.datasets.load_boston()`, which was removed in scikit-learn 1.2.
+4. **No specific identifier** (dataset id, version, URL, checksum) unless it
+   appears in the log. Describe the mechanism and let the Coder choose the value.
+   Before this rule, triage recommended Boston Housing as OpenML `data_id=506`,
+   which is a different dataset entirely (`531` is Boston) — and a wrong `data_id`
+   does not fail, it quietly trains on the wrong data.
+
 The prompt calls out the genuinely ambiguous case explicitly: a missing import is
 an `environment_error` if the image lacks the package, but a `recoverable_error`
 if the script imports a name that does not exist inside an installed one.
@@ -537,38 +564,41 @@ which every one of the 8 papers would otherwise repeat.
   counterparts (HTTP 200), and `transformers==4.46.3`, `accelerate==1.1.1`,
   `numpy==2.1.3`, `pillow==11.0.0` on PyPI (HTTP 200).
 
-### Written but never executed
+### Exercised for real since
 
-- `docker build` of this image has **never been run**. The pins are confirmed to
-  exist and the instructions parse, but no layer has actually been built, so
-  apt/pip resolution inside the image is exercised by the 224.2 s build above.
-- `docker run` has **never been run**, so nothing here has yet driven a real
-  container: the mounts (including the nested `/workspace/data`), the working
-  directory, and `bash reproduce.sh <mode>` reaching the generated script are all
-  argv-verified and design-verified, not execution-verified.
-- No real `metrics.<mode>.json` has been produced by a container. The parser is
-  verified against the documented contract shape, not against a file some
-  container actually wrote.
-- The real Haiku triage call has never been made — `triage.py`'s parsing is
-  verified against synthetic payloads, but no live API response has exercised it.
-- Consequently the stage budgets in the table above are **estimates**, not
-  measurements. The first real run should be `--mode probe` on a single paper,
-  with the wall-clock time it reports used to re-tune them.
+Everything this section once listed as written-but-unrun has now run:
 
-### Not built
+- **`docker build`** — many times, most recently with `pandas`/`scikit-learn`/`scipy`
+  added for tabular papers (3 min 52 s).
+- **`docker run`** — real training in real containers across four papers, through
+  every stage including the first `full` run (Tang 2013, MNIST).
+- **`metrics.<mode>.json`** — written by real containers in both the old
+  accuracy-keyed shape and the current `train_metric`/`eval_metric` shape, and
+  parsed back by `summarize_split_metrics()`.
+- **Live triage** — real Haiku calls on real failures, including a dead-URL download
+  that exposed a misclassification now fixed (see "Triage" above).
+- **Stage budgets** — calibrated against a measured run (see the timeout table).
+- **The Coder↔Runner retry loop** — built as `orchestrator/`, and proven to repair a
+  real runtime bug on its first retry.
 
-The Coder↔Runner retry loop. `triage.py` produces a `recoverable_error` category
-and a `suggested_fix` written specifically to be handed to
-`CodeWriter.write(feedback=...)`, and `coder/base.py` already accepts that
-parameter — but nothing wires the two together yet. That is the Orchestrator's
-job, and is the increment this stage was built to make possible.
+### Still open
 
-Worth knowing about the class of failure this stage exists to catch:
-`coder/README.md` documents a real `AttributeError` (`_NoOpScheduler.get_last_lr()`
-reading a `self.optimizer` the class never assigns) that `ast.parse` could not
-catch, because a script can be perfectly valid Python and still die on its first
-step. That bug came from a **discarded** generation and is *not* in the committed
-`coder/output/` script — checked directly, which is the only way to be sure of a
-claim like this — so it is not a prediction about the first `probe` run. It is
-the reason `probe` exists at all: a syntax gate proves a script parses, never
-that it runs.
+- **Success is decided on exit code alone.** Nothing reads `train_metric`, so a
+  `capped` stage passes whether or not training learned anything — despite the stage
+  being described as answering "does it actually learn?".
+- **The escalation ladder cannot catch at-scale instability.** Tang 2013 learned
+  cleanly through probe → smoke → capped (train error 75% → 57% → 31%), then its
+  `full` run collapsed around epoch 20 into a network of dead ReLUs predicting one
+  class — failure that needed thousands of optimizer steps to appear. Had it
+  finished, it would have reported `success` at ~89% error against a claimed 0.87%.
+  See `docs/notes/tang-2013-ablation/`. Judging whether a number is sane is the
+  Critic's job, and the Critic does not exist yet.
+- **The image is not reproducible byte-for-byte.** `python:3.11-slim` is a moving tag
+  and torch's own transitive dependencies are unpinned, so a rebuild can differ from
+  the image an earlier run used. Pinning the base by digest would fix it.
+
+Worth knowing about the class of failure this stage exists to catch: a real
+`AttributeError` (`_NoOpScheduler.get_last_lr()` reading a `self.optimizer` the class
+never assigns) passed `ast.parse`, because a script can be perfectly valid Python and
+still die on its first step. That is the reason `probe` exists at all: a syntax gate
+proves a script parses, never that it runs.

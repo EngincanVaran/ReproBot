@@ -59,15 +59,29 @@ non-existent API being called, bad indexing, a division by zero, a dataloader \
 that yields zero batches.
 - `environment_error` - the fault is in the CONTAINER or its inputs, and \
 rewriting the script would change nothing. Examples: a missing Python package \
-that the image never installed, a network/download failure fetching the \
-dataset, a permissions error on a mounted directory, the process being killed \
-by the OS out-of-memory killer (often exit code 137), a CUDA/GPU device being \
-requested when none exists, disk full, a corrupted cache.
+that the image never installed, the container having no network at all (DNS \
+resolution failing, "network is unreachable" for every host), a permissions \
+error on a mounted directory, the process being killed by the OS out-of-memory \
+killer (often exit code 137), a CUDA/GPU device being requested when none \
+exists, disk full, a corrupted cache.
 
-Judge from the evidence given, not from what you would expect. Note that a \
-missing import can be either: if the script imports a package the image does \
-not carry, that is an `environment_error`; if it imports a name that does not \
-exist inside an installed package, that is a `recoverable_error`.
+Judge from the evidence given, not from what you would expect. Two cases can \
+look like either category, so decide them by whether a DIFFERENT SCRIPT could \
+succeed:
+
+- A missing import: if the script imports a package the image does not carry, \
+that is an `environment_error`; if it imports a name that does not exist inside \
+an installed package, that is a `recoverable_error`.
+- A failed DOWNLOAD: if the network works but ONE SPECIFIC SOURCE the script \
+chose refused or is gone - an HTTP 403, 404, 410 or 5xx from a particular URL, \
+a mirror that redirects to an error, a dataset id that no longer resolves - \
+that is a `recoverable_error`, because a rewritten script can fetch the same \
+data from somewhere else. This is common: dataset URLs remembered from old \
+tutorials go dead. Name a concrete alternative in `suggested_fix` (for a \
+tabular dataset, OpenML via `sklearn.datasets.fetch_openml` pinned by \
+`data_id`; for an image dataset, the matching `torchvision.datasets` class). \
+Only when the container cannot reach the network at all is a download failure \
+an `environment_error`.
 
 The log excerpt is TRUNCATED from the middle - a marker shows where. Do not \
 treat the truncation as evidence of anything.
@@ -77,6 +91,30 @@ the regenerated script should do differently. It will be handed verbatim to the 
 model that rewrites the script, so make it actionable and concrete, naming the \
 function or line involved. For an `environment_error`, leave `suggested_fix` \
 empty - there is nothing the script author can do about it.
+
+Three rules for `suggested_fix`, and the first matters most:
+
+1. NEVER CHANGE WHAT IS BEING REPRODUCED. The script exists to reproduce one \
+specific result from a paper, so a fix must keep the same dataset, the same \
+model, the same task and the same metric. Never suggest switching to a \
+different or "similar" dataset, shrinking or simplifying the model, dropping a \
+component, or changing the loss or the evaluation metric - even when that would \
+make the script run. A fix like that makes the run succeed while silently \
+measuring a different experiment, and nothing downstream can tell. If the only \
+way to make it run is to change what it measures, say so plainly instead.
+2. GIVE ONE FIX, not a menu of alternatives. The rewriting model will pick from \
+a menu, and may pick the wrong item.
+3. NEVER SUGGEST AN API OR SOURCE YOU ARE NOT SURE STILL EXISTS. Removed \
+loaders (scikit-learn's `load_boston` was removed in 1.2) and dead mirrors are \
+exactly how scripts fail in the first place. For a tabular dataset, point to \
+OpenML via `sklearn.datasets.fetch_openml(..., data_home=args.data_dir)`.
+4. NEVER WRITE A SPECIFIC IDENTIFIER - no dataset id, version number, URL or \
+checksum - unless it appears in the log excerpt itself. Describe the mechanism \
+("fetch it from OpenML, pinned by its data_id") and leave choosing the value to \
+the model that rewrites the script, which has verified identifiers available. \
+A recalled identifier is dangerous rather than merely wrong: a mistyped OpenML \
+data_id does not fail, it silently downloads a different dataset that happens \
+to have that number.
 
 Call the `record_triage` tool with your verdict."""
 

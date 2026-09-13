@@ -82,12 +82,21 @@ the default loss, how the per-split metric is computed, and `higher_is_better`.
 
 - **Image datasets** `torchvision.datasets` provides: loaded with it, with
   augmentation via `torchvision.transforms`, train split only.
-- **Tabular and other datasets**: a stable, documented source — OpenML via
-  `sklearn.datasets.fetch_openml(data_home=args.data_dir, ...)`, pinned by
-  `data_id` or by `name` plus an explicit `version`, or a direct stable URL
-  downloaded once into `--data-dir`. The prompt warns off loaders remembered from
-  older library releases: they get removed (scikit-learn's `load_boston` is gone
-  since 1.2 — Boston Housing is still on OpenML).
+- **Tabular and other datasets, OpenML first**: `sklearn.datasets.fetch_openml(
+  data_home=args.data_dir, ...)` pinned by `data_id` or by `name` plus an explicit
+  `version`; a direct URL **only** if the dataset is on neither torchvision nor
+  OpenML. The order is explicit because the first real tabular run proved it
+  necessary: the Coder chose CMU StatLib's Boston Housing URL — the one most
+  tutorials cite — and it now returns **HTTP 403 to every client**. A remembered
+  URL looks exactly as plausible as a working one. (scikit-learn's `load_boston`
+  is likewise gone since 1.2; Boston Housing is OpenML `data_id=531`.)
+- **Verify the fetched data is the intended dataset, in code, before training.**
+  An OpenML `data_id` that is off by a digit does not fail — it downloads a
+  different dataset and the script trains on it, reporting a plausible metric for
+  the wrong problem. This is not hypothetical: while fixing the 403, a model
+  confidently recalled Boston Housing as `data_id=506`, which is actually
+  `analcatdata_gsssexsurvey`. The prompt therefore requires asserting
+  `details["name"]` and the row/column counts right after the fetch.
 - **Every download lands under `--data-dir`**, passed explicitly as the
   library's root/cache argument, so the Runner's shared cache mount serves it.
 - **When the paper names no source**, the chosen one is recorded in

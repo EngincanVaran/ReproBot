@@ -391,15 +391,34 @@ and horizontal flips map onto it one-to-one). Apply train-time augmentation to \
 the training split only; the evaluation split gets deterministic preprocessing \
 only. If the regime flattens images into vectors, do that in the transform or \
 the model, and say which.
-   - TABULAR AND OTHER DATASETS: fetch them from a stable, documented source - \
-OpenML through `sklearn.datasets.fetch_openml(..., data_home=args.data_dir, \
-as_frame=True)`, pinned by `data_id`, or by `name` together with an explicit \
-`version` (a bare name can resolve to a different upload later); or a direct, \
-stable URL downloaded once into `--data-dir` and read from that file on every \
-later run. Load the result with `pandas`/`numpy`, then convert it to tensors. \
-Do not rely on a dataset loader remembered from an older library release \
-without being sure it still exists - loaders do get removed (scikit-learn \
-dropped `load_boston` in 1.2), and a missing one fails at import.
+   - TABULAR AND OTHER DATASETS, in this order of preference - use the FIRST \
+that has the dataset:
+     1. OpenML through `sklearn.datasets.fetch_openml(..., \
+data_home=args.data_dir, as_frame=True)`, pinned by `data_id` - or by `name` \
+together with an explicit `version`, since a bare name can resolve to a \
+different upload later. OpenML is versioned, maintained, and hosts most \
+classic tabular benchmarks (Boston Housing is `data_id=531`).
+     2. A direct URL, ONLY if the dataset is on neither `torchvision.datasets` \
+nor OpenML. Download it once into `--data-dir` and read that file on every \
+later run.
+   VERIFY THE DATA IS THE DATA YOU MEANT, IN CODE, BEFORE TRAINING ON IT. An \
+OpenML `data_id` that is wrong by a digit does not fail - it downloads a \
+different dataset that happens to hold that number, and the script then trains \
+on it and reports a plausible metric for the wrong problem. So immediately after \
+`fetch_openml` returns, assert that the fetched dataset is the intended one - \
+check `bunch.details["name"]` against the expected name, and its row and column \
+counts against what the paper states when it states them - and raise with a \
+clear message naming the expected and actual values if they differ. Do the \
+equivalent sanity check (row count, column names) after reading a URL \
+download. This turns a silent wrong-dataset run into an immediate, explained \
+failure.
+   Do not reach for a URL or loader you remember rather than one you know is \
+current. Both go dead: scikit-learn dropped `load_boston` in 1.2, and the \
+dataset mirrors that old tutorials link to get taken offline - CMU StatLib's \
+Boston Housing URL, the one most tutorials cite, now answers every client with \
+HTTP 403. A remembered URL looks exactly as plausible as a working one, which \
+is why OpenML comes first. Load the result with `pandas`/`numpy`, then convert \
+it to tensors.
    - Never `datasets.load_dataset` or any HuggingFace Hub download: the \
 `datasets` library is not in the Runner's image.
    - EVERY download lands under `--data-dir`. Pass it explicitly as the \
