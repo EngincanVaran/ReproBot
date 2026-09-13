@@ -1,4 +1,4 @@
-"""Write a self-contained, plain-PyTorch training script for one paper.
+"""Write a self-contained training script for one paper: PyTorch or scikit-learn.
 
 Input is a paper's *structured* Reader output (`reader/output/<paper>.json`)
 plus that same paper's VLM Markdown (`ocr/output/vlm/<paper>.md`), sent to
@@ -20,8 +20,16 @@ Three decisions shape the prompt, and each one closes a silent-divergence path:
   paper states - every one of them a number the reproduction used that nobody
   chose. A hand-written loop has no hidden defaults: every setting in it is one
   the model wrote down and can disclose.
-- ALWAYS PYTORCH, WHATEVER THE PAPER USED. The Runner's image has no second
-  framework, deliberately. Translating a Keras paper is not neutral, though -
+- THE MODEL FAMILY PICKS THE LIBRARY. Classical estimators (SVMs, trees,
+  forests, k-NN, logistic regression, ...) are built with scikit-learn, whose
+  `SVC` wraps LIBSVM itself - re-implementing one in PyTorch would change the
+  optimizer and the solution. Library versions matter too: a 2017 paper's
+  "default" SVC, random forest or logistic regression is not scikit-learn
+  1.5.2's, so paper-era defaults are set explicitly and disclosed. Neural
+  models, including trees trained by gradient descent, stay in PyTorch.
+- NEURAL MODELS ALWAYS IN PYTORCH, WHATEVER FRAMEWORK THE PAPER USED. The
+  Runner's image has no second deep-learning framework, deliberately.
+  Translating a Keras paper is not neutral, though -
   "we used Adam" meant Keras's Adam (`epsilon=1e-7`, not PyTorch's `1e-8`), and
   an unmarked `Dense` layer meant Glorot-uniform init (not `nn.Linear`'s
   Kaiming-uniform). The prompt requires matching such defaults in code where
@@ -154,13 +162,17 @@ METRICS_CONTRACT = """{
 PROMPT = (
     """You are the Coder agent of an automated ML-paper replication \
 pipeline. You are given TWO inputs describing ONE machine-learning paper, and \
-you must write ONE self-contained PyTorch training script - a plain, explicit \
-training loop, NOT HuggingFace `Trainer` or any other training framework - that \
-attempts to reproduce ONE specific numeric claim from that paper.
+you must write ONE self-contained training script that attempts to reproduce \
+ONE specific numeric claim from that paper. Neural models are written in \
+PyTorch as a plain, explicit training loop - NOT HuggingFace `Trainer` or any \
+other training framework. Classical machine-learning estimators (SVMs, decision \
+trees, random forests, k-NN, logistic regression, ...) are built with \
+scikit-learn. Rule 5 says which applies.
 
 The paper can be about any supervised learning task: image classification, \
-classification of other inputs, regression on tabular data, and so on. Nothing \
-below assumes images unless it explicitly says so.
+classification of other inputs, regression on tabular data, and so on, with a \
+neural network or a classical estimator. Nothing below assumes images unless it \
+explicitly says so.
 
 ## Input precedence - read this before anything else
 
@@ -309,14 +321,50 @@ actually used in `hyperparameters_used` as `{name, value_used}`, where \
 `value_used` is the concrete value the script encodes (e.g. "0.1, x0.2 at \
 epochs 60/120/160").
 
-5. ALWAYS REPRODUCE IN PYTORCH, WHATEVER FRAMEWORK THE PAPER USED - AND \
-DISCLOSE WHAT THAT CHANGES. The Runner's sandbox has PyTorch and no other \
-deep-learning framework, so a paper built with Keras/TensorFlow, JAX, Theano, \
-Caffe, MATLAB or anything else is still reimplemented in PyTorch. That \
-translation is not neutral: frameworks ship different DEFAULTS, and a paper \
-that says only "we used Adam" silently meant ITS framework's Adam. Whenever the \
-paper names a framework other than PyTorch, or its text/code URLs make one \
-evident:
+5. CHOOSE THE LIBRARY BY MODEL FAMILY, THEN DISCLOSE WHAT THE TRANSLATION \
+CHANGES. The deciding question is what kind of model the paper itself trained.
+   - CLASSICAL ESTIMATORS -> scikit-learn. Support vector machines (kernel SVC, \
+LinearSVC, LIBSVM/LIBLINEAR), decision trees, random forests, extra trees, \
+scikit-learn's gradient boosting, k-nearest neighbours, logistic and linear \
+regression, naive Bayes, perceptrons and SGD linear classifiers - and \
+`MLPClassifier`/`MLPRegressor` when the paper itself used scikit-learn's. Build \
+the scikit-learn estimator that implements the paper's algorithm, with EVERY \
+hyperparameter passed explicitly by name, `random_state=args.seed` wherever the \
+estimator accepts one, and `n_jobs` stated explicitly where it exists. Never \
+re-implement a classical estimator in PyTorch: an SVM trained by SGD on a hinge \
+loss is a different optimizer reaching a different solution, and scikit-learn's \
+`SVC` wraps LIBSVM itself, so it can reproduce a LIBSVM paper exactly. Rules 6, \
+7 and 12 below are for neural models and do not apply; instead fit the \
+estimator on the training split and predict on both splits. The Runner's image \
+has scikit-learn 1.5.2 and no xgboost, lightgbm or catboost.
+   - NEURAL MODELS -> PyTorch, per rules 6 and 7. Anything the paper defines as \
+a network of parameters trained by gradient descent is neural, INCLUDING \
+tree-shaped models trained that way (a soft decision tree with learned \
+filters is a PyTorch model, not a scikit-learn tree).
+   - LIBRARY VERSIONS SHIP DIFFERENT DEFAULTS. A paper that says "default \
+parameters", or leaves a setting unstated, inherited the defaults of the library \
+VERSION it used, and scikit-learn has changed many since. For example: `SVC`'s \
+`gamma` default was `'auto'` (1 / n_features) before 0.22 and is `'scale'` now; \
+LIBSVM's `svm-train` defaults to an RBF kernel with C=1 and gamma = 1 / \
+number_of_features, which is `SVC(kernel='rbf', C=1.0, gamma='auto')`; \
+`RandomForestClassifier` defaulted to `n_estimators=10` before 0.22 and \
+`max_features='auto'` (sqrt for classifiers), a value since removed; \
+`LogisticRegression` defaulted to `solver='liblinear'` with one-vs-rest before \
+0.22; `GradientBoostingClassifier`'s `loss='deviance'` is now \
+`loss='log_loss'`. These are illustrations, not a checklist. Work out the \
+paper's era from its date and set the values it actually ran with EXPLICITLY, \
+translating removed parameter names to their current equivalents, and record \
+each such difference in `assumptions` as "library version: <setting> defaulted \
+to <then> in <library, version or era> vs <now> in scikit-learn 1.5.2 - used \
+<what you chose> because <why>". LIBSVM's `svm-scale -l -1 -u 1` is \
+`MinMaxScaler(feature_range=(-1, 1))` fit on the training split.
+   - A NEURAL PAPER WRITTEN IN ANOTHER FRAMEWORK IS STILL REPRODUCED IN PYTORCH. \
+The Runner's sandbox has no other deep-learning framework, so a paper built with \
+Keras/TensorFlow, JAX, Theano, Caffe, MATLAB or anything else is still \
+reimplemented in PyTorch. That translation is not neutral: frameworks ship \
+different DEFAULTS, and a paper that says only "we used Adam" silently meant ITS \
+framework's Adam. Whenever the paper names a framework other than PyTorch, or \
+its text/code URLs make one evident:
    - Work out which of that framework's defaults the paper's unstated settings \
 inherited. For example: Keras `Adam` defaults `epsilon` to 1e-7, while \
 `torch.optim.Adam` defaults `eps` to 1e-8; Keras `Dense` initializes its kernel \
@@ -338,9 +386,9 @@ chose> because <why>".
    - When the paper names no framework at all, do not guess one: make \
 explicit, standard choices and disclose them under rule 9 as usual.
 
-6. WRITE A HAND-ROLLED `nn.Module`, built from `architecture_notes` exactly as \
-the section above prescribes, from `torch.nn` primitives. Do NOT load a \
-pretrained or stock model from any library (HuggingFace `AutoModel*`, \
+6. FOR A NEURAL MODEL, WRITE A HAND-ROLLED `nn.Module`, built from \
+`architecture_notes` exactly as the section above prescribes, from `torch.nn` \
+primitives. Do NOT load a pretrained or stock model from any library (HuggingFace `AutoModel*`, \
 `torchvision.models`, `timm`, ...): stock models carry assumptions of their \
 own - HuggingFace's built-in ResNets, for instance, assume ImageNet's 224x224 \
 stem (7x7 stride-2 convolution followed by max-pooling), which destroys \
@@ -355,9 +403,9 @@ layer/block structure, ordering, output layer, and the loss function) and tie \
 each part back to the `architecture_notes` component or equation label it came \
 from.
 
-7. WRITE A PLAIN, EXPLICIT PYTORCH TRAINING LOOP. Do not use HuggingFace \
-`Trainer`, `accelerate`, PyTorch Lightning, Keras, skorch, or any other \
-training framework or wrapper - write the loop yourself:
+7. FOR A NEURAL MODEL, WRITE A PLAIN, EXPLICIT PYTORCH TRAINING LOOP. Do not \
+use HuggingFace `Trainer`, `accelerate`, PyTorch Lightning, Keras, skorch, or \
+any other training framework or wrapper - write the loop yourself:
    - `torch.utils.data` datasets and `DataLoader`s for both splits.
    - The optimizer constructed with EVERY argument passed explicitly by name \
 (learning rate, momentum, weight decay, betas, eps, ...), never leaning on a \
@@ -420,6 +468,13 @@ Boston Housing URL, the one most tutorials cite, now answers every client with \
 HTTP 403. A remembered URL looks exactly as plausible as a working one, which \
 is why OpenML comes first. Load the result with `pandas`/`numpy`, then convert \
 it to tensors.
+   - Files in LIBSVM/svmlight format (the LIBSVM datasets site): download \
+them into `--data-dir` and read them with \
+`sklearn.datasets.load_svmlight_file`, passing `n_features` explicitly so the \
+training and test matrices have the same width.
+   - DATA THE PAPER GENERATES from a stated procedure (a synthetic task) is \
+generated in code, seeded from `--seed`, following the procedure exactly; \
+record any size or distribution detail the paper leaves out in `assumptions`.
    - Never `datasets.load_dataset` or any HuggingFace Hub download: the \
 `datasets` library is not in the Runner's image.
    - EVERY download lands under `--data-dir`. Pass it explicitly as the \
@@ -481,9 +536,15 @@ made a real run about twelve times slower.
    This is a load-bearing interface contract with the pipeline's Runner stage, \
 which uses these flags to force fast capped smoke runs before a full one. \
 EVERY flag must be defined and accepted even when it does not apply to this \
-paper's method - no epochs, no learning rate, no mini-batches. Such a flag stays \
-in the parser as a documented no-op: its `help` text says it is ignored for \
-this method, and the script logs that at startup. Never drop one. List every \
+paper's method - no epochs, no learning rate, no mini-batches, as for most \
+classical estimators. Such a flag stays in the parser as a documented no-op: \
+its `help` text says it is ignored for this method, and the script logs that at \
+startup. Never drop one. Map a flag onto an estimator parameter only when it is \
+the same quantity (`--epochs` to `MLPClassifier`'s `max_iter`, `--lr` to its \
+`learning_rate_init`, `--batch-size` to its `batch_size`); the number of trees \
+in a forest is not an epoch count. `--max-train-samples` and \
+`--max-eval-samples` always apply, because they are what make the Runner's \
+cheap check runs cheap. List every \
 flag your `argparse` actually defines in `cli_flags_included`.
 
 11. EMIT THE METRICS JSON in exactly this shape - write it to the \
@@ -520,6 +581,17 @@ claim's unit, on the split the claim reports - so it equals `eval_metric`.
 over the training and evaluation splits, computed in the same post-training, \
 eval-mode passes as `train_metric` and `eval_metric` - so each loss and metric \
 pair describes the same model on the same data.
+   - For a classical estimator with no iterative training objective, \
+`train_loss` and `eval_loss` are `null` unless the paper reports a loss for it \
+(then compute that loss), and `epochs_completed` is `null` unless the estimator \
+iterates (`MLPClassifier`'s `n_iter_`, for example).
+   - REPRODUCE THE CLAIM'S EVALUATION PROTOCOL. When the claim is an average \
+over repeated runs - several shuffles or seeds, k-fold cross-validation, a \
+number of random initializations - the script performs every repetition, \
+seeded deterministically from `--seed`, logs each run's result, and reports the \
+MEAN as `value` and `eval_metric`, adding `"num_runs"` and \
+`"run_values"` (the per-run list) to the JSON. A capped check run (either \
+`--max-*-samples` flag set) performs a single repetition, and says so in the log.
    - `num_train_samples` / `num_eval_samples` are the sizes actually used, \
 after any `--max-*-samples` cap. `wall_clock_seconds` is measured from the \
 start of the run.
@@ -537,11 +609,12 @@ split.
 13. USE STDLIB `logging` (or `print`) IN THE GENERATED SCRIPT - NOT `loguru`. \
 The script runs standalone inside a Docker container and must not depend on \
 this repository's tooling. Its third-party imports are limited to `torch` and \
-`numpy`, plus - only where the data needs them - `torchvision` (image datasets \
-and transforms), and `pandas` and `scikit-learn` (fetching, splitting and \
-preprocessing tabular data; never as the model being reproduced). Those are \
-what the Runner's image guarantees; any other import is a failure waiting to \
-happen there.
+`numpy`, plus `torchvision` (image datasets and transforms), `pandas`, \
+`scipy` and `scikit-learn` (fetching, splitting and preprocessing data, and - \
+under rule 5 - the classical estimator being reproduced). Those are what the \
+Runner's image guarantees; any other import, including xgboost, lightgbm and \
+catboost, is a failure waiting to happen there. A classical-estimator script \
+need not use `torch` at all.
 
 14. THE SCRIPT MUST BE COMPLETE AND RUNNABLE AS WRITTEN. No placeholders, no \
 `...`, no `TODO`, no "fill in your own", no omitted function bodies, no \
@@ -578,8 +651,9 @@ instead."""
 SCRIPT_TOOL: dict[str, Any] = {
     "name": "write_training_script",
     "description": (
-        "Record a complete, self-contained PyTorch training script (a plain "
-        "training loop, no Trainer or other framework) targeting one specific "
+        "Record a complete, self-contained training script (a plain PyTorch "
+        "loop for a neural model, a scikit-learn estimator for a classical one; "
+        "no Trainer or other framework) targeting one specific "
         "claim from the paper, plus the bookkeeping explaining which claim it "
         "targets, which task type that claim measures, which architecture/"
         "dataset/hyperparameters it encodes, what had to be assumed, and which "
@@ -931,7 +1005,7 @@ def _log_task_type(task_type: str) -> None:
 
 
 class TrainingScriptWriter(CodeWriter[TrainingScript]):
-    """Writes one self-contained, plain-PyTorch training script targeting one claim."""
+    """Writes one self-contained training script (PyTorch or scikit-learn) targeting one claim."""
 
     name: ClassVar[str] = "training_script"
 

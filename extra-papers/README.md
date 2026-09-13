@@ -14,7 +14,10 @@ Every dataset URL was checked to respond (HTTP 200) on 2026-09-13.
 |---|---|---|
 | Tang 2013 | MLP + L2-SVM loss, MNIST | full run done: 0.82% vs 0.87% (manual `C` fix) |
 | Wijaya 2023 | MLP regression, Boston Housing | full run done: RMSE 4.48 vs 3.02 |
-| the nine below | see tables | PDF added 2026-09-13; not yet OCR'd |
+| SVM guide | RBF SVC | orchestrated: 96.625% vs 96.9% (implementation exact at paper's C, γ) |
+| Fashion-MNIST | random forest | orchestrated: 0.8773 vs 0.873 (mean of 5) |
+| Soft decision tree | gradient-trained tree | orchestrated: generated objective broken, no result |
+| the other six | see tables | PDF added 2026-09-13; not yet OCR'd |
 
 ## The six added 2026-09-13
 

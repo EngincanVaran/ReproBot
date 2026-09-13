@@ -1041,3 +1041,33 @@ pass against the repo removed one false sentence (that the stage handouts match 
 current code — they predate the generalization) and qualified two others.
 
 ---
+
+### Direct — scikit-learn support in `coder/`; three classical-ML papers orchestrated; report made self-contained (2026-09-13)
+
+**Asked (Engincan):** run the soft decision tree, SVM and random-forest papers through the
+Orchestrator for the report, and make the third report independent of the earlier reports
+(explain prior facts plainly instead of citing them).
+
+**Coder change:** prompt rule 5 now picks the library by model family (classical estimators in
+scikit-learn, neural models — including gradient-trained trees — in PyTorch), adds paper-era
+library-version defaults, LIBSVM-format loading, generated-data handling, no-op flags for
+estimators, nullable loss/epoch metrics, and repeated-run protocols (`num_runs`, `run_values`).
+Runner code and image unchanged (scikit-learn 1.5.2 was already there).
+
+**Runs (all `--max-stage full --retry-budget 2`):**
+- SVM guide c1: attempt 1 crashed — svmguide1's training file is label-sorted (first 2,000 rows
+  one class), so the probe's first 256 rows had one class; triage recoverable; retry sampled at
+  random and passed. Full: 96.625% vs 96.9%. Independent check in the runner image: `SVC` at the
+  paper's settings gives 66.925 / 96.15 / 96.875% **exactly**; the grid search chose C=γ=8.
+- Fashion-MNIST c17: success first try, 5-run mean 0.8773 vs 0.873. Reader first kept 0 of 124
+  rows (dataset paper, no "own method"); validator flag recovered 26 claims.
+- Soft decision tree c1: in-place autograd crash repaired by retry; then all check stages
+  passed with below-chance accuracy and a negative constant loss. Regeneration also changed
+  lr, batch size and λ unasked. Full run left running; no number reported.
+
+Report: abstract, introduction, status table and conclusion rewritten; all references to the
+first/second reports and their bibliography entries removed; new sections for the three
+papers, the SVM exactness check, and two findings (exactness where the library is the method;
+the ladder does not fit non-iterative models).
+
+---

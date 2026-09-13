@@ -66,85 +66,92 @@
 \maketitle
 
 \begin{abstract}
-The second progress report left ReproBot with a working five-stage pipeline and no
-replication result: full-fidelity training on the CIFAR-10 targets was measured at roughly
-22 days per paper on the available CPU, and no reproduced number had been compared against
-any claim. This report covers the phase that changed both. We redirected the evaluation
-towards papers whose original experiments train in minutes on a CPU, and, at the same
-time, generalized the code-generation and execution stages beyond image classification: the
-Coder now writes a plain PyTorch training loop for any supervised task, under a
-task-agnostic metrics contract. Two new papers were carried through every stage at full
-fidelity, producing the project's first replication measurements, compared by hand. The
-reproduction of Tang's \emph{Deep Learning using Linear Support Vector Machines} reaches
-0.82\% MNIST test error against a claimed 0.87\% --- but only after one hyperparameter the
-paper never states was corrected by hand, following an ablation that diagnosed why the first
-full run collapsed into a network that ignored its input. The reproduction of Wijaya's
-housing-price model reaches a test RMSE of 4.48 against a claimed 3.02, a gap we cannot
-attribute from a single seed because the paper does not specify its data split. Along the
-way the retry loop repaired its first naturally occurring defect, and six prompt failures
-observed in real runs were each converted into an explicit rule. We also report the
-team's first front end, a Streamlit dashboard over the pipeline's outputs. The central
-lesson of the phase is that every stage reported \emph{success} on a run that had
-completely failed: nothing in ReproBot yet judges whether a number is plausible, which makes
-the Critic the most important remaining component.
+ReproBot is a multi-agent system that reads a machine learning paper, extracts its claims and
+experimental setup, generates an implementation, executes it in a sandbox, and repairs
+execution failures through a bounded retry loop. This report covers the phase in which it
+produced its first replication measurements. Full training on the project's CIFAR-10
+benchmark would take weeks per paper on the available CPU, so we evaluated on papers whose
+original experiments run in minutes, and generalized code generation beyond image
+classification: the Coder now writes a plain PyTorch training loop for neural models and a
+scikit-learn estimator for classical ones, under a task-agnostic metrics contract. Five papers
+--- a network with a margin-based loss, a tabular regression network, a kernel support vector
+machine, a random forest and a soft decision tree --- were carried through the pipeline and
+compared against their published claims by hand. Three reproductions land close to their
+claims: an MNIST network at 0.82\% test error against 0.87\%, after one unstated
+hyperparameter was corrected by hand; a support vector machine at 96.63\% against 96.9\%, whose
+implementation reproduces the paper's exact numbers when given the paper's settings; and a
+random forest at 87.73\% against 87.3\%. A housing-price model misses its claim, with a test
+RMSE of 4.48 against 3.02, by a margin a single data split cannot explain, and a soft decision
+tree whose paper states little beyond its depth did not learn at all. The retry loop repaired
+three naturally occurring defects, and six prompt failures observed in real runs became
+explicit rules. The central finding is that the pipeline reported \emph{success} on two runs
+that had failed entirely: nothing yet judges whether a reproduced number is plausible, which
+makes an automated Critic the most important missing component. We also describe the team's
+first front end, a dashboard over the pipeline's outputs.
 \end{abstract}
 
 \section{Introduction}
 \label{sec:intro}
 
-The first progress report \cite{reprobot2026first} set out ReproBot's motivation and design,
-and the second \cite{reprobot2026second} documented its implementation: PDF extraction, a
-five-field structured Reader, a Coder, a Docker-sandboxed Runner, and an Orchestrator
-running a Coder\,$\leftrightarrow$\,Runner retry loop. That report closed on two
-limitations stated without qualification. No replication-fidelity claim was possible, since
-the Critic did not exist and nothing compared a reproduced number with a paper's. And no
-fidelity claim was even \emph{measurable}, since the only full training run the hardware
-could support would have taken weeks.
+Reproducing a machine learning paper's reported results is mechanical in principle and
+laborious in practice, and most published work ships no usable implementation. ReproBot
+automates the process as a pipeline of specialized stages. A vision-language model converts
+the paper's PDF into Markdown, reading figures as well as text. A Reader extracts five
+structured fields --- a method summary, architecture notes, the paper's claimed results, its
+hyperparameters and its data pipeline --- and cross-checks them with a validation loop. A Coder
+turns that extraction into a self-contained training script. A Runner executes the script
+inside a Docker container through four escalating stages: \texttt{probe}, a few optimizer
+steps; \texttt{smoke}, one epoch on a small slice; \texttt{capped}, five epochs on a small
+slice; and \texttt{full}, the paper's own setup. When a stage fails, a cheap model classifies
+the failure, and an Orchestrator feeds that diagnosis back to the Coder and retries, within a
+fixed budget. The planned final stage, a Critic that compares each reproduced number with the
+paper's claim under an explicit tolerance, does not yet exist.
 
-This phase addressed the second limitation directly and the first by hand. Its three
-threads are reported in turn. Section~\ref{sec:direction} describes a change of direction:
-evaluating on papers small enough to train for real on a CPU, and a team decision that
-ReproBot must reproduce more than one kind of paper. Section~\ref{sec:generalization}
-describes the resulting changes to the Coder and Runner, and Section~\ref{sec:prompts} the
-prompt failures that real runs exposed and the rules that now prevent them.
-Section~\ref{sec:results} reports the measurements themselves, including a training
-collapse, the ablation that explained it, and the first two comparisons against published
-claims. Section~\ref{sec:viewer} describes the team's pipeline viewer.
-Sections~\ref{sec:findings}--\ref{sec:conclusion} collect the engineering findings, the
-methodology, progress against the original timeline, limitations, and next steps.
+At the start of this phase the pipeline could execute generated code end to end, but it had
+produced no replication result. Every run on its CIFAR-10 target papers had been a short
+execution check, because a full training run on the available CPU was measured at roughly
+three weeks per paper. This phase changed that in three ways. Section~\ref{sec:direction}
+describes a change of direction: evaluating on papers small enough to train for real on a CPU,
+and a team decision that ReproBot must handle several kinds of paper and several model
+families. Section~\ref{sec:generalization} describes the resulting changes to the Coder and
+Runner, and Section~\ref{sec:prompts} the prompt failures that real runs exposed and the rules
+that now prevent them. Section~\ref{sec:results} reports the measurements, including a
+training collapse, the ablation that explained it, and five comparisons against published
+claims. Section~\ref{sec:viewer} describes the team's pipeline viewer, and
+Sections~\ref{sec:findings}--\ref{sec:conclusion} collect the engineering findings, methodology,
+progress against plan, limitations and next steps.
 
-Since the second report, the repository has gained seven commits, which together added 933
-lines and removed 280 in the pipeline stages, and a feature branch has added a 544-line
-dashboard. Table~\ref{tab:status}
-states, for each limitation the second report recorded, where it now stands.
+Table~\ref{tab:status} summarizes the open problems at the start of the phase and where each
+now stands.
 
 \begin{table*}[tbp]
 \centering
 \small
-\caption{The second report's stated limitations, revisited.}
+\caption{Open problems at the start of this phase, and their status now.}
 \label{tab:status}
 \begin{tabular}{L{0.34\textwidth}L{0.58\textwidth}}
 \toprule
-Stated on 22.08.2026 & Status on 13.09.2026 \\
+At the start of the phase & Now \\
 \midrule
-No fidelity claim is possible yet
-  & Two claims measured at full fidelity and compared by hand
+No reproduced number had ever been compared with a claim
+  & Five claims measured at full fidelity and compared by hand
     (Section~\ref{sec:fidelity}); the Critic still does not exist \\
 Full-fidelity runs infeasible ($\sim$22 days per CIFAR-10 paper)
-  & Unchanged for CIFAR-10; sidestepped with two papers whose full runs took 32 and 54
-    minutes on the same CPU \\
-The evidence base is two papers
-  & Four papers carried end to end: two beyond CIFAR-10, one of them tabular regression \\
-The retry loop was demonstrated only on an injected fault
-  & It repaired a naturally occurring defect (Section~\ref{sec:wijaya}) \\
-Four of seven verdicts exercised only against test doubles
+  & Unchanged for CIFAR-10; sidestepped with CPU-sized papers whose full runs take between
+    one minute and one hour \\
+Only CIFAR-10 image classifiers, all built with HuggingFace \texttt{Trainer}
+  & Seven papers carried end to end, spanning CNNs, MLPs, a regression network, a kernel SVM,
+    a random forest and a soft decision tree \\
+The retry loop had repaired only a deliberately injected fault
+  & Three naturally occurring defects repaired (Section~\ref{sec:wijaya}) \\
+Four of seven Orchestrator verdicts never observed in a real run
   & \texttt{environment\_error} occurred in a real run --- wrongly assigned, and the
     triage prompt corrected (Section~\ref{sec:prompts}); three remain unobserved \\
-Retries regenerate rather than patch
-  & Unchanged, and now measured: a one-argument fix produced a script only 22\% similar to
-    its predecessor \\
-Validation does not converge; two papers cannot be extracted
-  & Unchanged \\
+Retries regenerate whole scripts rather than patching them
+  & Unchanged, and now measured: one-line fixes produced scripts only 22--27\% similar to their
+    predecessors \\
+Reader validation never converged; two CIFAR-10 papers cannot be extracted
+  & Two papers now converge with no flags left; the rest unchanged \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -157,9 +164,8 @@ Validation does not converge; two papers cannot be extracted
 The CIFAR-10 papers chosen as ReproBot's first targets are the natural benchmark for the
 proposal's image-classification scope, and they are unreachable on the hardware available to
 the project. At the measured throughput of 5.3 training samples per second, one
-\emph{Wide Residual Networks} run at the paper's own setup takes approximately 22 days. The
-second report's reproduced numbers were therefore all drawn from stages that train for one
-epoch on a few hundred images, and could say nothing about fidelity.
+\emph{Wide Residual Networks} run at the paper's own setup takes approximately 22 days. Every number previously produced for these papers therefore came from short execution checks
+that train for one epoch on a few hundred images, and could say nothing about fidelity.
 
 Securing GPU compute remains necessary for that benchmark. It is not, however, necessary to
 test the claim ReproBot actually makes --- that a paper can be read, implemented, executed
@@ -195,8 +201,51 @@ images. Both candidate papers were retained, precisely because they differ:
     lower is better, and a paper written for a different framework.
 \end{itemize}
 
-Both were added under a separate directory, so the curated CIFAR-10 set remains exactly as
-its curator left it.
+A replication system should also handle the models much of applied machine learning still
+relies on: kernel methods, decision trees and ensembles. Three further papers were therefore
+chosen to cover model families rather than tasks:
+
+\begin{itemize}
+  \item \textbf{Hsu, Chang and Lin (2003)}, \emph{A Practical Guide to Support Vector
+    Classification} \cite{hsu2003guide}. A widely used tutorial whose worked examples report
+    exact accuracies from the LIBSVM tools \cite{chang2011libsvm}. The target is its
+    astroparticle-physics example, svmguide1 (3,089 training and 4,000 test instances, four
+    features): 96.9\% test accuracy after scaling each feature to $[-1, 1]$ and choosing the
+    RBF kernel's $C$ and $\gamma$ by a cross-validated grid search. Its appendix gives the
+    unrounded value, 96.875\%, at $C = \gamma = 2$.
+  \item \textbf{Xiao, Rasul and Vollgraf (2017)}, \emph{Fashion-MNIST}
+    \cite{xiao2017fashion}. A dataset paper whose benchmark table evaluates about 130
+    configurations of 13 scikit-learn classifiers \cite{pedregosa2011sklearn}. The target is
+    its random forest (100 trees, entropy criterion, maximum depth 100): 0.873 test accuracy,
+    the mean of five runs with shuffled training data.
+  \item \textbf{Frosst and Hinton (2017)}, \emph{Distilling a Neural Network Into a Soft
+    Decision Tree} \cite{frosst2017soft}. A binary tree whose inner nodes are learned linear
+    filters, trained by gradient descent. The target is 94.45\% MNIST test accuracy for a
+    depth-8 tree trained on true labels. The paper states the depth and little else --- no
+    learning rate, batch size, epoch count, penalty strength or temperature --- so this target
+    deliberately tests how the pipeline behaves when an experiment is under-specified.
+\end{itemize}
+
+Table~\ref{tab:targets} summarizes the five targets. All were kept in a separate directory,
+so the curated CIFAR-10 set remains exactly as its curator left it.
+
+\begin{table*}[tbp]
+\centering
+\small
+\caption{The five CPU-sized replication targets of this phase.}
+\label{tab:targets}
+\begin{tabular}{L{0.25\textwidth}L{0.22\textwidth}L{0.22\textwidth}L{0.2\textwidth}}
+\toprule
+Paper & Model family & Data & Targeted claim \\
+\midrule
+Tang (2013) & MLP with an L2-SVM output layer & MNIST & 0.87\% test error \\
+Wijaya (2023) & Multi-branch dense network (Keras) & Boston Housing, tabular & Test RMSE 3.02 \\
+Hsu, Chang and Lin (2003) & RBF support vector machine & svmguide1, tabular & 96.9\% test accuracy \\
+Xiao et al.\ (2017) & Random forest (scikit-learn) & Fashion-MNIST & 0.873 test accuracy, 5 runs \\
+Frosst and Hinton (2017) & Soft decision tree & MNIST & 94.45\% test accuracy \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
 \section{Generalizing the Coder and Runner}
 \label{sec:generalization}
@@ -227,7 +276,7 @@ its curator left it.
   \node[gone,  below=of critic] (report) {report generator\\[-2pt]\footnotesize claim-by-claim report};
 
   \node[above=0.5cm of ocr, font=\small, align=center] (pdf)
-    {\texttt{dataset/} --- 8 CIFAR-10 PDFs \quad $+$ \quad \texttt{extra-papers/} --- 2 CPU-sized PDFs};
+    {\texttt{dataset/} --- 8 CIFAR-10 PDFs \quad $+$ \quad \texttt{extra-papers/} --- 5 CPU-sized PDFs};
 
   \node[side, left=2.1cm of reader] (viewer) {\texttt{viewer/}\\[-2pt]\footnotesize Streamlit dashboard\\[-2pt]\footnotesize (feature branch)};
   \draw[sidearr] (viewer.north) |- (ocr.west);
@@ -252,9 +301,9 @@ its curator left it.
 \end{tikzpicture}
 \caption{ReproBot on 13.09.2026. Solid components are built and verified by execution;
 dashed red components do not exist; the dashed amber component is on a feature branch. The
-pipeline's shape is unchanged from the second report, but its inputs now include two
-CPU-sized papers, one of them tabular regression, and the Coder writes a plain PyTorch loop
-for any supervised task. The label inside the Runner marks this phase's central finding: a run is
+pipeline's shape predates this phase, but its inputs now include CPU-sized papers beyond
+image classification, and the Coder writes a plain PyTorch loop or a scikit-learn estimator
+depending on the paper's model family. The label inside the Runner marks this phase's central finding: a run is
 reported as a success when its script exits normally, whatever number it produced.}
 \label{fig:pipeline}
 \end{figure*}
@@ -277,10 +326,10 @@ and therefore inherited \texttt{Trainer}'s gradient clipping at a norm of 1.0, w
 confirmed inside the container. The paper uses no clipping. Faithful to the paper and without
 its unstated initialization, the same learning rate diverges.
 
-We record this as a correction to the second report. Its \emph{Network In Network} runs
-executed under a stabilizing mechanism the paper does not describe; their numbers were
-already labelled as non-replication results, but the scripts were less faithful than that
-report implied. The Coder is now forbidden from using \texttt{Trainer}, \texttt{accelerate},
+This changes how earlier results should be read. The \emph{Network In Network} runs made
+before this change executed under a stabilizing mechanism the paper does not describe. Their
+numbers had only ever been treated as execution checks, not replication results, but the
+scripts that produced them were less faithful to the paper than they appeared. The Coder is now forbidden from using \texttt{Trainer}, \texttt{accelerate},
 Lightning or Keras, and writes an explicit training loop in which every mechanism is visible.
 
 \subsection{Always PyTorch, whatever the paper used}
@@ -297,8 +346,8 @@ only in part.
 \subsection{A task-agnostic metrics contract}
 
 Every generated script writes a fixed-shape metrics file that the Runner parses and a future
-Critic will read. The second report's contract assumed accuracy. Its generalization is
-summarized in Table~\ref{tab:contract}; the most consequential addition is
+Critic will read. The original contract was designed for image classification and assumed accuracy. Its
+generalization is summarized in Table~\ref{tab:contract}; the most consequential addition is
 \texttt{higher\_is\_better}, since a bare value of 4.0 is meaningless without knowing
 whether it is an error or an accuracy.
 
@@ -338,11 +387,35 @@ dataset that happens to carry that number, trains on it, and reports a plausible
 the wrong problem. Where a paper gives split sizes but not how the split was drawn, the
 script uses a seeded random split and records the assumption.
 
+\subsection{Classical estimators in scikit-learn}
+
+Writing everything in PyTorch is right for neural networks and wrong for everything else.
+Re-implementing a support vector machine as a PyTorch model trained by stochastic gradient
+descent on a hinge loss changes both the optimizer and the solution it reaches; a paper that
+ran LIBSVM ran a specific quadratic-programming solver. The Coder therefore now chooses its
+library by model family. Classical estimators --- support vector machines, decision trees and
+forests, $k$-nearest neighbours, logistic regression, naive Bayes and similar --- are built with
+scikit-learn, whose \texttt{SVC} wraps LIBSVM itself, with every hyperparameter passed
+explicitly by name. Neural models stay in PyTorch, including tree-shaped models trained by
+gradient descent, such as a soft decision tree.
+
+Three further rules let this work without changing the Runner. First, library versions ship
+different defaults, just as frameworks do: before scikit-learn 0.22 a random forest defaulted
+to 10 trees and an RBF \texttt{SVC} to $\gamma = 1/n_{\text{features}}$, and a paper that relied
+on defaults relied on those. The Coder sets the paper-era values explicitly and discloses each
+one. Second, the command-line contract every generated script must satisfy is unchanged: flags
+with no meaning for an estimator, such as a learning rate for a random forest, are accepted as
+documented no-ops, while the sample caps that make the cheap stages cheap still apply, and loss
+and epoch fields in the metrics file may be empty. Third, when a claim is an average over
+repeated runs or cross-validation folds, the full run performs every repetition and reports the
+mean alongside the per-run values, while the cheap stages run a single repetition.
+
 \subsection{Runner changes}
 
 The Runner's interface did not change: it still invokes only the generated
-\texttt{reproduce.sh} and one of its four modes, which is what allowed two new task types to
-be added without modifying its code. Its image gained pinned \texttt{pandas},
+\texttt{reproduce.sh} and one of its four modes, which is what allowed new task types and model
+families to be added without modifying its code. Classical estimators needed no Runner change
+at all. Its image gained pinned \texttt{pandas},
 \texttt{scikit-learn} and \texttt{scipy}, installed in the same \texttt{pip} command as the
 pinned \texttt{numpy}, so that a transitive upgrade fails the build rather than silently
 moving a numerical dependency.
@@ -402,15 +475,14 @@ wording the model implemented literally.
 
 \subsection{Extraction on the new papers}
 
-The Reader required no changes for either paper. Table~\ref{tab:reader} extends the second
-report's coverage table with both. Each targeted claim was extracted exactly, as was Tang's
+The Reader ran unchanged on all five papers. Table~\ref{tab:reader} compares them with the four
+CIFAR-10 papers it had already processed. Every targeted claim was extracted, as was Tang's
 distinction between the L1- and L2-SVM gradients.
 
 \begin{table*}[tbp]
 \centering
 \small
-\caption{Reader output across six papers; the first four rows are reproduced from the second
-report. \emph{Comp.} is architecture components; \emph{own/eq} is equations marked as the
+\caption{Reader output across nine papers; the first four rows are CIFAR-10 papers processed before this phase. \emph{Comp.} is architecture components; \emph{own/eq} is equations marked as the
 paper's own over equations captured; \emph{Gaps} is \texttt{unstated\_details} entries;
 \emph{Flags} is unresolved validation flags after the three-pass cap.}
 \label{tab:reader}
@@ -425,12 +497,28 @@ Wide Residual Networks  & 61 & 20 & 4 & 11 & 1/1  & 11 & 6 \\
 \midrule
 Tang (2013), DLSVM      & 15 & 23 & 3 & 10 & 4/11 & 12 & 5 \\
 Wijaya (2023), housing  & 14 & 10 & 1 &  8 & 2/2  &  8 & 5 \\
+Hsu et al.\ (2003), SVM guide & 3 & 19 & 8 & 2 & 0/6 & 5 & 0 \\
+Xiao et al.\ (2017), Fashion-MNIST & 26 & 14 & 1 & 0 & 0/0 & 3 & 0 \\
+Frosst and Hinton (2017), soft tree & 8 & 11 & 3 & 4 & 5/5 & 10 & 4 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-Three weaknesses surfaced, all recorded as open defects. First, validation still does not
-converge: both new papers end with five unresolved flags. Second, the same result is
+Two of the classical-ML papers exposed an assumption built into the Reader. Its claims
+extractor keeps only a paper's own results and discards baseline rows, which is the right rule
+for a paper that proposes a method. Fashion-MNIST proposes a dataset: every row of its
+benchmark table is a standard classifier. On the first pass the extractor considered 124
+candidate rows and kept none, and the architecture extractor found no components. The
+validator flagged the empty claims against the paper's table, and the retry kept 26 --- the
+best configuration of each classifier on each dataset. The loop recovered only because the
+validator noticed: a kind of paper the extractor's instructions never anticipated produced a
+well-formed, empty result. The same two papers were, however, the first whose validation
+converged with no flags remaining. For the SVM guide, the Reader took the rounded 96.9\% from
+the paper's summary table rather than the appendix's 96.875\%, and did not record the
+appendix's accuracies under default parameters as claims.
+
+Three weaknesses surfaced on the neural-network papers, all recorded as open defects. First,
+validation still does not converge there: both end with five unresolved flags. Second, the same result is
 extracted two or three times when a paper states it in prose, a table and a figure;
 Wijaya's 14 claims describe eight distinct results, at mixed precision (0.911 and 0.91). A
 Critic comparing against claims will need them deduplicated. Third, and most consequential,
@@ -439,7 +527,7 @@ paper states ``stochastic gradient descent with momentum'' without a momentum va
 L2-SVM objective without its penalty constant $C$. Neither omission was flagged anywhere ---
 and they are exactly the two values that collapsed training (Section~\ref{sec:tang}).
 
-\subsection{The retry loop repairs a real defect}
+\subsection{The retry loop repairs real defects}
 \label{sec:wijaya}
 
 
@@ -495,8 +583,9 @@ threshold --- and shows how much of the script changed to remove one argument.}
 \end{figure*}
 
 
-The second report demonstrated the retry loop only against a deliberately reintroduced
-fault. Wijaya's two orchestrated runs, shown in Figure~\ref{fig:wijayarun}, supply the first
+Until this phase, the retry loop had been demonstrated only against a deliberately
+reintroduced fault: a learning-rate scheduler reading an attribute its constructor never set,
+which is valid Python and fails only at run time. Wijaya's two orchestrated runs, shown in Figure~\ref{fig:wijayarun}, supply the first
 naturally occurring case --- and, in the row before it, the failure that motivated the
 triage rules of Section~\ref{sec:prompts}.
 
@@ -510,6 +599,15 @@ Coder regenerated with that feedback, the plateau guard measured a similarity of
 the second attempt asserted the dataset's name and shape and passed every stage through
 \texttt{full}. The whole repair cost two generation calls, one triage call, and under three
 minutes.
+
+The classical-ML and soft-tree runs added two more naturally occurring repairs. The SVM
+script's cheap stages trained on the first 256 training rows; svmguide1's training file is
+sorted by label, and its first 2,000 rows all belong to one class, so scikit-learn refused to
+fit. Triage classified the failure as recoverable, and the regenerated script sampled the cheap
+subset at random and passed every stage. The soft-tree script modified a tensor in place inside
+the autograd graph, a classic PyTorch error that surfaces only in the backward pass; triage
+identified the in-place operation, and the regenerated script ran. The plateau guard measured
+similarities of 0.25 and 0.27 for the two regenerations.
 
 \subsection{The first full run, and its collapse}
 \label{sec:tang}
@@ -646,14 +744,15 @@ concerns a constant the paper itself treats as tuned elsewhere.
 \subsection{First fidelity measurements}
 \label{sec:fidelity}
 
-Both papers then completed \texttt{full} runs at their papers' stated settings.
-Table~\ref{tab:fidelity} reports the results against the published claims.
+All five papers completed their check stages, and four completed \texttt{full} runs at their
+papers' stated settings. Table~\ref{tab:fidelity} reports the results against the published
+claims.
 
 \begin{table*}[tbp]
 \centering
 \small
 \caption{ReproBot's first full-fidelity measurements, compared against the claims by hand.
-One seed each. Runtimes are wall clock on the development CPU, with the two runs sharing it.}
+Runtimes are the full stage's wall clock on the development CPU; some runs shared it.}
 \label{tab:fidelity}
 \begin{tabular}{L{0.16\textwidth}L{0.15\textwidth}rrrL{0.25\textwidth}}
 \toprule
@@ -665,6 +764,12 @@ Wijaya (2023) & Test RMSE & 3.02 & \textbf{4.48} & 1,918\,s
   & Not reproduced on this split \\
 Wijaya (2023) & Train RMSE & 2.69 & 2.94 & ---
   & Close; see text \\
+Hsu et al.\ (2003) & svmguide1 test accuracy & 96.9\% & \textbf{96.63\%} & 73\,s
+  & Implementation exact; the grid search chose different $C$, $\gamma$ \\
+Xiao et al.\ (2017) & Random forest test accuracy, mean of 5 & 0.873 & \textbf{0.8773} & 200\,s
+  & Close; all five runs above the claim \\
+Frosst and Hinton (2017) & MNIST test accuracy & 94.45\% & --- & ---
+  & Did not learn; check stages passed regardless \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -747,6 +852,38 @@ further candidates remain untested: the Coder did not reproduce Keras's batch-no
 and initialization defaults (Section~\ref{sec:findings}), and a constant learning rate left
 the final epoch's training loss noisy.
 
+\textbf{SVM guide.} ReproBot reproduced the paper's whole procedure: scale each feature to
+$[-1, 1]$ using the training set's ranges, evaluate 110 $(C, \gamma)$ pairs by five-fold
+cross-validation, retrain on the full training set with the best pair, and test once. It
+reached 96.625\% against the paper's 96.875\%, a difference of 10 of the 4,000 test instances.
+The cause is identifiable. The search selected $C = \gamma = 8$ at a cross-validation accuracy
+of 96.99\%, where the paper's search selected $C = \gamma = 2$ at 96.89\%. The two candidates
+are within a tenth of a point of each other, and which one wins depends on how instances are
+assigned to folds, which the paper leaves to its tool's random shuffle. To separate the
+implementation from the search, we evaluated scikit-learn's \texttt{SVC} directly at the
+paper's settings, outside the pipeline. It reproduced all three of the paper's reported test
+accuracies exactly: 66.925\% on unscaled data with default parameters, 96.15\% on scaled data
+with defaults, and 96.875\% at $C = \gamma = 2$. Since \texttt{SVC} wraps LIBSVM this is
+expected, but it establishes that the reproduction is exact in its implementation and differs
+only in one stochastic step of its protocol.
+
+\textbf{Fashion-MNIST random forest.} The five runs gave between 0.8753 and 0.8792, with a mean
+of 0.8773 against the claimed 0.873. All five exceed the claim, so the gap of 0.4 points is not
+run-to-run noise. Tree ensembles are insensitive to monotonic rescaling of pixel values, so the
+unstated preprocessing is an unlikely cause; the scikit-learn version the paper used, also
+unstated, is the more plausible one, and we did not isolate it. We read this as a close rather
+than an exact reproduction.
+
+\textbf{Soft decision tree.} The generated script had to guess a dozen values the paper does not
+state, and disclosed each. After the retry repaired its crash, its three check stages all
+passed, yet its accuracy stayed between 5\% and 9\%, below the 10\% of random guessing, and
+its training loss was negative and identical to four decimal places across every epoch. That
+is a defect in the generated objective rather than slow learning, and the full 40-epoch run
+could not change it. The regeneration also silently changed several guessed values --- the
+learning rate from 0.01 to 0.1, the batch size from 128 to 32 and the penalty strength from 0.1
+to 0.01 --- none of which the triage feedback had asked for. We report no number for this
+claim.
+
 \subsection{Cost}
 
 One Coder call consumed approximately 27{,}000 input and 9{,}500 output tokens and took 75\,s;
@@ -792,16 +929,35 @@ eventually the Critic's verdict, is the natural route to the planned demonstrati
 \section{Engineering Findings}
 \label{sec:findings}
 
+\subsection{Where the library is the method, exactness is achievable}
+
+The SVM guide shows that some claims can be reproduced exactly, not merely within noise: the
+same solver on the same data gives the same number to three decimal places. This sharpens what
+a Critic must do. A claim produced by a deterministic library call admits essentially zero
+tolerance, and a gap there is diagnostic; a claim produced by stochastic training admits a
+tolerance set by run-to-run variance; and a claim like the SVM guide's mixes the two, exact in
+its solver and stochastic in its model selection. One tolerance for all claims would be wrong
+for most of them.
+
+\subsection{The escalation ladder does not fit models without epochs}
+
+For the random forest and the SVM, \texttt{smoke} and \texttt{capped} produced identical
+numbers --- 0.7891 and 94.92\% respectively --- because the two stages differ only in the
+number of epochs, which neither model has. For non-iterative models the fourth stage adds cost
+and no information; a ladder over training-set size would fit them better.
+
 \subsection{Execution success is not evidence of a result}
 
-The second report argued that static checks cannot establish that generated code runs. This
-phase established the next step: that code running to completion cannot establish that it
+Static checks cannot establish that generated code runs; the injected scheduler fault above
+parsed cleanly and failed only in execution. This phase established the next step: that code running to completion cannot establish that it
 worked. Tang's collapsed run would have exited normally and been reported as a success. The
 escalation ladder could not have caught it --- \texttt{capped} trains for about fifteen steps,
 and the collapse needed thousands --- and \texttt{capped}'s stated purpose, checking that
 training learns, is not enforced by anything: the Runner reads only the exit code.
 
-The same pattern appeared at smaller scale throughout the phase. The \texttt{full} mode of
+The soft decision tree repeated the lesson with no scale involved: all three check stages
+passed with accuracy below chance and a constant, negative loss. The same pattern appeared at
+smaller scale throughout the phase. The \texttt{full} mode of
 every generated \texttt{reproduce.sh} wrote its metrics to a different filename from the one
 the Runner reads, so both fidelity results above reached the Runner only through its
 fallback parser; this is now fixed. The OCR, Reader and Coder stages exit with status zero
@@ -855,17 +1011,18 @@ means several seeds per claim.
 
 \subsection{Regeneration rewrites, measurably}
 
-The second report noted that retries regenerate whole scripts rather than patching them.
+The retry loop regenerates the whole script on every attempt rather than patching the line at
+fault.
 Wijaya's repair quantifies the cost: triage's fix was the removal of one keyword argument,
 and the regenerated script shared only 22\% of its lines with its predecessor. The repair
 succeeded, but almost everything else in the script also changed, unreviewed. The plateau
-guard's threshold of 0.98 now has two observations --- 0.41 on the second report's injected
-fault and 0.22 on this real one --- and neither came near it.
+guard's threshold of 0.98 now has four observations --- 0.41 on the injected scheduler fault and 0.22, 0.25 and 0.27 on real ones --- and none came near it. The soft tree shows the cost
+directly: its repair changed three guessed hyperparameters that nobody had asked to change.
 
 \begin{table*}[tbp]
 \centering
 \small
-\caption{Status against the first report's staged timeline. \built{} done; \partl{} partial
+\caption{Status against the project's original four-month plan. \built{} done; \partl{} partial
 or in a different form; \absent{} not started.}
 \label{tab:timeline}
 \begin{tabular}{L{0.1\textwidth}L{0.41\textwidth}cL{0.35\textwidth}}
@@ -876,11 +1033,11 @@ Month 1 & PDF ingestion; Reader schema; shared-memory object & \built & Complete
 Month 2 & Coder and Docker sandbox for a pilot set; Orchestrator skeleton with a single
   hard-coded retry & \built & Exceeded: a bounded retry loop with triage-driven feedback \\
 Month 3 & Critic verdict logic & \absent & Not started; first real inputs now exist \\
-        & Real retry loop with targeted feedback & \built & Repaired a real defect \\
+        & Real retry loop with targeted feedback & \built & Repaired three real defects \\
         & Report Generator & \absent & Not started \\
-        & Single-shot vs.\ iterative ablation & \partl & One observed case only: Wijaya
-  fails single-shot and passes on the first retry \\
-Month 4 & Expansion towards 20 papers & \partl & Four papers; classification and regression \\
+        & Single-shot vs.\ iterative ablation & \partl & Three observed cases: each fails
+  single-shot and runs after one retry \\
+Month 4 & Expansion towards 20 papers & \partl & Seven papers across five model families \\
         & Demonstration interface & \partl & Streamlit viewer on a feature branch \\
 \bottomrule
 \end{tabular}
@@ -889,9 +1046,12 @@ Month 4 & Expansion towards 20 papers & \partl & Four papers; classification and
 \section{Development Methodology}
 \label{sec:methodology}
 
-The phase continued the delegation pattern described in the second report, though most of
-its work was investigative rather than constructive and was carried out directly by the
-orchestrating session. One scoped implementation --- the generalization of the Coder and
+ReproBot is built by a human team working with an orchestrating AI coding session, which
+delegates scoped tasks to specialized subagents --- research agents that survey precedent,
+coding agents that implement and verify a change, review agents that critique an artifact
+before a costly action, and validation agents that audit output read-only --- and logs every
+delegation with its brief and outcome. Most of this phase's work was investigative rather than
+constructive and was carried out directly by the orchestrating session. One scoped implementation --- the generalization of the Coder and
 Runner --- was delegated to a coding subagent.
 
 That delegation produced the third instance, across the project, of a subagent's report
@@ -911,8 +1071,10 @@ into a result.
 \section{Progress Against the Timeline}
 \label{sec:timeline}
 
-Table~\ref{tab:timeline} compares the phase's output with the staged timeline of the first
-report. The retry loop arrived ahead of plan and in stronger form than planned. The Critic
+The project was planned over four months: the Reader in the first; the Coder, sandbox and a
+skeleton Orchestrator in the second; the Critic, a real retry loop and the Report Generator in
+the third; and evaluation, ablation and a demonstration in the fourth.
+Table~\ref{tab:timeline} compares the work to date with that plan. The retry loop arrived ahead of plan and in stronger form than planned. The Critic
 and the Report Generator, both Month~3 deliverables, have not started, and the phase's effort
 went instead to generalization and to obtaining the first measurable results --- a trade we
 consider correct, since a Critic without measurable results would have had nothing to judge.
@@ -921,10 +1083,14 @@ consider correct, since a Critic without measurable results would have had nothi
 \section{Limitations}
 \label{sec:limitations}
 
-\textbf{Both fidelity results are single runs, compared by hand.} Neither has a variance
-estimate, and no stage of the system performed either comparison.
+\textbf{The fidelity results are compared by hand, mostly from single runs.} Only the random forest reports a spread over runs, and no stage of the system performed any
+comparison.
 
-\textbf{The positive result required a human.} Tang's reproduction matches its claim only
+\textbf{Model-family coverage is still narrow.} No gradient-boosting library (XGBoost, LightGBM,
+CatBoost), sequence model, graph network or text model has yet been run, and one model family,
+the soft decision tree, produced no result at all.
+
+\textbf{Tang's positive result required a human.} Tang's reproduction matches its claim only
 after a person chose one hyperparameter, informed by an ablation that had logged test error.
 
 \textbf{The negative result is not attributed.} Wijaya's gap may stem from the unstated
@@ -966,6 +1132,13 @@ the test set.
 \textbf{Patch rather than regenerate.} A line-range edit, as in AutoReproduce
 \cite{zhao2025autoreproduce}, would keep a one-argument fix to one argument.
 
+\textbf{Fit the escalation ladder to the model.} Scale training-set size rather than epochs
+for non-iterative models, and reject a check stage whose loss does not move.
+
+\textbf{Widen coverage.} Run the diversity targets already selected --- gradient-boosting
+libraries, a graph convolutional network, a text CNN and a temporal convolutional network ---
+which requires adding XGBoost, LightGBM and CatBoost to the sandbox image.
+
 \textbf{Merge and extend the viewer} to show Runner, Orchestrator and Critic output, as the
 basis of the final demonstration.
 
@@ -976,32 +1149,23 @@ failure.
 \section{Conclusion}
 \label{sec:conclusion}
 
-This phase produced ReproBot's first replication measurements. One reproduction matches its
-published claim to within five test images out of ten thousand; the other misses its claim
-by a margin that a single run cannot explain. Getting there required generalizing the
-pipeline beyond image classification, converting six real prompt failures into explicit
-rules, and diagnosing a training collapse that every stage of the pipeline reported as a
-success.
+This phase produced ReproBot's first replication measurements, across five papers and five
+model families. Three reproductions land close to their claims, one of them exact in its
+implementation; one misses its claim by a margin a single split cannot explain; and one never
+learned. Getting there required generalizing the pipeline beyond image classification and
+beyond neural networks, turning six real prompt failures into explicit rules, and diagnosing a
+training collapse that every stage of the pipeline reported as a success.
 
-That last point is the phase's main result. ReproBot can now read a paper, write an
-implementation, execute it at the paper's own scale, and repair its own execution failures.
-What it cannot yet do is tell whether the number it produced is right. The two measurements
-in this report were judged by people, and one of them needed a person to fix it first.
-Building the component that makes those judgements automatically, honestly and with
-appropriate uncertainty, is the work of the next phase.
+That last point is the phase's main result, and it happened twice. ReproBot can now read a
+paper, write an implementation in the right library, execute it at the paper's own scale, and
+repair its own execution failures. What it cannot yet do is tell whether the number it produced
+is right. Every measurement in this report was judged by people, and one of them needed a
+person to fix it first. Building the component that makes those judgements automatically ---
+with a tolerance that respects whether a claim is deterministic or stochastic --- is the work of
+the next phase.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{9}
-
-\bibitem{reprobot2026first}
-Kütük, A., Varan, E., Korkut, G., \& Özdoğan, G.~M. (2026).
-ReproBot: A Multi-Agent System for Automated Scientific Paper Replication --- First
-Progress Report. \textit{inzva AI Projects \#10}.
-
-\bibitem{reprobot2026second}
-Kütük, A., Varan, E., Korkut, G., \& Özdoğan, G.~M. (2026).
-ReproBot: A Multi-Agent System for Automated Scientific Paper Replication --- Second
-Progress Report. \textit{inzva AI Projects \#10}.
 
 \bibitem{tang2013dlsvm}
 Tang, Y. (2013).
@@ -1017,6 +1181,30 @@ Multi Level Dense Layer Neural Network Model for Housing Price Prediction.
 Harrison, D., \& Rubinfeld, D.~L. (1978).
 Hedonic housing prices and the demand for clean air.
 \textit{Journal of Environmental Economics and Management}, 5(1), 81--102.
+
+\bibitem{hsu2003guide}
+Hsu, C.-W., Chang, C.-C., \& Lin, C.-J. (2003).
+A Practical Guide to Support Vector Classification. Technical report, Department of Computer
+Science, National Taiwan University (version updated 2025).
+
+\bibitem{chang2011libsvm}
+Chang, C.-C., \& Lin, C.-J. (2011).
+LIBSVM: A library for support vector machines.
+\textit{ACM Transactions on Intelligent Systems and Technology}, 2(3), 27.
+
+\bibitem{xiao2017fashion}
+Xiao, H., Rasul, K., \& Vollgraf, R. (2017).
+Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms.
+\textit{arXiv:1708.07747}.
+
+\bibitem{pedregosa2011sklearn}
+Pedregosa, F., Varoquaux, G., Gramfort, A., et al. (2011).
+Scikit-learn: Machine Learning in Python.
+\textit{Journal of Machine Learning Research}, 12, 2825--2830.
+
+\bibitem{frosst2017soft}
+Frosst, N., \& Hinton, G. (2017).
+Distilling a Neural Network Into a Soft Decision Tree. \textit{arXiv:1711.09784}.
 
 \bibitem{zhao2025autoreproduce}
 Zhao, X., Sun, M., Wang, W., et al. (2025).

@@ -45,7 +45,20 @@ Two reasons:
   risk. A plain loop has no hidden defaults: every setting in it is one the model
   wrote down and can disclose.
 
-### 2. Always PyTorch, whatever framework the paper used — with the differences disclosed
+### 1b. Classical estimators are built with scikit-learn (added 2026-09-13)
+
+Writing everything in PyTorch is right for neural networks and wrong for classical models: an SVM
+trained by SGD on a hinge loss is a different optimizer reaching a different solution than LIBSVM.
+The prompt's rule 5 now picks the library by model family — SVMs, trees, forests, k-NN, logistic
+regression, naive Bayes (and `MLPClassifier` when the paper used scikit-learn's) are scikit-learn
+estimators with every hyperparameter passed by name. Paper-era library defaults are set explicitly
+(scikit-learn changed many in 0.22). Flags with no meaning for an estimator stay as documented
+no-ops, `train_loss`/`eval_loss`/`epochs_completed` may be `null`, and a claim averaged over
+repeated runs or folds is reproduced as those runs, adding `num_runs` and `run_values`.
+Proven on the SVM guide (96.625% vs 96.9%; `SVC` at the paper's own C and γ gives its three
+accuracies exactly) and Fashion-MNIST's random forest (0.8773 vs 0.873, 5 runs).
+
+### 2. Neural models always in PyTorch, whatever framework the paper used — with the differences disclosed
 
 The Runner's image deliberately carries **no second framework**, so a paper
 built in Keras/TensorFlow, JAX, Theano, Caffe or MATLAB is still reimplemented

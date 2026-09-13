@@ -25,6 +25,15 @@ deep version of its known issues.
 - **Tang** detail, epoch log and caveats: [`docs/notes/tang-2013-ablation/`](docs/notes/tang-2013-ablation/README.md).
 - Logs: `orchestrator/output/2023-10 - .../logs/attempt-{1,2}/`, `runner/output/2013-06 - .../logs/`.
 
+**Classical-ML run (later 2026-09-13).** `coder/` gained scikit-learn support; three more papers went
+through the Orchestrator (`--max-stage full --retry-budget 2`):
+
+| Paper | Claim | Reproduced | Reading |
+|---|---|---|---|
+| **Hsu/Chang/Lin SVM guide** (c1) | svmguide1 96.9% (appendix 96.875%) | **96.625%** | `success` after 1 retry. Implementation exact: `SVC` at the paper's C=γ=2 gives 66.925 / 96.15 / 96.875% exactly; the grid search picked C=γ=8 (CV 96.99% vs paper's 96.89%) because fold assignment differs. |
+| **Fashion-MNIST random forest** (c17) | 0.873, mean of 5 | **0.8773** (runs 0.8753–0.8792) | `success`, 0 retries, 200 s. All 5 runs above the claim; likely library version, not isolated. |
+| **Soft decision tree** (c1) | MNIST 94.45% | none | Retry fixed an in-place autograd crash, then every check stage **passed** with accuracy 5–9% (below chance) and a **negative, constant loss** — broken objective. Full 40-epoch run was left running; it cannot learn. |
+
 **Third progress report written (13.09.2026)** —
 `docs/progress-reports/third-progress-report/`, single-column (14 pp) and two-column (11 pp),
 both built from `generate.py`. Covers everything above plus Mert's `viewer/` branch. Every page
@@ -116,6 +125,8 @@ Anything marked **cost** is actively wasting money or time on every run.
       sits in the very loss being reproduced — are flagged nowhere. They were exactly the
       two guesses that collapsed Tang's run. Extend the gap-recording discipline to
       `hyperparameters`.
+- [ ] **Dataset/benchmark papers have no "own method"** — Fashion-MNIST's first claims pass kept 0 of 124
+      table rows and found no architecture; only the validator's flag recovered 26 claims.
 - [ ] **The same result is claimed two or three times** when a paper states it in prose, a
       table and a figure (Wijaya: 14 claims for 8 distinct results, at mixed precision
       0.911 vs 0.91). Needs dedup before the Critic compares against them.
@@ -138,12 +149,17 @@ Anything marked **cost** is actively wasting money or time on every run.
       Adam ε (1e-7) but used PyTorch's BatchNorm defaults (momentum 0.1, ε 1e-5) and default
       Kaiming init instead of Keras's (0.99 / 1e-3, Glorot) — disclosed in `assumptions`,
       but disclosed *instead of* followed. Could contribute to its RMSE gap; untested.
+- [ ] **Regeneration silently changes guessed hyperparameters.** The soft tree's retry was asked to fix an
+      in-place op and also moved lr 0.01→0.1, batch 128→32, λ 0.1→0.01.
+- [ ] **Soft-tree objective generated wrong** — negative, constant loss; no gate catches a loss that never moves.
 - [ ] **Prompt wording is copied literally.** The phrase "OpenML data_id and version" in
       the prompt produced `fetch_openml(data_id=531, version=1)`, which scikit-learn rejects.
       Fixed; worth auditing the rest of the prompt for the same kind of example.
 
 ### `runner/`
 - [ ] **Success is decided on exit code alone** — see *Next up*.
+- [ ] **The ladder is uninformative for non-iterative models** — for the random forest and SVM, `smoke`
+      and `capped` gave identical numbers (they differ only in epochs). Scale sample size instead.
 - [ ] **The escalation ladder cannot catch at-scale instability** — Tang learned through
       probe → smoke → capped, then collapsed after thousands of steps in `full`.
 - [ ] **The image is not reproducible byte-for-byte** — `python:3.11-slim` is a moving tag and
