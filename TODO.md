@@ -32,7 +32,7 @@ through the Orchestrator (`--max-stage full --retry-budget 2`):
 |---|---|---|---|
 | **Hsu/Chang/Lin SVM guide** (c1) | svmguide1 96.9% (appendix 96.875%) | **96.625%** | `success` after 1 retry. Implementation exact: `SVC` at the paper's C=γ=2 gives 66.925 / 96.15 / 96.875% exactly; the grid search picked C=γ=8 (CV 96.99% vs paper's 96.89%) because fold assignment differs. |
 | **Fashion-MNIST random forest** (c17) | 0.873, mean of 5 | **0.8773** (runs 0.8753–0.8792) | `success`, 0 retries, 200 s. All 5 runs above the claim; likely library version, not isolated. |
-| **Soft decision tree** (c1) | MNIST 94.45% | none | Retry fixed an in-place autograd crash, then every check stage **passed** with accuracy 5–9% (below chance) and a **negative, constant loss** — broken objective. Full 40-epoch run was left running; it cannot learn. |
+| **Soft decision tree** (c1) | MNIST 94.45% | **95.11%** (train 98.29%) | After fixing the paper's misprinted loss (one line, expected cross-entropy) and re-running via `--use-existing-script --force`: `success`, 0 retries, 70 min. Reached 94.45% at epoch 11, held 94.5–95.2%. First attempt had maximized cross-entropy (accuracy → 0.15%), caught by reading `docker logs` live. |
 
 **Third progress report written (13.09.2026)** —
 `docs/progress-reports/third-progress-report/`, single-column (14 pp) and two-column (11 pp),

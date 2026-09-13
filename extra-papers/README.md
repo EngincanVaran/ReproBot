@@ -16,7 +16,7 @@ Every dataset URL was checked to respond (HTTP 200) on 2026-09-13.
 | Wijaya 2023 | MLP regression, Boston Housing | full run done: RMSE 4.48 vs 3.02 |
 | SVM guide | RBF SVC | orchestrated: 96.625% vs 96.9% (implementation exact at paper's C, γ) |
 | Fashion-MNIST | random forest | orchestrated: 0.8773 vs 0.873 (mean of 5) |
-| Soft decision tree | gradient-trained tree | orchestrated: generated objective broken, no result |
+| Soft decision tree | gradient-trained tree | orchestrated: 95.11% vs 94.45% after fixing the paper's misprinted loss by hand |
 | the other six | see tables | PDF added 2026-09-13; not yet OCR'd |
 
 ## The six added 2026-09-13

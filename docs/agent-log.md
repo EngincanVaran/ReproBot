@@ -1084,3 +1084,27 @@ line replaced by the expected cross-entropy (`-inner_sum`) reached 54% test accu
 epochs on 5,000 images. Report paragraph updated with the diagnosis.
 
 ---
+
+### Direct — soft decision tree rerun; third report reworked around results (2026-09-13 → 14)
+
+**Asked (Engincan):** run the fixed soft tree through the Orchestrator; rework the report to
+focus on working code, a learning graph per model and the comparison with each paper, telling
+problems briefly as problem → solution; add Runner live check-ups, the Critic and loop controls
+to TODO; finalize when the run ends.
+
+**Run:** one-line loss fix applied to the existing script, then
+`orchestrator.pipeline --claim-id c1 --max-stage full --use-existing-script --force`. A persistent
+Monitor polled `docker logs` every 30 s and reported each epoch live — the practice the new
+TODO item asks the Runner to automate. Result: **95.11% vs 94.45%**, train 98.29%, 70 min,
+`success`, 0 retries; 94.45% first reached at epoch 11.
+
+**Learning-graph data** for the two classical models was computed in the runner image by
+importing the generated scripts' own functions: the SVM's 5-fold CV grid (best 96.9894% at
+C=γ=8, identical to the run) and the random forest's accuracy as trees are added (0.8773 at 100
+trees, identical to repetition 1).
+
+**Report:** rewritten results-first — five-panel learning-curve figure, results table,
+problem/solution table, lessons, future work; ablation, collapse diagnosis and failure-focused
+findings reduced to single lines. 10 pages single-column, 8 two-column; figure pages checked.
+
+---
