@@ -317,12 +317,13 @@ def _write_reproduce_script(
 # Assumptions the Coder had to make (not stated in the paper):
 {assumptions}
 #
-# This script needs torch/torchvision/transformers, which are deliberately NOT
-# in this repo's uv lock (see CLAUDE.md's platform-trap note). Run it inside
-# runner/'s Docker image, or in a throwaway venv on a machine with wheels:
+# This script needs torch (plus torchvision for image datasets, pandas and
+# scikit-learn for tabular ones), which are deliberately NOT in this repo's uv
+# lock (see CLAUDE.md's platform-trap note). Run it inside runner/'s Docker
+# image, or in a throwaway venv on a machine with wheels:
 #   python3.11 -m venv .venv && . .venv/bin/activate
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-#   pip install transformers accelerate
+#   pip install numpy pandas scikit-learn
 # ---------------------------------------------------------------------------
 # This file is the ONLY interface runner/ uses. Runner picks a mode; it never
 # constructs a python command or passes a --flag. That keeps Runner paper-
@@ -345,8 +346,8 @@ MODE="${{1:-full}}"
 
 case "$MODE" in
   probe)
-    # Stage 1. Two optimizer steps. Proves data -> model -> loss -> step works
-    # at all; catches shape/dtype errors in seconds. Accuracy is meaningless.
+    # Stage 1. A couple of optimizer steps. Proves data -> model -> loss -> step
+    # works at all; catches shape/dtype errors in seconds. Metrics are meaningless.
     python {script_name} \\
       --epochs 1 \\
       --max-train-samples 256 \\
@@ -363,10 +364,10 @@ case "$MODE" in
       --metrics-output metrics.smoke.json
     ;;
   capped)
-    # Stage 3. The cheapest run that carries real signal: on 512 examples a
-    # 36M-parameter net should overfit fast, so train accuracy climbing well
-    # above 10% (CIFAR-10 chance) means learning is wired up correctly.
-    # Eval accuracy here is NOT comparable to the paper's claim.
+    # Stage 3. The cheapest run that carries real signal: on a few hundred
+    # examples a net should overfit fast, so train_metric moving well past a
+    # trivial baseline (chance accuracy; predicting the mean) means learning is
+    # wired up correctly. eval_metric here is NOT comparable to the paper's claim.
     python {script_name} \\
       --epochs 5 \\
       --max-train-samples 512 \\
@@ -424,6 +425,7 @@ def _write_bookkeeping(
         "missing_cli_flags": missing_cli_flags,
         "claim_targeted": result.claim_targeted,
         "claim_selection_reasoning": result.claim_selection_reasoning,
+        "task_type": result.task_type,
         "architecture_used": result.architecture_used,
         "dataset_used": result.dataset_used,
         "hyperparameters_used": [

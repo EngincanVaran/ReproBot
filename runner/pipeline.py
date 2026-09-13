@@ -204,8 +204,9 @@ def main() -> None:
         type=Path,
         default=DEFAULT_CACHE_DIR,
         help=(
-            "Host directory for the shared CIFAR-10 / HuggingFace caches, bind-mounted "
-            "into every run so the ~170 MB dataset is downloaded once, not per paper"
+            "Host directory for the shared dataset (torchvision, OpenML, URL) and "
+            "HuggingFace/torch caches, bind-mounted into every run so a dataset "
+            "(e.g. CIFAR-10's ~170 MB) is downloaded once, not per paper"
         ),
     )
     parser.add_argument(
@@ -231,9 +232,9 @@ def main() -> None:
         "--network",
         default="bridge",
         help=(
-            "Container network mode. Stays 'bridge' by default because torchvision "
-            "downloads CIFAR-10 on the first run; once the cache is warm, 'none' "
-            "makes the sandbox fully offline"
+            "Container network mode. Stays 'bridge' by default because a script "
+            "downloads its dataset (torchvision, OpenML, a URL) on the first run; "
+            "once the cache is warm, 'none' makes the sandbox fully offline"
         ),
     )
     parser.add_argument(

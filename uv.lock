@@ -872,6 +872,7 @@ runner = [
 ]
 vlm = [
     { name = "anthropic" },
+    { name = "pillow" },
     { name = "pypdfium2" },
     { name = "python-dotenv" },
 ]
@@ -892,6 +893,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'vlm'", specifier = ">=0.69" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pdfplumber", marker = "extra == 'pdfplumber'", specifier = ">=0.11" },
+    { name = "pillow", marker = "extra == 'vlm'", specifier = ">=10.0" },
     { name = "pypdfium2", marker = "extra == 'vlm'", specifier = ">=4.30" },
     { name = "python-dotenv", marker = "extra == 'coder'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'orchestrator'", specifier = ">=1.0" },

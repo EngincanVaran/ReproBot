@@ -2,12 +2,103 @@
 
 Turns one paper's structured Reader output (`reader/output/<paper>.json`) plus
 that paper's OCR Markdown (`ocr/output/vlm/<paper>.md`) into a **self-contained,
-runnable HuggingFace `Trainer` training script** that targets one specific
-numeric claim from the paper. One Claude tool-use call, two deterministic
-zero-cost safety gates, one script on disk.
+runnable PyTorch training script — a plain, explicit training loop** — that
+targets one specific numeric claim from the paper. One Claude tool-use call, two
+deterministic zero-cost safety gates, one script on disk.
+
+The paper can be about **any supervised task**: image classification,
+classification of other inputs, tabular regression. The Coder infers which from
+the claim itself and records it as `task_type`.
 
 **This stage never executes the script and never imports torch.** It writes
-code; the future `runner/` stage runs it in a Docker sandbox.
+code; `runner/` runs it in a Docker sandbox.
+
+## What the generated script is — and why
+
+This stage was first built for image classification only: it generated
+HuggingFace `Trainer` scripts over `torchvision` datasets. Generalizing to other
+paper types (a custom-loss MNIST classifier, a Keras tabular regression) changed
+four things, each of which closes a path to a replication that runs fine and
+quietly reproduces something else.
+
+### 1. A plain PyTorch loop, not HuggingFace `Trainer`
+
+The prompt forbids `Trainer`, `accelerate`, Lightning, Keras and any other
+training wrapper. The model writes the loop itself — `DataLoader`s, the
+optimizer with every argument passed by name, the scheduler stepped at the
+granularity the paper describes, `model.train()` / `model.eval()` +
+`torch.no_grad()` — and adds nothing the paper does not state (no gradient
+clipping, warmup, label smoothing, mixed precision or early stopping unless the
+reader output says so).
+
+Two reasons:
+
+- **`Trainer`'s model contract fits regression and custom losses badly.** It is
+  built around a dict of `pixel_values`/`labels` in and `logits`/`loss` out.
+  Every old script needed a hand-written adapter to satisfy it, and a regression
+  head or a paper-defined objective (an L2-SVM loss in place of softmax) has to
+  be contorted further still to fit.
+- **`Trainer` carries its own defaults, which no paper states.** Optimizer
+  choice and epsilon, LR schedule, warmup, weight-decay handling, logging and
+  evaluation cadence — each a number the reproduction used that nobody chose,
+  and none of them visible in the generated code. That is a silent divergence
+  risk. A plain loop has no hidden defaults: every setting in it is one the model
+  wrote down and can disclose.
+
+### 2. Always PyTorch, whatever framework the paper used — with the differences disclosed
+
+The Runner's image deliberately carries **no second framework**, so a paper
+built in Keras/TensorFlow, JAX, Theano, Caffe or MATLAB is still reimplemented
+in PyTorch. That translation is not neutral: "we used Adam" in a Keras paper
+meant Keras's Adam. The prompt states the rule generally, with examples:
+
+| Setting | Keras / TensorFlow default | PyTorch default |
+|---|---|---|
+| `Adam` epsilon | `1e-7` | `1e-8` |
+| `Dense` / `nn.Linear` init | Glorot-uniform kernel, zero bias | Kaiming-uniform weight, non-zero uniform bias |
+| `BatchNormalization` | `momentum=0.99`, `epsilon=1e-3` | `momentum=0.1` (the complement — Keras-equivalent is `0.01`), `eps=1e-5` |
+| `Model.fit` batch size | `32` when unspecified | no default; you always pass one |
+
+The rule: work out which framework defaults the paper's unstated settings
+inherited; **where matching them is cheap and exact, do it explicitly in code**
+(`eps=1e-7`, `nn.init.xavier_uniform_` + `nn.init.zeros_`); and **record every
+difference as its own `assumptions` entry, matched or not**. A paper that names
+no framework gets explicit, standard choices, disclosed as usual — never a
+guessed framework.
+
+### 3. Task type is inferred, not extracted
+
+There is no Reader field for it. The Coder infers `task_type` from the targeted
+claim's `metric` and `dataset`, `method_summary` and `data_pipeline`, and returns
+it as a tool field recorded in `coder_output.json`. Expected values are
+`"classification"` and `"regression"`; the schema does **not** restrict it, and
+an unexpected label is accepted but logged as a warning (`KNOWN_TASK_TYPES` in
+`script_writer.py`). The prompt's rule is to decide by what the model
+*predicts*, not how it is trained — a paper that replaces softmax with an SVM
+loss on MNIST is still `classification`. The task type drives the output layer,
+the default loss, how the per-split metric is computed, and `higher_is_better`.
+
+### 4. Data from a stable, documented source, cached under `--data-dir`
+
+- **Image datasets** `torchvision.datasets` provides: loaded with it, with
+  augmentation via `torchvision.transforms`, train split only.
+- **Tabular and other datasets**: a stable, documented source — OpenML via
+  `sklearn.datasets.fetch_openml(data_home=args.data_dir, ...)`, pinned by
+  `data_id` or by `name` plus an explicit `version`, or a direct stable URL
+  downloaded once into `--data-dir`. The prompt warns off loaders remembered from
+  older library releases: they get removed (scikit-learn's `load_boston` is gone
+  since 1.2 — Boston Housing is still on OpenML).
+- **Every download lands under `--data-dir`**, passed explicitly as the
+  library's root/cache argument, so the Runner's shared cache mount serves it.
+- **When the paper names no source**, the chosen one is recorded in
+  `assumptions`.
+- **When the paper states split sizes or a ratio but not how rows were
+  assigned**, the script uses a fixed split seeded from `--seed` and records in
+  `assumptions` that the split method is unstated and that the metric depends on
+  it. On a dataset of a few hundred rows that dependence is not small.
+- **Data-dependent preprocessing** (normalization statistics, scaling, PCA,
+  target scaling) is fit on the training split only, unless the paper explicitly
+  says otherwise.
 
 ## Class architecture
 
@@ -198,34 +289,53 @@ can write one it forgot to report.
 
 ## The metrics.json contract — the Runner/Critic interface
 
-**This is the interface the future `runner/` and `critic/` stages consume.** The
+**This is the interface `runner/` and the future `critic/` consume.** The
 generated script writes this JSON to `--metrics-output` *and* prints the
-identical object as its final single line of stdout (so the Runner can capture
-it without a volume mount).
+identical object as its final single line of stdout (so the Runner can recover
+it even if the file write never happened). It is task-agnostic; this example is
+a regression claim:
 
 ```json
 {
-  "claim_id": "c34",
-  "metric": "test error",
-  "unit": "%",
-  "value": 4.32,
-  "train_loss": 0.02,
-  "train_accuracy": 98.1,
-  "eval_loss": 0.71,
-  "eval_accuracy": 61.4,
-  "epochs_completed": 5,
-  "num_train_samples": 512,
-  "num_eval_samples": 256,
-  "wall_clock_seconds": 142.3
+  "claim_id": "c1",
+  "metric": "RMSE",
+  "unit": "",
+  "value": 3.02,
+  "higher_is_better": false,
+  "task_type": "regression",
+  "train_loss": 7.1,
+  "eval_loss": 9.2,
+  "train_metric": 2.69,
+  "eval_metric": 3.02,
+  "epochs_completed": 1000,
+  "num_train_samples": 405,
+  "num_eval_samples": 101,
+  "wall_clock_seconds": 104.0
 }
 ```
 
-`claim_id`, `metric` and `unit` are copied **verbatim** from the targeted claim —
-never normalized, renamed or unit-converted. That is the whole point: the Critic
-diffs `value` against the claim's `reported_value` with **no unit conversion at
-all**, because `"test error"` / `"%"` on both sides means the numbers are
-directly comparable. `eval_accuracy` is kept alongside as the raw measurement
-`value` was derived from.
+The same literal lives in `script_writer.METRICS_CONTRACT`, which the prompt
+embeds — this block and the prompt cannot describe different shapes.
+
+| Field | Rule |
+|---|---|
+| `claim_id`, `metric`, `unit` | Copied **verbatim** from the targeted claim — never normalized, renamed or unit-converted; an empty `unit` stays `""`. |
+| `value` | The reproduced number, in the claim's metric and unit, on the split the claim reports — so it equals `eval_metric`. The Critic diffs it against `reported_value` with **no conversion at all**. |
+| `higher_is_better` | Boolean from the metric's *meaning*: `false` for error rates, RMSE, MSE, MAE; `true` for accuracy, R², F1, AUC. Tells a consumer whether a gap is a shortfall or an improvement. |
+| `task_type` | The same label as `coder_output.json`'s `task_type`. |
+| `train_metric`, `eval_metric` | The claim's **own** metric, computed on the training and evaluation splits. For a "test error %" claim, `train_metric` is training error %; for RMSE, both are RMSEs in the target's original units (scaled targets are inverted first). |
+| `train_loss`, `eval_loss` | The paper's training objective on each split, from the same post-training eval-mode passes as the two metrics — each loss/metric pair describes the same model on the same data. |
+| `epochs_completed`, `num_train_samples`, `num_eval_samples` | Sizes are those actually used, after any `--max-*-samples` cap. |
+| `wall_clock_seconds` | Measured from the start of the run. |
+
+**`train_metric`/`eval_metric` replace `train_accuracy`/`eval_accuracy`.** The
+old keys meant nothing for a regression claim, and for an error-rate claim they
+forced every consumer to know that `value` was `100 - eval_accuracy`. Metrics
+files already on disk in the old shape — the Network In Network and Wide Residual
+Networks runs, and every archived attempt under `orchestrator/output/` — stay
+valid: nothing in the repo reads either shape strictly (`runner/` logs whichever
+keys are present, and its stdout fallback keys on `claim_id`/`metric`/`value`,
+which both shapes share).
 
 ### The required CLI flags
 
@@ -243,6 +353,16 @@ committing to a full one.
 | `--output-dir` | a local directory |
 | `--metrics-output` | a `metrics.json` path |
 | `--seed` | a fixed integer, seeded through `torch`/`numpy`/`random` |
+| `--data-dir` | **exactly** `"./data"` — the Runner's shared dataset cache is mounted there (see the comment on `REQUIRED_CLI_FLAGS` for the 2000 s vs 169 s incident that made this a contract) |
+
+**Every flag is required even when it does not apply to the paper's method** — a
+method with no epochs, no learning rate, or no mini-batches. `reproduce.sh` is
+the same template for every paper and always passes `--epochs`,
+`--max-train-samples`, `--max-eval-samples` and `--metrics-output`, so a flag
+that is not meaningful stays in the parser as a documented no-op (its `help`
+says so, and the script logs it at startup). Dropping one is flagged by gate 2,
+and for those four it would also make `argparse` reject the Runner's very first
+`probe` invocation.
 
 ## `base.py` — `CodeWriter[ResultT]`
 
@@ -260,11 +380,12 @@ that increment is a pipeline change rather than a rewrite of every writer.
 
 One Claude call (`claude-sonnet-5`, `max_tokens=16384`), forced
 `tool_choice` on `write_training_script`. The tool returns `claim_targeted`,
-`claim_selection_reasoning`, `architecture_used`, `dataset_used`,
+`claim_selection_reasoning`, `task_type`, `architecture_used`, `dataset_used`,
 `hyperparameters_used`, `assumptions`, `cli_flags_included` and `script_content`.
 
 `max_tokens` is **16384, double `reader/`'s 8192** — a full training script is
-long-form output (the real WRN run emits ~9k output tokens), and this repo has
+long-form output (the real WRN run emits ~9k output tokens; the plain-loop NIN
+regeneration ~9.9k), and this repo has
 already lost runs to a silent `stop_reason: max_tokens` truncation twice
 (`ocr/vlm_extract.py`, then `reader/claims.py`). `stop_reason` is now checked
 explicitly and logged as an `ERROR` when it is `max_tokens`, so that failure can
@@ -272,31 +393,36 @@ never be silent again.
 
 What the prompt requires of the generated script:
 
-1. **A hand-rolled `nn.Module`**, built from `architecture_notes` (see above),
-   never `AutoModelForImageClassification` — HF's built-in ResNets assume
-   ImageNet's 224×224 stem (7×7 stride-2 conv + maxpool), which destroys CIFAR's
-   32×32 inputs before the first block. Equally, never a generic CNN that merely
-   resembles the paper: when the paper's contribution *is* a custom layer, that
-   layer is the thing being reproduced, and a plain convolution stack in its
-   place is a failed replication at any accuracy.
-2. **A thin `Trainer` adapter**, not a `PreTrainedModel` subclass: a plain
-   `nn.Module` whose `forward(pixel_values, labels=None)` returns a dict with
-   `logits`, plus `loss` when labels are passed. That dict is the entire
-   `Trainer` contract — no config class, no `from_pretrained`.
-3. **`torchvision.datasets.CIFAR10(download=True)`**, not
-   `datasets.load_dataset` — the paper's augmentation (4px reflection pad →
-   random 32×32 crop → horizontal flip) maps one-to-one onto
-   `torchvision.transforms`, and it keeps pyarrow out of the Runner's Docker
-   image.
-4. **Never invent an unstated detail silently.** Unlike `reader/data_pipeline.py`,
+1. **An inferred `task_type`** (see "What the generated script is" above).
+2. **A hand-rolled `nn.Module`**, built from `architecture_notes` (see above),
+   never a stock or pretrained model from any library — HF's built-in ResNets,
+   for example, assume ImageNet's 224×224 stem (7×7 stride-2 conv + maxpool),
+   which destroys CIFAR's 32×32 inputs before the first block. Equally, never a
+   generic network that merely resembles the paper: when the paper's
+   contribution *is* a custom layer **or a custom loss**, that piece is the thing
+   being reproduced, and a plain layer stack or a stock `torch.nn` loss in its
+   place is a failed replication at any number. The `is_own_method` rule applies
+   to loss equations exactly as it does to layer equations.
+3. **A plain PyTorch training loop**, never `Trainer` or another framework, with
+   every optimizer argument explicit and nothing added that the paper does not
+   state.
+4. **PyTorch regardless of the paper's framework**, with framework-default
+   differences matched in code where cheap and always disclosed.
+5. **Data from a stable, documented source** under `--data-dir` — `torchvision`
+   for image datasets, OpenML or a direct URL for tabular ones, never the HF
+   `datasets` library (not in the image). Source and split-method choices are
+   disclosed; preprocessing is fit on the training split only.
+6. **Never invent an unstated detail silently.** Unlike `reader/data_pipeline.py`,
    which may record "not stated" and stop, generated code has to actually run —
    so the rule here is *choose the canonical default, always disclose it in
    `assumptions`*.
-5. **Guard the zero-batch edge case**: `--max-train-samples` below the batch size
+7. **Guard the zero-batch edge case**: `--max-train-samples` below the batch size
    with `drop_last=True` silently yields zero batches and a meaningless
    "successful" run. The script must clamp (logging it) or fail loudly.
-6. **stdlib `logging`, never `loguru`** — the script runs standalone in a Docker
-   container and must not depend on this repo's tooling.
+8. **stdlib `logging`, never `loguru`** — the script runs standalone in a Docker
+   container and must not depend on this repo's tooling. Third-party imports are
+   limited to `torch` and `numpy`, plus `torchvision` for image data and
+   `pandas`/`scikit-learn` for tabular data (never as the model).
 
 ## Logging
 
@@ -358,7 +484,7 @@ JSON.
 builds a `python` command and never passes a `--flag`. That is what keeps Runner
 paper-agnostic — a future paper whose script needs entirely different arguments
 changes only its own `reproduce.sh`, and `runner/` is untouched. The contract
-narrows from "eight CLI flags spelled exactly right" to "four mode names".
+narrows from "nine CLI flags spelled exactly right" to "four mode names".
 
 ```bash
 ./reproduce.sh probe    # 2 optimizer steps  — does anything run at all?
@@ -372,15 +498,20 @@ exit. Each writes its **own** metrics file (`metrics.probe.json`,
 `metrics.smoke.json`, ...) so a cheap stage's numbers can never be mistaken for a
 real run's.
 
-`capped` is the one that carries real signal on a CPU: on 512 examples a
-36M-parameter net should overfit fast, so **train** accuracy climbing well above
-10% (CIFAR-10 chance) means learning is wired up correctly. Its *eval* accuracy
-is not comparable to the paper's claim — only `full` is, and only `full` needs a
-GPU.
+`capped` is the one that carries real signal on a CPU: on a few hundred examples
+a network should overfit fast, so **`train_metric`** moving well past a trivial
+baseline (10% accuracy for CIFAR-10 chance; predicting the mean for a
+regression) means learning is wired up correctly. Its `eval_metric` is not
+comparable to the paper's claim — only `full` is, and for the image papers only
+`full` needs a GPU. (A small tabular paper's `full` may well finish on a CPU;
+the escalation ladder is the same either way.)
 
-All modes need torch/torchvision/transformers, deliberately absent from this
-repo's lock — run inside `runner/`'s image, or a throwaway venv (the script's own
-header carries the exact commands).
+All modes need torch (plus torchvision or pandas/scikit-learn, depending on the
+dataset), deliberately absent from this repo's lock — run inside `runner/`'s
+image, or a throwaway venv (the script's own header carries the exact commands).
+The modes, their caps and the template itself are unchanged by the move away
+from `Trainer`: only the comments that named `transformers` or assumed CIFAR-10
+were reworded.
 
 `coder_output.json` deliberately does **not** duplicate `script_content` — the
 script lives at `script_path` and the JSON stays readable. `script_version: 1`
@@ -395,14 +526,14 @@ stable rather than forcing consumers to handle two shapes later.
 identical in shape to `reader`'s and, importantly, **torch-free**. This stage
 only *writes* a training script; it never runs one. That is what lets it stay in
 the managed `uv.lock` on the Intel-macOS dev machine — the generated script's
-`torch`/`torchvision`/`transformers` dependencies belong to the future
+`torch`/`torchvision`/`pandas`/`scikit-learn` dependencies belong to the
 `runner/` Docker image, not to this project (see the platform trap in
 `CLAUDE.md` and `ocr/README.md`).
 
 `coder/output/` is excluded from mypy in `pyproject.toml` for the same reason:
 the generated scripts are standalone untyped artifacts targeting libraries that
-are not installed here, and their gate is `ast.parse` plus the future Runner,
-not `--strict`.
+are not installed here, and their gate is `ast.parse` plus the Runner, not
+`--strict`.
 
 ## Known issues
 
@@ -427,7 +558,7 @@ missing `script_content` entirely on two others. Two mitigations are in place:
 
 - `_recover_leaked_fields()` — deterministic and free. It finds a `</field>`
   closer inside a string value, truncates that field there, and re-homes each
-  trailing block onto the key it names. Matching is restricted to the eight
+  trailing block onto the key it names. Matching is restricted to the nine
   known `TOOL_FIELDS`, so a `<` or `>` operator inside `script_content` cannot
   trigger a false split. Verified against both shapes, including a
   `script_content` containing `if a < b and c > d:`.
@@ -466,6 +597,55 @@ plausible. It is the same class of defect as the `_NoOpScheduler` bug above:
 evidence for the Runner→Critic→Coder loop, not for another gate here.
 
 ## Status
+
+### Plain-PyTorch generalization — regression-tested on Network In Network
+
+The move away from `Trainer` was regression-tested on the image-classification
+case before any non-image paper was attempted: Network In Network regenerated
+with the new prompt, pinned to the **same claim as before** (`--claim-id c1`),
+into a scratch output directory, then executed in Docker.
+
+- **Coder call:** attempt 1 of 3, `stop_reason=tool_use`, **34,100 input /
+  9,925 output tokens**, all 9 tool fields returned (no leak), **both gates
+  passed**, 0 missing CLI flags. `task_type: "classification"`. 348-line script,
+  8 hyperparameters, 12 assumptions (5 citing an `unstated_details` gap by name).
+- **It is a plain PyTorch loop.** Imports are `torch`, `torchvision`, `numpy` and
+  stdlib only; no `transformers`, `Trainer`, `accelerate` or `pixel_values`
+  anywhere in the file. Explicit `torch.optim.SGD(lr=..., momentum=0.9,
+  weight_decay=1e-4, nesterov=False)`, `MultiStepLR`, `model.train()` /
+  `model.eval()` + `torch.no_grad()`.
+- **The architecture survived the rewrite.** A real `MLPConvLayer` (k×k conv →
+  two 1×1 convs, each with bias and ReLU — eq. (2)); three stages, max pooling
+  after each, dropout after the first two; global average pooling straight into
+  the loss. **Zero `nn.Linear`**. Its docstring records that eq. (1) and eq. (3)
+  are not implemented and the `[baseline, not own method]` components are not
+  built.
+- **`runner.pipeline --mode probe`: PASSED, exit 0, 76.3 s**, `triage: null`,
+  warm shared CIFAR-10 cache hit ("Files already downloaded and verified").
+  `metrics.probe.json` is in the new shape — `task_type: "classification"`,
+  `higher_is_better: false`, `train_metric: 90.625`, `eval_metric: 89.84375`
+  (= `value`), `metric: "Test Error"` / `unit: "%"` verbatim from the claim.
+
+What that run also showed, recorded rather than tuned away:
+
+- `wall_clock_seconds` (29.3) is timed from the start of the training loop, not
+  the start of the run as the contract says — it omits ~22 s of dataset loading
+  and mean/std computation. The prompt already stated the rule; this generation
+  did not follow it.
+- The prompt originally defined `train_loss` as a train-mode average over the
+  final epoch, which would disagree with `train_metric` (a post-training
+  eval-mode pass). The script computed both from the eval-mode pass, which is the
+  consistent reading, so the contract text was aligned to it.
+- Loss reached ~900 after two SGD steps at `lr=0.1` with Kaiming-normal init and
+  no normalization layer. A `probe`'s numbers are not meaningful, but that
+  magnitude suggests this configuration may diverge in a longer run — `capped`
+  is the stage that would show it.
+
+### Earlier runs (HuggingFace `Trainer` era)
+
+Both runs below predate the plain-loop prompt; the scripts on disk under
+`coder/output/` still import `Trainer`, which is why `runner/`'s image keeps
+`transformers`/`accelerate`.
 
 Verified end-to-end against **Network In Network**, with a real API call — the
 paper chosen deliberately to test whether the `architecture_notes` wiring beats
@@ -507,10 +687,10 @@ wiring landed):
   `16 / 16k / 32k / 64k`, pre-activation BN-ReLU-conv basic blocks, 1×1
   projection shortcuts on the downsampling blocks, `depth=28, widen_factor=10`.
 
-**The generated script has never been executed** — no torch on the dev machine
-(Python 3.13 + Intel macOS, per `CLAUDE.md`'s platform trap). It is
-syntax-gated only. Actually running it is `runner/`'s job.
+This stage itself never executes a script — there is no torch on the dev
+machine (Python 3.13 + Intel macOS, per `CLAUDE.md`'s platform trap), so its own
+gates are syntax and flags only. Execution is `runner/`'s job, and the retry
+loop that feeds a Runner failure back through `feedback` is `orchestrator/`'s.
 
-Not yet built: the Coder↔Runner retry loop (`feedback` plumbing,
-`script_version`/`diff_from_previous` bookkeeping), and any second `CodeWriter`
-(eval script, Dockerfile, requirements file).
+Not yet built: any second `CodeWriter` (eval script, Dockerfile, requirements
+file). Not yet attempted with the plain-loop prompt: any non-image paper.

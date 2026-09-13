@@ -44,8 +44,9 @@ VALID_CATEGORIES = ("recoverable_error", "environment_error")
 
 TRIAGE_PROMPT = """You are triaging a failed run of an automatically generated \
 machine-learning training script. The script was produced from a research paper \
-by an LLM and executed inside a Docker sandbox (Python 3.11 on Linux, CPU-only \
-torch/torchvision/transformers already installed in the image). It exited \
+by an LLM and executed inside a Docker sandbox (Python 3.11 on Linux; the image \
+has CPU-only torch and torchvision, plus numpy, pandas, scikit-learn, scipy, \
+pillow, transformers and accelerate, and nothing else ML-related). It exited \
 non-zero.
 
 Your ONLY job is to decide which of two categories the failure belongs to:

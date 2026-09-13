@@ -1,9 +1,36 @@
-"""Write a self-contained HuggingFace `Trainer` training script for one paper.
+"""Write a self-contained, plain-PyTorch training script for one paper.
 
 Input is a paper's *structured* Reader output (`reader/output/<paper>.json`)
 plus that same paper's VLM Markdown (`ocr/output/vlm/<paper>.md`), sent to
 Claude in one tool-use call. Output is a complete, runnable Python script -
 this module never executes it and never imports torch.
+
+The script targets ANY supervised task the paper's claim measures - image
+classification, classification of other inputs, tabular regression - and the
+model infers which one (`task_type`) from the claim's metric and dataset plus
+`method_summary`; there is no Reader field for it.
+
+Three decisions shape the prompt, and each one closes a silent-divergence path:
+
+- A PLAIN PYTORCH LOOP, NOT HUGGINGFACE `Trainer`. This stage used to generate
+  `Trainer` scripts, which only fit image classification: `Trainer`'s model
+  contract is a dict of `pixel_values`/`labels` in and `logits`/`loss` out,
+  which a regression head or a paper-defined loss has to be contorted into. And
+  `Trainer` brings its own optimizer, schedule, warmup and loop defaults that no
+  paper states - every one of them a number the reproduction used that nobody
+  chose. A hand-written loop has no hidden defaults: every setting in it is one
+  the model wrote down and can disclose.
+- ALWAYS PYTORCH, WHATEVER THE PAPER USED. The Runner's image has no second
+  framework, deliberately. Translating a Keras paper is not neutral, though -
+  "we used Adam" meant Keras's Adam (`epsilon=1e-7`, not PyTorch's `1e-8`), and
+  an unmarked `Dense` layer meant Glorot-uniform init (not `nn.Linear`'s
+  Kaiming-uniform). The prompt requires matching such defaults in code where
+  that is cheap, and recording every difference in `assumptions` either way.
+- DATA FROM A STABLE, DOCUMENTED SOURCE, cached under `--data-dir`:
+  `torchvision.datasets` for image datasets, OpenML (`fetch_openml`) or a
+  direct URL for tabular ones. When the paper names no source, or states split
+  sizes without saying how rows were assigned, the choice is disclosed - the
+  reproduced metric depends on it.
 
 Why both inputs (this is deliberate, not redundancy):
 
@@ -33,11 +60,12 @@ Both inputs fit comfortably in one context window (~8k + ~10k tokens for Wide
 Residual Networks; ~13k + ~6k for Network In Network).
 
 `max_tokens` is 16384 here, double the 8192 used across `reader/`. A full
-training script is long-form output, and this repo has already been bitten by
-a silent `stop_reason: max_tokens` truncation twice (once in
-`ocr/vlm_extract.py`, once in `reader/claims.py` - see reader/README.md's
-"Known issues, fixed"). `stop_reason` is checked explicitly below so that
-failure mode can never be silent again.
+training script is long-form output - longer now that the training and
+evaluation loops are written out rather than delegated to `Trainer` - and this
+repo has already been bitten by a silent `stop_reason: max_tokens` truncation
+twice (once in `ocr/vlm_extract.py`, once in `reader/claims.py` - see
+reader/README.md's "Known issues, fixed"). `stop_reason` is checked explicitly
+below so that failure mode can never be silent again.
 
 This module is an importable code-generation step, not a standalone script -
 `coder/pipeline.py` is the entry point that resolves both inputs, runs the
@@ -74,7 +102,8 @@ REQUIRED_CLI_FLAGS: tuple[str, ...] = (
     "--metrics-output",
     "--seed",
     # `--data-dir` is required for a reason that only showed up under the retry
-    # loop. `runner/` bind-mounts a shared CIFAR-10 cache at the container's
+    # loop. `runner/` bind-mounts a shared dataset cache (CIFAR-10 today, OpenML
+    # and URL downloads for tabular papers too) at the container's
     # `/workspace/data`, which only lands where the script looks if the script
     # defaults its data directory to `./data`. That used to be a convention -
     # whatever the prompt happened to produce - and `runner/README.md` correctly
@@ -90,28 +119,48 @@ REQUIRED_CLI_FLAGS: tuple[str, ...] = (
     "--data-dir",
 )
 
+# Task types the prompt names as expected. Deliberately NOT a closed set: the
+# model may return another label for a task that is genuinely neither, and that
+# is accepted as-is - only logged, so an unusual label is visible, not rejected.
+KNOWN_TASK_TYPES: tuple[str, ...] = ("classification", "regression")
+
 # The exact metrics shape the future Critic diffs against the paper's claim.
 # Kept as a literal string so the prompt and the README show the same thing.
+#
+# Task-agnostic on purpose. The previous shape carried `train_accuracy` /
+# `eval_accuracy`, which has no meaning for a regression claim (RMSE) and was a
+# silent trap for an error-rate claim (the script had to remember to convert).
+# `train_metric` / `eval_metric` are the claim's OWN metric on each split, and
+# `higher_is_better` tells a consumer which direction a gap runs without having
+# to guess it from the metric's name. Metrics files written in the old shape
+# stay on disk and stay readable: nothing downstream reads either shape strictly.
 METRICS_CONTRACT = """{
-  "claim_id": "c34",
-  "metric": "test error",
-  "unit": "%",
-  "value": 4.32,
-  "train_loss": 0.02,
-  "train_accuracy": 98.1,
-  "eval_loss": 0.71,
-  "eval_accuracy": 61.4,
-  "epochs_completed": 5,
-  "num_train_samples": 512,
-  "num_eval_samples": 256,
-  "wall_clock_seconds": 142.3
+  "claim_id": "c1",
+  "metric": "RMSE",
+  "unit": "",
+  "value": 3.02,
+  "higher_is_better": false,
+  "task_type": "regression",
+  "train_loss": 7.1,
+  "eval_loss": 9.2,
+  "train_metric": 2.69,
+  "eval_metric": 3.02,
+  "epochs_completed": 1000,
+  "num_train_samples": 405,
+  "num_eval_samples": 101,
+  "wall_clock_seconds": 104.0
 }"""
 
 PROMPT = (
     """You are the Coder agent of an automated ML-paper replication \
 pipeline. You are given TWO inputs describing ONE machine-learning paper, and \
-you must write ONE self-contained HuggingFace `Trainer` training script that \
+you must write ONE self-contained PyTorch training script - a plain, explicit \
+training loop, NOT HuggingFace `Trainer` or any other training framework - that \
 attempts to reproduce ONE specific numeric claim from that paper.
+
+The paper can be about any supervised learning task: image classification, \
+classification of other inputs, regression on tabular data, and so on. Nothing \
+below assumes images unless it explicitly says so.
 
 ## Input precedence - read this before anything else
 
@@ -151,7 +200,7 @@ field:
 
 A. STRUCTURE. Read `overall_structure` once as the specification for \
 `forward()` - it describes how the pieces compose end to end, in order, from \
-the input image to the output. Then write one piece of code per `components` \
+the model's input to its output. Then write one piece of code per `components` \
 entry, using that entry's `specification` as the build detail and its `source` \
 as the pointer into the Markdown when you need the surrounding prose. Build \
 EVERY component the paper's own model is made of, and build them in the order \
@@ -170,12 +219,15 @@ entry carries `latex`, `label`, `defines` and a boolean `is_own_method`. \
 Entries with `is_own_method: true` define THIS paper's proposed computation: \
 when a paper's contribution is a new layer, that equation IS the layer's \
 implementation specification, so your code must compute exactly what it says. \
-Entries with `is_own_method: false` are the conventional formulation or a \
-rival method's, printed only for contrast - implementing one of those silently \
-builds the wrong layer, and the resulting network still trains and still \
-reports a number. Check the flag on every equation before you write a line of \
-it; read `defines` to see which is which. State in `architecture_used` which \
-equation label(s) you implemented.
+The same holds for a new OBJECTIVE: when the contribution is a loss function \
+(a margin-based loss in place of softmax cross-entropy, a new penalty term), \
+its own-method equation IS the loss your training loop must compute. Entries \
+with `is_own_method: false` are the conventional formulation or a rival \
+method's, printed only for contrast - implementing one of those silently \
+builds the wrong method, and the result still trains and still reports a \
+number. Check the flag on every equation before you write a line of it; read \
+`defines` to see which is which. State in `architecture_used` which equation \
+label(s) you implemented.
 
 D. `depth_or_scale` - never invent a formula it says is absent. This field \
 holds whatever depth/width formula, naming convention or scaling rule the \
@@ -192,18 +244,18 @@ as an `assumptions` entry.
 
 E. `unstated_details` is a REQUIRED CHECKLIST, not background reading. It \
 lists, explicitly, every architectural detail the paper does NOT state but that \
-working code needs - filter counts, kernel sizes, strides, padding, pooling \
-windows, MLP widths, initialization, whether a normalization layer exists. \
-Go through it ENTRY BY ENTRY. For each one that your script has to decide in \
-order to run: choose the standard, era-appropriate value, AND record it as an \
-`assumptions` entry that names the gap it came from - phrase it like \
-"unstated_details: <the gap, in the extraction's own words> - used <what you \
-chose> because <why>". Entries that genuinely do not affect your script (a gap \
-in a baseline architecture you are not building, a dataset you are not \
-targeting) may be skipped, but say so rather than dropping them silently. This \
-is the mechanism that keeps a paper's gaps VISIBLE instead of papered over: an \
-invented-but-plausible channel count is indistinguishable from a stated one \
-once it is in the code, unless it is written down here.
+working code needs - layer widths, filter counts, kernel sizes, strides, \
+padding, pooling windows, activation functions, initialization, whether a \
+normalization layer exists. Go through it ENTRY BY ENTRY. For each one that \
+your script has to decide in order to run: choose the standard, era-appropriate \
+value, AND record it as an `assumptions` entry that names the gap it came from \
+- phrase it like "unstated_details: <the gap, in the extraction's own words> - \
+used <what you chose> because <why>". Entries that genuinely do not affect your \
+script (a gap in a baseline architecture you are not building, a dataset you \
+are not targeting) may be skipped, but say so rather than dropping them \
+silently. This is the mechanism that keeps a paper's gaps VISIBLE instead of \
+papered over: an invented-but-plausible layer width is indistinguishable from a \
+stated one once it is in the code, unless it is written down here.
 
 F. `method_summary` is CONTEXT ONLY. Use it to understand what the method is \
 trying to achieve and what is novel about it, so your implementation preserves \
@@ -219,72 +271,178 @@ list, and quote its `metric`, `dataset`, `reported_value`, `unit` and \
 `claim_selection_reasoning` so it is unambiguous which number the script is \
 chasing. Put its `claim_id` in `claim_targeted`.
 
-2. MATCH THE CLAIM'S EXPERIMENTAL REGIME. Papers routinely report several \
+2. INFER THE TASK TYPE and record it in `task_type`. No upstream stage states \
+it: work it out from the targeted claim's `metric` and `dataset`, the reader \
+output's `method_summary`, and `data_pipeline`. Use `"classification"` when the \
+model predicts one of a fixed set of discrete labels (metrics such as accuracy, \
+error rate, top-k error) and `"regression"` when it predicts a continuous \
+quantity (metrics such as RMSE, MSE, MAE, R^2). Those are the expected values, \
+not a closed list: if the task is genuinely neither, use another short \
+lowercase label and justify it in `claim_selection_reasoning`. Decide by what \
+the model PREDICTS, not by how it is trained - a paper that swaps softmax \
+cross-entropy for a different loss on a labelled benchmark is still \
+`"classification"`; the loss is its contribution, the task is unchanged. The \
+task type decides the output layer, the loss when the paper does not define \
+its own, how `train_metric`/`eval_metric` are computed, and `higher_is_better`.
+
+3. MATCH THE CLAIM'S EXPERIMENTAL REGIME. Papers routinely report several \
 regimes side by side - different preprocessing (mean/std normalization vs. \
-ZCA whitening), different learning-rate schedules per dataset, with-dropout \
-vs. without-dropout, different augmentation settings - and the reader output \
-tags them via each entry's `model_variant`, `source`, or the wording of its \
-value. Work out which regime your targeted claim actually came from (its \
-`model_variant` and `source` table/section tell you), then take the \
+ZCA whitening, standardized vs. raw features, dimensionality reduction to a \
+fixed size or none), different learning-rate schedules per dataset, \
+with-dropout vs. without-dropout, different augmentation settings - and the \
+reader output tags them via each entry's `model_variant`, `source`, or the \
+wording of its value. Work out which regime your targeted claim actually came \
+from (its `model_variant` and `source` table/section tell you), then take the \
 hyperparameters and data-pipeline entries belonging to THAT regime. Picking \
 the wrong regime silently reproduces a different number than the one you are \
 targeting, which is the single worst failure mode of this stage. If the \
 reader output gives a regime-specific and a regime-neutral value for the same \
 setting, prefer the regime-specific one and say so in `assumptions`.
 
-3. USE THE HYPERPARAMETERS VERBATIM. Learning rate, its full schedule \
-(milestones and decay factor, not just the initial value), optimizer and its \
-momentum/weight-decay/nesterov settings, batch size, epoch count, dropout \
-rate, augmentation - all straight from the reader output's `hyperparameters` \
-entries for the matched regime. Record each one you actually used in \
-`hyperparameters_used` as `{name, value_used}`, where `value_used` is the \
-concrete value the script encodes (e.g. "0.1, x0.2 at epochs 60/120/160").
+4. USE THE HYPERPARAMETERS VERBATIM. Learning rate, its full schedule \
+(milestones and decay factor, not just the initial value), optimizer and every \
+argument of it the paper gives (momentum, weight decay, nesterov, betas, \
+epsilon), batch size, epoch count, dropout rate, loss-specific constants (a \
+margin, a penalty weight), augmentation - all straight from the reader \
+output's `hyperparameters` entries for the matched regime. Record each one you \
+actually used in `hyperparameters_used` as `{name, value_used}`, where \
+`value_used` is the concrete value the script encodes (e.g. "0.1, x0.2 at \
+epochs 60/120/160").
 
-4. WRITE A HAND-ROLLED `nn.Module`, built from `architecture_notes` exactly as \
-the section above prescribes, from `torch.nn` primitives. Do NOT use \
-`AutoModelForImageClassification` or any pretrained/stock HuggingFace vision \
-model: HuggingFace's built-in ResNets assume ImageNet's 224x224 stem (7x7 \
-stride-2 convolution followed by max-pooling), which destroys CIFAR's 32x32 \
-inputs before the first block. Equally, do NOT emit a generic CNN that merely \
-resembles the paper: if the paper's contribution is a custom layer, the custom \
-layer is the thing being reproduced, and a plain convolution stack in its place \
-is a failed replication no matter what accuracy it reaches. Name your classes \
-after the paper's own component names so the mapping is readable. \
+5. ALWAYS REPRODUCE IN PYTORCH, WHATEVER FRAMEWORK THE PAPER USED - AND \
+DISCLOSE WHAT THAT CHANGES. The Runner's sandbox has PyTorch and no other \
+deep-learning framework, so a paper built with Keras/TensorFlow, JAX, Theano, \
+Caffe, MATLAB or anything else is still reimplemented in PyTorch. That \
+translation is not neutral: frameworks ship different DEFAULTS, and a paper \
+that says only "we used Adam" silently meant ITS framework's Adam. Whenever the \
+paper names a framework other than PyTorch, or its text/code URLs make one \
+evident:
+   - Work out which of that framework's defaults the paper's unstated settings \
+inherited. For example: Keras `Adam` defaults `epsilon` to 1e-7, while \
+`torch.optim.Adam` defaults `eps` to 1e-8; Keras `Dense` initializes its kernel \
+Glorot-uniform with zero biases, while `torch.nn.Linear` uses Kaiming-uniform \
+weights and non-zero uniform biases; Keras `BatchNormalization` uses \
+`momentum=0.99, epsilon=1e-3`, while `torch.nn.BatchNorm*` uses `momentum=0.1, \
+eps=1e-5` and defines momentum as the complement (the Keras-equivalent PyTorch \
+value is `momentum=0.01`); Keras `Model.fit` trains with `batch_size=32` when \
+none is given. These are illustrations, not a checklist - apply the same \
+reasoning to whatever framework and API the paper actually used.
+   - Where matching the original framework's behaviour is cheap and exact, DO \
+IT EXPLICITLY IN CODE - pass `eps=1e-7`, call `nn.init.xavier_uniform_` and \
+`nn.init.zeros_` on each layer - rather than silently inheriting PyTorch's \
+default.
+   - Record EVERY such difference as its own `assumptions` entry, whether or \
+not you matched it, phrased like "framework: paper used <framework>; <setting> \
+defaults to <their value> there vs <PyTorch value> in PyTorch - used <what you \
+chose> because <why>".
+   - When the paper names no framework at all, do not guess one: make \
+explicit, standard choices and disclose them under rule 9 as usual.
+
+6. WRITE A HAND-ROLLED `nn.Module`, built from `architecture_notes` exactly as \
+the section above prescribes, from `torch.nn` primitives. Do NOT load a \
+pretrained or stock model from any library (HuggingFace `AutoModel*`, \
+`torchvision.models`, `timm`, ...): stock models carry assumptions of their \
+own - HuggingFace's built-in ResNets, for instance, assume ImageNet's 224x224 \
+stem (7x7 stride-2 convolution followed by max-pooling), which destroys \
+CIFAR's 32x32 inputs before the first block. Equally, do NOT emit a generic \
+network that merely resembles the paper: if the paper's contribution is a \
+custom layer or a custom loss, that custom piece is the thing being \
+reproduced, and a plain layer stack or a stock `torch.nn` loss in its place is \
+a failed replication no matter what number it reaches. Name your classes after \
+the paper's own component names so the mapping is readable. \
 `architecture_used` must describe what you built concretely (depth, widths, \
-block structure, layer ordering) and tie each part back to the \
-`architecture_notes` component or equation label it came from.
+layer/block structure, ordering, output layer, and the loss function) and tie \
+each part back to the `architecture_notes` component or equation label it came \
+from.
 
-5. ADAPT IT TO `Trainer` WITHOUT SUBCLASSING `PreTrainedModel`. Wrap the raw \
-`nn.Module` in a thin `nn.Module` adapter whose `forward(self, pixel_values, \
-labels=None)` returns a dict containing `logits`, plus `loss` when `labels` \
-is not None. That dict is the whole contract `transformers.Trainer` needs - \
-no config class, no `PreTrainedModel`, no `from_pretrained`.
+7. WRITE A PLAIN, EXPLICIT PYTORCH TRAINING LOOP. Do not use HuggingFace \
+`Trainer`, `accelerate`, PyTorch Lightning, Keras, skorch, or any other \
+training framework or wrapper - write the loop yourself:
+   - `torch.utils.data` datasets and `DataLoader`s for both splits.
+   - The optimizer constructed with EVERY argument passed explicitly by name \
+(learning rate, momentum, weight decay, betas, eps, ...), never leaning on a \
+library default you have not written down (see rule 5).
+   - The learning-rate scheduler, if the paper has one, stepped at the \
+granularity the paper describes - per epoch or per iteration - and say which \
+in `hyperparameters_used`.
+   - `model.train()` while training; `model.eval()` inside `torch.no_grad()` \
+while evaluating.
+   - The loss this paper actually uses (rule C), computed from the model's \
+outputs.
+   - Nothing the paper does not state: no gradient clipping, warmup, label \
+smoothing, weight averaging, mixed precision or early stopping unless the \
+reader output states it - in which case implement exactly what it states.
+   - The device chosen as `cuda` when available, else `cpu`, and logged.
+   - The loss and the claim's metric logged every epoch (or at a stated \
+logging interval, for runs of thousands of epochs).
+   This is WHY no framework is used, and why these points matter: a framework's \
+model contract (a dict of inputs and labels in, logits and loss out) fits \
+regression and paper-defined losses badly, and a framework brings its own \
+optimizer, schedule and loop defaults that the paper never stated - numbers the \
+reproduction would use that nobody chose. A plain loop has no hidden defaults: \
+every setting in it is one you wrote and can disclose.
 
-6. LOAD DATA WITH `torchvision.datasets`, e.g. \
-`torchvision.datasets.CIFAR10(root=..., train=..., download=True, \
-transform=...)`. Do NOT use `datasets.load_dataset`. Two reasons: the paper's \
-augmentation (reflection-pad by 4 pixels, random 32x32 crop, random \
-horizontal flip) maps one-to-one onto `torchvision.transforms`, and it keeps \
-a pyarrow dependency out of the Runner's future Docker image. Apply train-time \
-augmentation to the training split only; the evaluation split gets \
-normalization only. Provide a `data_collator` that stacks the torchvision \
-`(image, label)` tuples into `{"pixel_values": ..., "labels": ...}`.
+8. LOAD DATA FROM A STABLE, DOCUMENTED SOURCE, AND CACHE IT UNDER `--data-dir`.
+   - IMAGE DATASETS that `torchvision.datasets` provides (CIFAR-10/100, MNIST, \
+SVHN, ...): load them with it, e.g. `torchvision.datasets.CIFAR10(\
+root=args.data_dir, train=..., download=True, transform=...)`, and express \
+augmentation with `torchvision.transforms` (reflection padding, random crops \
+and horizontal flips map onto it one-to-one). Apply train-time augmentation to \
+the training split only; the evaluation split gets deterministic preprocessing \
+only. If the regime flattens images into vectors, do that in the transform or \
+the model, and say which.
+   - TABULAR AND OTHER DATASETS: fetch them from a stable, documented source - \
+OpenML through `sklearn.datasets.fetch_openml(..., data_home=args.data_dir, \
+as_frame=True)`, pinned by `data_id`, or by `name` together with an explicit \
+`version` (a bare name can resolve to a different upload later); or a direct, \
+stable URL downloaded once into `--data-dir` and read from that file on every \
+later run. Load the result with `pandas`/`numpy`, then convert it to tensors. \
+Do not rely on a dataset loader remembered from an older library release \
+without being sure it still exists - loaders do get removed (scikit-learn \
+dropped `load_boston` in 1.2), and a missing one fails at import.
+   - Never `datasets.load_dataset` or any HuggingFace Hub download: the \
+`datasets` library is not in the Runner's image.
+   - EVERY download lands under `--data-dir`. Pass it explicitly as the \
+library's root/cache argument (`root=`, `data_home=`, the path you save a URL \
+download to); never rely on a library's own default cache location.
+   - Whenever the paper does not name where its data came from (it names only \
+the dataset, or nothing), record the exact source you chose as an \
+`assumptions` entry: "data source: <what the paper says> - used <torchvision \
+class / OpenML data_id and version / URL> because <why>".
+   - SPLITS. Reproduce the paper's split as stated: the dataset's official \
+train/test split when that is what the paper used, the stated sizes or ratio \
+otherwise. When the paper states split SIZES or a RATIO but not HOW rows were \
+assigned, the reproduced metric depends on a choice the paper never made for \
+you: use a fixed, seeded random split (seeded from `--seed`, so one integer \
+reproduces the whole run), log the resulting sizes, and record an \
+`assumptions` entry saying the split method is unstated, what you used, and \
+that the metric depends on it.
+   - Fit every data-dependent preprocessing step - normalization statistics, \
+feature scaling, PCA or other dimensionality reduction, target scaling - on \
+the TRAINING split only, then apply the fitted transform to the evaluation \
+split. Fitting on all rows leaks evaluation data into training and flatters \
+the reproduced number. If the paper explicitly says it did otherwise, follow \
+the paper and record that in `assumptions`.
+   - `--max-train-samples` / `--max-eval-samples` take a deterministic subset \
+of each split AFTER the split is made.
 
-7. NEVER INVENT AN UNSTATED DETAIL SILENTLY. If neither input states \
+9. NEVER INVENT AN UNSTATED DETAIL SILENTLY. If neither input states \
 something the script cannot run without (weight initialization, the exact \
-normalization constants, `num_workers`, the eval batch size, ...), choose the \
-canonical standard default AND record it as one entry in `assumptions`, \
-phrased as "<what was missing> - used <what you chose> because <why>". \
-`assumptions` is where BOTH kinds of gap land: the ones \
-`architecture_notes.unstated_details` already named for you (walk that list, \
-per rule E above) and any further one you hit while writing the code. An empty \
-`assumptions` array means you genuinely needed nothing beyond the two inputs; \
-with a non-empty `unstated_details` that is impossible, so never empty it just \
-to look tidy. This differs deliberately from the Reader's rule: the Reader is \
-allowed to record "not stated" and stop, but generated code has to actually \
-run, so the rule here is CHOOSE SENSIBLY, ALWAYS DISCLOSE.
+normalization constants, the data source, how a split was drawn, a framework \
+default, `num_workers`, the eval batch size, ...), choose the canonical \
+standard default AND record it as one entry in `assumptions`, phrased as \
+"<what was missing> - used <what you chose> because <why>". `assumptions` is \
+where EVERY kind of gap lands: the ones `architecture_notes.unstated_details` \
+already named for you (walk that list, per rule E above), the framework \
+differences from rule 5, the data-source and split choices from rule 8, and \
+any further one you hit while writing the code. An empty `assumptions` array \
+means you genuinely needed nothing beyond the two inputs; with a non-empty \
+`unstated_details` that is impossible, so never empty it just to look tidy. \
+This differs deliberately from the Reader's rule: the Reader is allowed to \
+record "not stated" and stop, but generated code has to actually run, so the \
+rule here is CHOOSE SENSIBLY, ALWAYS DISCLOSE.
 
-8. ALWAYS DEFINE THESE ARGPARSE FLAGS, spelled exactly like this:
+10. ALWAYS DEFINE THESE ARGPARSE FLAGS, spelled exactly like this:
    `--epochs`            default = the paper's real epoch count for this regime
    `--max-train-samples` default None, meaning use the full training set
    `--max-eval-samples`  default None, meaning use the full evaluation set
@@ -296,14 +454,19 @@ run, so the rule here is CHOOSE SENSIBLY, ALWAYS DISCLOSE.
 `numpy` and `random`
    `--data-dir`          default = EXACTLY `"./data"` - not a path derived from \
 `--output-dir`, not any other name. The Runner bind-mounts a shared, \
-pre-populated dataset cache at that exact relative location, and the dataset \
+pre-populated dataset cache at that exact relative location, and every dataset \
 download must be pointed at it. Getting this wrong does not fail: it silently \
-re-downloads ~170 MB and makes the run about twelve times slower.
+re-downloads the dataset on every run - for CIFAR-10 that is ~170 MB, and it \
+made a real run about twelve times slower.
    This is a load-bearing interface contract with the pipeline's Runner stage, \
 which uses these flags to force fast capped smoke runs before a full one. \
-List every flag your `argparse` actually defines in `cli_flags_included`.
+EVERY flag must be defined and accepted even when it does not apply to this \
+paper's method - no epochs, no learning rate, no mini-batches. Such a flag stays \
+in the parser as a documented no-op: its `help` text says it is ignored for \
+this method, and the script logs that at startup. Never drop one. List every \
+flag your `argparse` actually defines in `cli_flags_included`.
 
-9. EMIT THE METRICS JSON in exactly this shape - write it to the \
+11. EMIT THE METRICS JSON in exactly this shape - write it to the \
 `--metrics-output` path AND print the identical JSON as the FINAL single line \
 on stdout:
 
@@ -311,16 +474,39 @@ on stdout:
     + METRICS_CONTRACT
     + """
 
-   `claim_id`, `metric` and `unit` must be copied VERBATIM from the targeted \
+   - `claim_id`, `metric` and `unit` must be copied VERBATIM from the targeted \
 claim - do not normalize, rename, or unit-convert them (if the claim says \
 "test error" and "%", the script emits "test error" and "%", never "accuracy" \
-or "error_rate"). `value` is the reproduced number expressed in that same \
-metric and unit, so a future Critic can diff `value` against `reported_value` \
-with no conversion at all. Keep `eval_accuracy` alongside it as the raw \
-measurement it was derived from. `wall_clock_seconds` is measured from the \
+or "error_rate"; if a claim's `unit` is an empty string, emit the empty \
+string).
+   - `task_type` is the same label you record in the `task_type` tool field.
+   - `higher_is_better` is a JSON boolean set from what the claim's metric \
+MEANS: `false` for error rates, RMSE, MSE, MAE and other loss-like metrics; \
+`true` for accuracy, R^2, F1, AUC and other score-like metrics. A consumer uses \
+it to tell a shortfall from an improvement, so it is never omitted or guessed \
+from habit.
+   - `train_metric` and `eval_metric` are the claim's OWN metric, in the \
+claim's unit, computed after training on the training split and on the \
+evaluation split respectively, with the model in eval mode (no dropout, no \
+augmentation). They are NOT accuracy unless the claim's metric is accuracy: \
+for a claim of "test error" in "%", `train_metric` is the training error in % \
+and `eval_metric` the evaluation error in %; for a claim of RMSE, both are \
+RMSEs. When targets were scaled for training, invert that scaling on the \
+predictions first - an RMSE on standardized targets is not the paper's RMSE.
+   - `value` is the reproduced number a future Critic diffs against the \
+claim's `reported_value` with no conversion at all: the claim's metric, in the \
+claim's unit, on the split the claim reports - so it equals `eval_metric`.
+   - `train_loss` and `eval_loss` are the paper's training objective averaged \
+over the training and evaluation splits, computed in the same post-training, \
+eval-mode passes as `train_metric` and `eval_metric` - so each loss and metric \
+pair describes the same model on the same data.
+   - `num_train_samples` / `num_eval_samples` are the sizes actually used, \
+after any `--max-*-samples` cap. `wall_clock_seconds` is measured from the \
 start of the run.
+   - Every numeric field is a plain JSON number - convert tensors and numpy \
+scalars with `float()` / `int()` before serializing.
 
-10. GUARD THE ZERO-BATCH EDGE CASE. A capped smoke run with \
+12. GUARD THE ZERO-BATCH EDGE CASE. A capped smoke run with \
 `--max-train-samples` smaller than `--batch-size` combined with \
 `drop_last=True` silently yields zero batches, "succeeds", and reports \
 meaningless numbers. The script must detect this and either fail loudly with \
@@ -328,12 +514,16 @@ a clear message or clamp the batch size down (logging the clamp) - it must \
 never silently train on nothing. Apply the same reasoning to the evaluation \
 split.
 
-11. USE STDLIB `logging` (or `print`) IN THE GENERATED SCRIPT - NOT `loguru`. \
-The script runs standalone inside a future Docker container and must not \
-depend on this repository's tooling. Its only third-party imports should be \
-`torch`, `torchvision`, `transformers`, `numpy` (all standard in an ML image).
+13. USE STDLIB `logging` (or `print`) IN THE GENERATED SCRIPT - NOT `loguru`. \
+The script runs standalone inside a Docker container and must not depend on \
+this repository's tooling. Its third-party imports are limited to `torch` and \
+`numpy`, plus - only where the data needs them - `torchvision` (image datasets \
+and transforms), and `pandas` and `scikit-learn` (fetching, splitting and \
+preprocessing tabular data; never as the model being reproduced). Those are \
+what the Runner's image guarantees; any other import is a failure waiting to \
+happen there.
 
-12. THE SCRIPT MUST BE COMPLETE AND RUNNABLE AS WRITTEN. No placeholders, no \
+14. THE SCRIPT MUST BE COMPLETE AND RUNNABLE AS WRITTEN. No placeholders, no \
 `...`, no `TODO`, no "fill in your own", no omitted function bodies, no \
 truncation. Include a module docstring, `if __name__ == "__main__": main()`, \
 and enough stdlib logging that a reader of the console output can tell what \
@@ -368,11 +558,12 @@ instead."""
 SCRIPT_TOOL: dict[str, Any] = {
     "name": "write_training_script",
     "description": (
-        "Record a complete, self-contained HuggingFace Trainer training script "
-        "targeting one specific claim from the paper, plus the bookkeeping "
-        "explaining which claim it targets, which architecture/dataset/"
-        "hyperparameters it encodes, what had to be assumed, and which CLI "
-        "flags it defines."
+        "Record a complete, self-contained PyTorch training script (a plain "
+        "training loop, no Trainer or other framework) targeting one specific "
+        "claim from the paper, plus the bookkeeping explaining which claim it "
+        "targets, which task type that claim measures, which architecture/"
+        "dataset/hyperparameters it encodes, what had to be assumed, and which "
+        "CLI flags it defines."
     ),
     "input_schema": {
         "type": "object",
@@ -394,19 +585,32 @@ SCRIPT_TOOL: dict[str, Any] = {
                     "schedule, dropout setting) it belongs to."
                 ),
             },
+            "task_type": {
+                "type": "string",
+                "description": (
+                    "The learning task the targeted claim measures, inferred from the "
+                    "claim's metric and dataset plus method_summary and data_pipeline. "
+                    "Expected values are 'classification' (predicts a discrete label) "
+                    "and 'regression' (predicts a continuous quantity); use another "
+                    "short lowercase label only if the task is genuinely neither. The "
+                    "script's metrics JSON must carry this same string."
+                ),
+            },
             "architecture_used": {
                 "type": "string",
                 "description": (
                     "The architecture the script implements, described concretely "
-                    "(depth, width, block structure, layer ordering) and tied back "
-                    "to where the paper's Markdown describes it."
+                    "(depth, widths, layer/block structure, ordering, output layer "
+                    "and loss function) and tied back to the architecture_notes "
+                    "component or equation label each part came from."
                 ),
             },
             "dataset_used": {
                 "type": "string",
                 "description": (
-                    "The dataset the script trains and evaluates on, plus how it is "
-                    "loaded, normalized, augmented and split."
+                    "The dataset the script trains and evaluates on: its exact source "
+                    "(torchvision class, OpenML data_id/version, or URL), how it is "
+                    "split, and how it is preprocessed, normalized and augmented."
                 ),
             },
             "hyperparameters_used": {
@@ -465,6 +669,7 @@ SCRIPT_TOOL: dict[str, Any] = {
         "required": [
             "claim_targeted",
             "claim_selection_reasoning",
+            "task_type",
             "architecture_used",
             "dataset_used",
             "hyperparameters_used",
@@ -486,6 +691,7 @@ class HyperparameterUsed:
 class TrainingScript:
     claim_targeted: str
     claim_selection_reasoning: str
+    task_type: str
     architecture_used: str
     dataset_used: str
     hyperparameters_used: list[HyperparameterUsed]
@@ -520,6 +726,7 @@ def _parse_hyperparameter(raw: object) -> HyperparameterUsed:
 TOOL_FIELDS: tuple[str, ...] = (
     "claim_targeted",
     "claim_selection_reasoning",
+    "task_type",
     "architecture_used",
     "dataset_used",
     "hyperparameters_used",
@@ -685,8 +892,26 @@ def _log_architecture_inputs(reader_output: dict[str, Any]) -> None:
         )
 
 
+def _log_task_type(task_type: str) -> None:
+    """Log the inferred task type, flagging a label outside the expected set.
+
+    Deliberately a warning and never a rejection: `task_type` is open-ended by
+    design, so an unexpected label may be exactly right for an unusual paper. But
+    every downstream choice in the script - output layer, loss, how the per-split
+    metric is computed, `higher_is_better` - hangs off it, so an unexpected value
+    has to be visible on the console before anyone reads the code.
+    """
+    logger.info(f"  [training_script] TASK TYPE: {task_type}")
+    if task_type not in KNOWN_TASK_TYPES:
+        logger.warning(
+            f"  [training_script] task_type {task_type!r} is not one of the expected "
+            f"{', '.join(KNOWN_TASK_TYPES)} - accepted as-is, but check "
+            f"claim_selection_reasoning for the justification the prompt requires"
+        )
+
+
 class TrainingScriptWriter(CodeWriter[TrainingScript]):
-    """Writes one self-contained HuggingFace `Trainer` script targeting one claim."""
+    """Writes one self-contained, plain-PyTorch training script targeting one claim."""
 
     name: ClassVar[str] = "training_script"
 
@@ -803,6 +1028,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
         result = TrainingScript(
             claim_targeted=_optional_str(payload, "claim_targeted"),
             claim_selection_reasoning=_optional_str(payload, "claim_selection_reasoning"),
+            task_type=_optional_str(payload, "task_type").strip(),
             architecture_used=_optional_str(payload, "architecture_used"),
             dataset_used=_optional_str(payload, "dataset_used"),
             hyperparameters_used=[
@@ -818,6 +1044,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
         # before the Critic stage exists.
         logger.info(f"  [training_script] TARGET CLAIM: {result.claim_targeted}")
         logger.info(f"  [training_script] reasoning: {result.claim_selection_reasoning}")
+        _log_task_type(result.task_type)
         logger.info(f"  [training_script] architecture: {result.architecture_used}")
         logger.info(f"  [training_script] dataset: {result.dataset_used}")
         logger.info(

@@ -308,6 +308,41 @@ def parse_metrics_from_stdout(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def summarize_split_metrics(metrics: dict[str, Any]) -> str:
+    """Describe a metrics object's per-split numbers, whichever contract shape it is.
+
+    Two shapes exist on disk and both must keep working, so nothing here reads a
+    key strictly:
+
+    * CURRENT (task-agnostic): `task_type`, `higher_is_better`, `train_metric`,
+      `eval_metric` - the claim's own metric on each split, for classification
+      and regression alike.
+    * LEGACY (image classification only): `train_accuracy` / `eval_accuracy`,
+      written by the Network In Network and Wide Residual Networks scripts
+      generated before coder/ dropped HuggingFace `Trainer`.
+
+    The current keys win when either is present; the legacy pair is the
+    fallback. `task_type` and `higher_is_better` are reported whenever present,
+    independently, since a partially-conforming file is still worth reading.
+    """
+    parts: list[str] = []
+    if "task_type" in metrics:
+        parts.append(f"task_type={metrics.get('task_type')}")
+    if "higher_is_better" in metrics:
+        parts.append(f"higher_is_better={metrics.get('higher_is_better')}")
+    if "train_metric" in metrics or "eval_metric" in metrics:
+        parts.append(f"train_metric={metrics.get('train_metric')}")
+        parts.append(f"eval_metric={metrics.get('eval_metric')}")
+    elif "train_accuracy" in metrics or "eval_accuracy" in metrics:
+        parts.append(f"train_accuracy={metrics.get('train_accuracy')}")
+        parts.append(f"eval_accuracy={metrics.get('eval_accuracy')}")
+        parts.append("legacy accuracy-shaped metrics")
+    else:
+        parts.append("no per-split metrics reported")
+    parts.append(f"epochs_completed={metrics.get('epochs_completed')}")
+    return ", ".join(parts)
+
+
 def metrics_path_for(paper_dir: Path, mode: str) -> Path:
     """Where `reproduce.sh <mode>` writes its metrics, on the host side of the mount."""
     return paper_dir / f"metrics.{mode}.json"
@@ -354,12 +389,13 @@ def build_run_command(
       entire results channel.
     * `<cache>/datasets` -> /workspace/data, read-write. The generated scripts
       default `--data-dir` to `./data` relative to the script, and `reproduce.sh`
-      never overrides it, so this nested mount turns a per-paper CIFAR-10
-      download into ONE shared copy across all eight papers. Docker orders mounts
-      by path depth, so /workspace lands first and this shadows it. If some
-      future paper's script uses a different directory name the mount is simply
-      unused and its download lands in the paper's own mount - slower, never
-      broken. `./data` is a convention here, not a contract.
+      never overrides it, so this nested mount turns a per-paper dataset download
+      (CIFAR-10 via torchvision, an OpenML table via scikit-learn) into ONE
+      shared copy across every paper that uses it. Docker orders mounts by path
+      depth, so /workspace lands first and this shadows it. A script that
+      ignores `./data` still runs - its download just lands in the paper's own
+      mount, slower - which is why coder/ now enforces `--data-dir` as a
+      required flag with that exact default rather than trusting convention.
     * `<cache>/home` -> /cache, read-write. HOME/HF_HOME/TORCH_HOME point here in
       the image, so any HuggingFace or torch.hub fetch also survives `--rm`.
 
@@ -642,9 +678,7 @@ class DockerRunner:
             logger.info(
                 f"  [{mode}] metrics ({metrics_source}): claim_id={metrics.get('claim_id')} "
                 f"{metrics.get('metric')}={metrics.get('value')} {metrics.get('unit', '')} "
-                f"(eval_accuracy={metrics.get('eval_accuracy')}, "
-                f"train_accuracy={metrics.get('train_accuracy')}, "
-                f"epochs_completed={metrics.get('epochs_completed')})"
+                f"({summarize_split_metrics(metrics)})"
             )
 
         if status == "success":

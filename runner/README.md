@@ -33,7 +33,7 @@ Mode semantics come from the script's own header (see `coder/README.md`):
 |---|---|---|
 | `probe` | a couple of optimizer steps, seconds | data → model → loss → step works at all; catches shape/dtype errors |
 | `smoke` | one full epoch over a small slice | execution reaches the eval path and the metrics write |
-| `capped` | 5 epochs / 512 samples, minutes | training actually learns — train accuracy climbing above CIFAR-10's 10% chance |
+| `capped` | 5 epochs / 512 samples, minutes | training actually learns — `train_metric` moving well past a trivial baseline (CIFAR-10's 10% chance accuracy; predicting the mean for a regression) |
 | `full` | the paper's real setup, hours | the only numbers comparable to the paper's claim; needs a GPU |
 
 Each mode writes its **own** `metrics.<mode>.json`, so a cheap stage's numbers
@@ -133,9 +133,14 @@ that is trying to report the timeout.
 
 ```
 coder/output/<paper>/  ──►  /workspace        (rw)   ← metrics.<mode>.json written here
-runner/cache/datasets  ──►  /workspace/data   (rw)   ← shared CIFAR-10, nested on purpose
+runner/cache/datasets  ──►  /workspace/data   (rw)   ← shared datasets, nested on purpose
 runner/cache/home      ──►  /cache            (rw)   ← HOME/HF_HOME/TORCH_HOME
 ```
+
+The dataset mount is not CIFAR-specific: `coder/`'s prompt requires *every*
+download — a `torchvision` dataset, an OpenML table fetched with
+`fetch_openml(data_home=args.data_dir)`, a file from a direct URL — to land under
+`--data-dir`, so each one is fetched once and shared from then on.
 
 **There is no `docker cp`.** The paper directory mount *is* the host directory,
 so when the script writes `metrics.<mode>.json` the file is already on the host.
@@ -183,9 +188,9 @@ The flags exist for the cases where the trade-off flips — a shared CI box, or
 several papers in parallel — and `triage.py`'s prompt names exit 137 explicitly
 as an `environment_error` so a deliberate cap is still classified correctly.
 
-`--network` stays on `bridge` by default because torchvision downloads CIFAR-10
-on the first run. Once the cache is warm, `--network none` makes the sandbox
-fully offline.
+`--network` stays on `bridge` by default because a script downloads its dataset
+(CIFAR-10 via torchvision, a table via OpenML) on the first run. Once the cache
+is warm, `--network none` makes the sandbox fully offline.
 
 **Known limitation:** the container runs as root, so on a **Linux** host the
 files it writes into the bind mounts (`metrics.*.json`, the CIFAR-10 cache) come
@@ -237,12 +242,28 @@ against the contract documented in `coder/README.md` — `claim_id`, `metric`,
 `unit`, `value` are copied verbatim by the generated script and are never
 normalized here either.
 
+**Two contract shapes exist on disk, and both are read.** The current one is
+task-agnostic (`task_type`, `higher_is_better`, `train_metric`, `eval_metric`);
+the legacy one, written by the `Trainer`-era Network In Network and Wide
+Residual Networks scripts, carries `train_accuracy`/`eval_accuracy` instead.
+Nothing here reads either set strictly. `summarize_split_metrics()` builds the
+per-stage log line from whichever keys are present — the current ones when
+either `train_metric` or `eval_metric` exists, the legacy accuracy pair
+otherwise, and a plain "no per-split metrics reported" when neither is. The
+first line below is from the real plain-loop NIN regression probe; the second is
+the helper's output for the `Trainer`-era NIN `metrics.probe.json` still on disk:
+
+```
+[probe] metrics (file): claim_id=c1 Test Error=89.84375 % (task_type=classification, higher_is_better=False, train_metric=90.625, eval_metric=89.84375, epochs_completed=1)
+[probe] metrics (file): claim_id=c1 Test Error=85.9375 % (train_accuracy=13.671875, eval_accuracy=14.0625, legacy accuracy-shaped metrics, epochs_completed=1)
+```
+
 If the file is missing, there is a fallback: the generated script also prints the
 identical object as its final line of stdout, so `parse_metrics_from_stdout()`
 scans upward for it. The scan requires a contract key (`claim_id` / `metric` /
-`value`) before accepting a line, so HuggingFace `Trainer`'s own
-`{'loss': 2.30, 'epoch': 1.0}` progress lines — Python reprs with single quotes,
-not valid JSON — cannot be mistaken for the metrics.
+`value`, shared by both shapes) before accepting a line, so a legacy script's
+HuggingFace `Trainer` progress lines (`{'loss': 2.30, 'epoch': 1.0}` — Python
+reprs with single quotes, not valid JSON) cannot be mistaken for the metrics.
 
 A stage that exits 0 without producing metrics is **not** an error: `probe` may
 exit before reaching the write. It is logged as a warning and recorded with
@@ -311,6 +332,29 @@ tags the x86_64 wheel with the `+cpu` local version but the aarch64 one without
 it, so the bare pin resolves on both the Intel dev machine and an Apple Silicon
 collaborator's.
 
+### What is in the image, and why each piece is there
+
+| Package | Pin | Why |
+|---|---|---|
+| `torch`, `torchvision` | `2.5.1`, `0.20.1` (CPU index) | Every generated script's model and training loop; torchvision for image datasets and transforms. |
+| `numpy` | `2.1.3` | Universal. |
+| `pandas`, `scikit-learn`, `scipy` | `2.2.3`, `1.5.2`, `1.14.1` | **Generalization beyond image classification.** A tabular paper has no torchvision loader: its script fetches data from OpenML via `sklearn.datasets.fetch_openml` (which returns a pandas frame) and fits its split/scaling/PCA with scikit-learn. Never the model — that is always torch. `scipy` is scikit-learn's own requirement, pinned explicitly because it is numerical code a result can depend on. |
+| `transformers`, `accelerate` | `4.46.3`, `1.1.1` | **Legacy.** `coder/` no longer generates `Trainer` scripts, but the NIN/WRN scripts already on disk and every archived attempt under `orchestrator/output/` still import it. Dropping the pair would turn those into `ImportError`s. |
+| `pillow` | `11.0.0` | torchvision's image backend. |
+
+**There is deliberately no TensorFlow/Keras.** `coder/` always reimplements in
+PyTorch, even for a paper written in Keras, and discloses the framework-default
+differences that implies (Adam epsilon, layer initialization, ...) instead — see
+`coder/README.md`. A second framework would add a second large dependency tree
+to the image and give every script two ways to be subtly wrong.
+
+The three new packages are all from the same release window as the torch/numpy
+pins, all accept `numpy==2.1.3`, and all ship cp311 wheels for both x86_64 and
+aarch64. They are installed **in the same `pip install` command as
+`numpy==2.1.3`**, not a later step: a separate `pip install scikit-learn` is
+free to upgrade an installed numpy to satisfy itself, silently. One command
+makes the resolver honour every pin jointly or fail the build.
+
 ## Logging
 
 Detailed by design, via `loguru` (not `print`) — the daemon version, the build,
@@ -378,6 +422,39 @@ stay in the managed `uv.lock` on the Intel-macOS dev machine while being the
 thing that finally executes torch code.
 
 ## Status
+
+### Image rebuilt for generalization (pandas / scikit-learn / scipy)
+
+- `docker build -t reprobot-runner:latest runner/` succeeded in **3 min 52 s**
+  (Docker server 29.7.2, x86_64). **No layer came from cache**: the floating
+  `python:3.11-slim` tag resolved to a new base digest
+  (`sha256:9534e5a8…`), so apt and the torch step rebuilt too — and the torch
+  step's *unpinned* transitive dependencies (`sympy`, `networkx`, `jinja2`,
+  `fsspec`, …) resolved to whatever is current. The pins above are honoured,
+  but this image is not byte-identical to the one the earlier runs used. That
+  gap predates this change; pinning the base by digest and adding a constraints
+  file would close it.
+- Inside the built image, `import pandas, sklearn, torch, torchvision` (plus
+  `numpy`, `scipy`, `transformers`, `accelerate`, and
+  `from sklearn.datasets import fetch_openml`) all succeed, reporting
+  `torch 2.5.1+cpu`, `torchvision 0.20.1+cpu`, `numpy 2.1.3`, `pandas 2.2.3`,
+  `scikit-learn 1.5.2`, `scipy 1.14.1`, `transformers 4.46.3`,
+  `accelerate 1.1.1`. `pip check`: no broken requirements.
+- **numpy stays at 2.1.3.** The build log shows the torch step pulls numpy
+  2.4.6 from the CPU index as an unpinned dependency, and the joint pin step
+  then replaces it with 2.1.3. That happened before this change too; it is why
+  the pins share one `pip install`.
+- **Regression probe, new plain-PyTorch NIN script:** `runner.pipeline --mode
+  probe` → **PASSED, exit 0, 76.3 s**, `triage: null`, metrics read from the
+  file in the new task-agnostic shape (see `coder/README.md`'s Status for the
+  full run).
+- **Not verified:** `fetch_openml` against the live OpenML service from inside
+  the container. OpenML's API host now answers `api.openml.org` with a 301 to
+  `www.openml.org`, which urllib follows, and the `file_id` download route is
+  still listed in its metadata — so it is expected to work, but no dataset has
+  been fetched through it yet. The first tabular paper's `probe` is that test.
+
+### Earlier verification (HuggingFace `Trainer` era)
 
 **Verified end to end in Docker.** The image builds and a real container runs a
 real generated script to completion:

@@ -25,6 +25,13 @@ vlm = [
     "anthropic>=0.69",
     "pypdfium2>=4.30",
     "python-dotenv>=1.0",
+    # vlm_extract.py renders each page with pypdfium2's `bitmap.to_pil()`, which
+    # needs Pillow. This was missing for a long time and nobody noticed, because
+    # the `pdfplumber` extra pulls Pillow in transitively and the venv usually had
+    # both. An exact `uv sync` without `pdfplumber` then broke OCR on every paper
+    # with "No module named 'PIL'" - declare it directly rather than rely on a
+    # sibling extra that happens to share a dependency.
+    "pillow>=10.0",
 ]
 # reader/ (Claude tool-use over already-extracted Markdown) needs the
 # Anthropic SDK + dotenv but not pypdfium2 — it never touches a PDF or
