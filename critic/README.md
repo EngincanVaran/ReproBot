@@ -10,7 +10,7 @@ The Critic has two halves (project plan §2.5):
 
 - **The verdict** (`judge.py`, v1) is arithmetic. It decides `pass` / `fail` /
   `inconclusive` / `not_evaluated`, and no model can change it.
-- **The review** (`review.py`, v2) is one Sonnet call. It reads the paper, the script
+- **The review** (`review.py`, v2) is one model call (Opus 5 by default). It reads the paper, the script
   and the run, and explains the verdict: is this the paper's method, what deviates, and
   what should the Coder change? Its output passes deterministic checks before anything
   reaches the Coder. See "Critic v2: the review" below.
@@ -209,13 +209,15 @@ this project so far was caught by a person reading code or logs:
 - Tang's `C=1.0` collapsed the network;
 - the old NIN script used gradient clipping the paper never mentions.
 
-**What it reads.** After a judged full run, one `claude-sonnet-5` call gets:
+**What it reads.** After a judged full run, one call (`claude-opus-5` by default; see below
+for why not Sonnet) gets:
 - the verdict facts (claimed, reproduced, run values, gap, relative gap, tolerance);
 - the run evidence: final metrics and a compact learning curve (evenly spaced records, the
   best eval point, chance level, target);
 - the Coder's bookkeeping (`hyperparameters_used`, `assumptions`);
 - the Reader extraction (method summary, architecture notes with equations,
   hyperparameters, data pipeline);
+- the full stage's runner log with per-epoch lines removed;
 - the line-numbered script and the paper's Markdown.
 
 **What it returns** (forced tool use, `review_replication`):
@@ -252,6 +254,51 @@ kept in the record with its problems, marked unverified, and **never fed to the 
 
 Making the script do what the paper states is never tuning, which is why `fix` does not
 use the one fidelity retry.
+
+### The first Critic loops (Wijaya, 2026-09-14)
+
+**Setup.** The correct Wijaya script passes, so nothing loops. To exercise the loop, one
+classic bug was injected, like the earlier injected-runtime-bug test of the Orchestrator:
+the validation split's `train_test_split` return order was swapped. The model then trains
+on 81 rows instead of 324, while still learning and never tripping a check-up. The run
+started with `--use-existing-script --max-stage full`, and every retry regenerates normally.
+
+**Same bug, two reviewer models:**
+
+| | Sonnet 5 reviewer | **Opus 5 reviewer** |
+|---|---|---|
+| Attempt 1 verdict | fail: 4.76 vs 3.02 (4.95, 4.45, 4.87; ±0.62) | same numbers (the run is deterministic) |
+| Review of attempt 1 | `minor_deviations`. **Missed the swap.** Filed "trains the stated 1000 epochs with no early stopping" as a high-severity bug | `major_deviations`. **Found the swap**: cited the log line "81 train_fit, 324 val" and lines 178–180, plus the scaler fitted on the wrong block. 12/12 findings verified |
+| Route | `fix` retry, with the wrong diagnosis | `fix` retry, with the right one |
+| Attempt 2 script | split fixed (only because it was rewritten from scratch), **plus checkpoint selection the paper never uses** | split and scaler fixed as two `deviation fix:` entries, nothing else changed |
+| Attempt 2 verdict | pass: 2.96 | **pass: 3.40** (3.92, 3.19, 3.09; ±1.05), in line with the correct script's 3.33 |
+| Review of attempt 2 | flagged the checkpoint selection its own advice caused | `faithful`, 8 matches, 5 unstated choices, 0 problems, 13/13 verified |
+
+The Opus loop took 11 minutes and one retry, with no human involved.
+
+**What this changed:**
+1. **The default review model is `claude-opus-5`.** Sonnet also missed the bug in two
+   offline re-reviews: once with a data-tracing prompt, and once with the runner log in
+   front of it saying "81 train_fit, 324 val". Opus found it on its first try.
+   `--review-model claude-sonnet-5` is the cheaper option.
+2. **The review reads the runner log** (the full stage's own lines, with per-epoch
+   progress removed), and the prompt asks it to trace the data flow.
+3. **A deterministic add-on-technique guard.** Checks on citations prove a quote is real,
+   not that the reasoning is right. So a fix may not add early stopping, checkpoint
+   selection, dropout, weight decay, clipping, a learning-rate schedule, augmentation or
+   ensembling unless the paper itself (not the extraction, which lists absences) mentions
+   it. A "bug" also cannot be the absence of such a technique. This would have blocked the
+   Sonnet misdiagnosis.
+4. **Snippet checks go line by line.** Opus stitched non-adjacent lines into one snippet,
+   and every line was real.
+
+**Honest limits:**
+- One injected bug and one paper is a demonstration, not a measurement.
+- With Opus the fix loop worked; with Sonnet the arithmetic still ended in `pass`, but on
+  a script that no longer matched the paper. The review's own next pass caught that, and a
+  report must show it.
+- Every retry still regenerates the whole script, so "the fix" is partly luck until loop
+  controls add patching.
 
 **Seen on the first real review (Wijaya's correct script, 2026-09-14).**
 - It rated the script `faithful`, with 5 `matches_paper` and 5 `unstated_choice` findings

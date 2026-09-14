@@ -1193,3 +1193,53 @@ The report generator comes after the Critic.
   and the paper's number sits inside that range.
 - That pass is on a wide band (35% of the claim), which a report must show.
 - The guided retry has not yet fired in a live run.
+
+### Direct — Critic v2: the model review, and the first Critic loops (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** "Why is the Critic not an LLM agent?" He expects the Critic to review the
+Coder's code and the Runner's output and feed back to both. Project plan §2.5 agrees: an
+arithmetic verdict plus model-drafted feedback and a Code Development check. v1 had built only
+the arithmetic, a scope I narrowed without asking. He approved Critic v2, a loop demo on one
+basic paper, then a from-scratch run, then the report generator. He asked that README and
+memory be saved first because of session limits.
+
+**Built:**
+- `critic/review.py`: one forced tool-use call returning cited findings, ranked hypotheses,
+  `method_fidelity` and a curve assessment.
+- Deterministic guards: numbers must be in the material, paper quotes must exist, script
+  lines and snippets must exist (line by line), and add-on techniques the paper never uses
+  are rejected.
+- A filtered runner-log excerpt as input.
+- `decide_after_critic` gains `fix`: a verified stated problem is a correctness retry on the
+  normal budget.
+- `deviation_feedback` / `unstated_feedback` replace the template when a review exists.
+- `reader/tooluse.py::recover_leaked_fields`.
+- CLI: `--no-review` / `--review-model`, and `critic.pipeline --review`.
+- Tests: `tests/test_critic_review.py`, using the first real payload as a fixture. 65 tests
+  pass.
+
+**Found by running it:**
+1. **Leaked fields.** On the first real review, the model leaked `findings` inside
+   `curve_assessment`. `recover_leaked_fields` now handles it.
+2. **Sonnet 5 missed an injected swapped train/validation unpacking three times.**
+   - First live, then offline with a data-tracing prompt, then with the log line
+     "81 train_fit, 324 val".
+   - Live, it filed "no early stopping" as a high-severity bug. The citations were real, so
+     every guard passed.
+   - The Coder then added checkpoint selection the paper never uses. The loop still ended in
+     `pass` (2.96), on an unfaithful script, which the next review flagged.
+3. **Opus 5 caught the bug on the same inputs**, citing the log line and lines 178–180.
+
+**Changed:** default review model → Opus 5; runner log in the prompt; data-tracing
+instructions; the add-on-technique guard; line-wise snippet checks.
+
+**Verified end to end (Opus):**
+- Injected script: fail 4.76 vs 3.02 (±0.62, three runs).
+- Review: `major_deviations`, split swap and scaler, 12/12 verified.
+- `fix` retry: two `deviation fix:` entries, nothing else changed.
+- Result: pass 3.40 (±1.05), review `faithful`, 13/13 verified.
+- 11 minutes, one retry, no human involved.
+
+**Worth keeping:**
+- Guards prove citations are real, never that the reasoning is right.
+- One injected bug is a demonstration, not a measurement.
