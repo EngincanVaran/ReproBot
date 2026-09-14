@@ -159,6 +159,18 @@ METRICS_CONTRACT = """{
   "wall_clock_seconds": 104.0
 }"""
 
+# One line of the learning-curve history every generated script writes while it
+# trains. runner/checkups.py reads it LIVE and halts a run that is not learning;
+# this literal is what the prompt shows, and the marker is gated in coder/pipeline.py.
+PROGRESS_MARKER = "REPROBOT_PROGRESS"
+PROGRESS_EXAMPLE = (
+    PROGRESS_MARKER
+    + """ {"kind": "epoch", "step": 7, "steps_total": 40, "train_loss": 0.2956, \
+"eval_loss": 0.3106, "train_metric": 91.2, "eval_metric": 93.58, "metric": "test accuracy", \
+"unit": "%", "higher_is_better": true, "chance_metric": 11.35, "target_value": 94.45, \
+"loss_lower_bound": 0.0, "num_eval_samples": 10000, "elapsed_seconds": 713.2}"""
+)
+
 PROMPT = (
     """You are the Coder agent of an automated ML-paper replication \
 pipeline. You are given TWO inputs describing ONE machine-learning paper, and \
@@ -335,12 +347,14 @@ re-implement a classical estimator in PyTorch: an SVM trained by SGD on a hinge 
 loss is a different optimizer reaching a different solution, and scikit-learn's \
 `SVC` wraps LIBSVM itself, so it can reproduce a LIBSVM paper exactly. Rules 6, \
 7 and 12 below are for neural models and do not apply; instead fit the \
-estimator on the training split and predict on both splits. The Runner's image \
+estimator on the training split and predict on both splits. Record \
+`model_family` as "classical". The Runner's image \
 has scikit-learn 1.5.2 and no xgboost, lightgbm or catboost.
    - NEURAL MODELS -> PyTorch, per rules 6 and 7. Anything the paper defines as \
 a network of parameters trained by gradient descent is neural, INCLUDING \
 tree-shaped models trained that way (a soft decision tree with learned \
-filters is a PyTorch model, not a scikit-learn tree).
+filters is a PyTorch model, not a scikit-learn tree). Record `model_family` as \
+"neural".
    - LIBRARY VERSIONS SHIP DIFFERENT DEFAULTS. A paper that says "default \
 parameters", or leaves a setting unstated, inherited the defaults of the library \
 VERSION it used, and scikit-learn has changed many since. For example: `SVC`'s \
@@ -498,8 +512,12 @@ the TRAINING split only, then apply the fitted transform to the evaluation \
 split. Fitting on all rows leaks evaluation data into training and flatters \
 the reproduced number. If the paper explicitly says it did otherwise, follow \
 the paper and record that in `assumptions`.
-   - `--max-train-samples` / `--max-eval-samples` take a deterministic subset \
-of each split AFTER the split is made.
+   - `--max-train-samples` / `--max-eval-samples` take a SEEDED RANDOM subset \
+of each split AFTER the split is made - stratified by label for a \
+classification task - never simply the first N rows. Dataset files are often \
+sorted by label (svmguide1's first 2,000 training rows are all one class), so \
+the first N rows of a capped check run can hold a single class, and the check \
+crashes or measures nothing. Seed the subset from `--seed` so it is reproducible.
 
 9. NEVER INVENT AN UNSTATED DETAIL SILENTLY. If neither input states \
 something the script cannot run without (weight initialization, the exact \
@@ -594,9 +612,56 @@ MEAN as `value` and `eval_metric`, adding `"num_runs"` and \
 `--max-*-samples` flag set) performs a single repetition, and says so in the log.
    - `num_train_samples` / `num_eval_samples` are the sizes actually used, \
 after any `--max-*-samples` cap. `wall_clock_seconds` is measured from the \
-start of the run.
+start of the run: take the start time as the very first statement of `main()`, \
+before argument parsing and data loading - not at the start of the training loop.
    - Every numeric field is a plain JSON number - convert tensors and numpy \
 scalars with `float()` / `int()` before serializing.
+
+11b. WRITE A LEARNING-CURVE HISTORY WHILE TRAINING RUNS. The Runner reads it \
+LIVE, while the script is still running, and stops a run that is not learning \
+(a loss below its lower bound, a model worse than chance, no progress, a \
+collapse after learning). It is a load-bearing contract like the metrics JSON.
+   - THE FILE: derive it from `--metrics-output` by replacing a trailing \
+`.json` with `.history.jsonl` (`metrics.full.json` -> \
+`metrics.full.history.jsonl`; append `.history.jsonl` when the path does not \
+end in `.json`). Truncate it once at startup, then APPEND one JSON object per \
+line and flush after every record, so a reader sees each record immediately.
+   - THE SAME LINE ON STDOUT: print every record as one line, prefixed with the \
+marker and a space, with `flush=True`. One record looks like this:
+
+"""
+    + PROGRESS_EXAMPLE
+    + """
+
+   - WHEN: a neural model writes one record after every epoch, with \
+`"kind": "epoch"` (for runs longer than 200 epochs, at least 100 evenly spaced \
+records, always including the first and the last epoch). Write each record ONCE, \
+after its step has completed, carrying that step's results - never a partial \
+record before training or evaluation has produced them. A classical estimator \
+writes one record after each repetition, fold or seed (`"kind": "repetition"` \
+or `"fold"`), or one record after its single fit (`"kind": "fit"`).
+   - FIELDS - write every key, using `null` only when a value genuinely does not \
+exist: `step` (1-based) and `steps_total` (the planned total after any caps); \
+`train_loss` / `eval_loss` (the training objective, averaged over the epoch and \
+over an evaluation pass); `train_metric` / `eval_metric` (the claim's own metric \
+in the claim's unit - evaluate the evaluation split for EVERY recorded epoch, in \
+eval mode); `metric`, `unit` and `higher_is_better`, identical to the metrics \
+JSON; `num_eval_samples`; `elapsed_seconds` since the start of the run; and \
+three fields the Runner's checks depend on:
+     * `chance_metric` - the claim's metric, in its unit, scored on the \
+evaluation split by a trivial predictor fitted to the TRAINING split only: the \
+training set's majority class for classification (as an accuracy or an error \
+rate, whichever the claim uses), the training set's mean target for regression \
+(0 for R^2). Compute it once, before training.
+     * `target_value` - the targeted claim's `reported_value`.
+     * `loss_lower_bound` - the smallest value the training objective can take: \
+0.0 for cross-entropy, squared or absolute error, hinge and squared-hinge losses, \
+and any sum of such terms with non-negative weights and penalties; `null` when \
+the objective can legitimately be negative (a log-likelihood or evidence bound \
+written without its constant) or when you are not certain.
+   - Write non-finite values as they are - `json.dumps` emits `NaN` and \
+`Infinity` - never replace them with `null` or clip them: a NaN is exactly what \
+the Runner needs to see. Never skip a record to save time.
 
 12. GUARD THE ZERO-BATCH EDGE CASE. A capped smoke run with \
 `--max-train-samples` smaller than `--batch-size` combined with \
@@ -690,6 +755,16 @@ SCRIPT_TOOL: dict[str, Any] = {
                     "script's metrics JSON must carry this same string."
                 ),
             },
+            "model_family": {
+                "type": "string",
+                "enum": ["neural", "classical"],
+                "description": (
+                    "'neural' when the script trains a PyTorch model by gradient descent "
+                    "(including tree-shaped models trained that way); 'classical' when it "
+                    "builds a scikit-learn estimator such as an SVM, a tree ensemble or "
+                    "k-NN. The Runner picks the cheap stages' sizes from this."
+                ),
+            },
             "architecture_used": {
                 "type": "string",
                 "description": (
@@ -764,6 +839,7 @@ SCRIPT_TOOL: dict[str, Any] = {
             "claim_targeted",
             "claim_selection_reasoning",
             "task_type",
+            "model_family",
             "architecture_used",
             "dataset_used",
             "hyperparameters_used",
@@ -786,6 +862,7 @@ class TrainingScript:
     claim_targeted: str
     claim_selection_reasoning: str
     task_type: str
+    model_family: str
     architecture_used: str
     dataset_used: str
     hyperparameters_used: list[HyperparameterUsed]
@@ -821,6 +898,7 @@ TOOL_FIELDS: tuple[str, ...] = (
     "claim_targeted",
     "claim_selection_reasoning",
     "task_type",
+    "model_family",
     "architecture_used",
     "dataset_used",
     "hyperparameters_used",
@@ -986,6 +1064,21 @@ def _log_architecture_inputs(reader_output: dict[str, Any]) -> None:
         )
 
 
+def _normalise_model_family(raw: str) -> str:
+    """'neural' or 'classical'; anything else falls back to 'neural', loudly.
+
+    Neural is the safe fallback because it keeps today's reproduce.sh stage sizes.
+    """
+    value = raw.strip().lower()
+    if value in ("neural", "classical"):
+        return value
+    logger.warning(
+        f"  [training_script] model_family {raw!r} is not 'neural' or 'classical' - "
+        f"treating it as 'neural' for the stage ladder"
+    )
+    return "neural"
+
+
 def _log_task_type(task_type: str) -> None:
     """Log the inferred task type, flagging a label outside the expected set.
 
@@ -1123,6 +1216,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
             claim_targeted=_optional_str(payload, "claim_targeted"),
             claim_selection_reasoning=_optional_str(payload, "claim_selection_reasoning"),
             task_type=_optional_str(payload, "task_type").strip(),
+            model_family=_normalise_model_family(_optional_str(payload, "model_family")),
             architecture_used=_optional_str(payload, "architecture_used"),
             dataset_used=_optional_str(payload, "dataset_used"),
             hyperparameters_used=[
@@ -1139,6 +1233,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
         logger.info(f"  [training_script] TARGET CLAIM: {result.claim_targeted}")
         logger.info(f"  [training_script] reasoning: {result.claim_selection_reasoning}")
         _log_task_type(result.task_type)
+        logger.info(f"  [training_script] MODEL FAMILY: {result.model_family}")
         logger.info(f"  [training_script] architecture: {result.architecture_used}")
         logger.info(f"  [training_script] dataset: {result.dataset_used}")
         logger.info(

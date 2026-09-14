@@ -1108,3 +1108,34 @@ problem/solution table, lessons, future work; ablation, collapse diagnosis and f
 findings reduced to single lines. 10 pages single-column, 8 two-column; figure pages checked.
 
 ---
+
+### Direct — Runner live check-ups (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** next-phase priority 1 — watch training while it runs instead of judging
+by exit code — plus any Coder changes it needs. Plan approved with: halt → retry with evidence,
+a pytest replay suite, and the classical-model ladder now. He decided the Critic stays a
+separate next step (check-ups judge health; the Critic judges fidelity).
+
+**Built:** `runner/checkups.py` (record parser, incremental history reader, six pure rules with
+per-stage allow-lists, persistence and chance-based margins); a watcher thread in
+`DockerRunner.run_stage` that kills the container on a halt and re-judges after exit; `halted`
+status and `--no-live-checkups` / `--checkup-interval`; Orchestrator routing of halts as a
+retry with the evidence as feedback, recorded on `AttemptRecord`; Coder prompt rule 11b (history
+contract), gate 3 (`ScriptContractError`), required `model_family`, classical `capped` ladder,
+seeded stratified caps, explicit wall-clock start; `tests/` with 28 pytest cases.
+
+**Verified:** replays of real curves — Tang ablation A halted at epoch 12 and E at 6
+(`diverged`), all stable configs and every healthy phase-3 run untouched. Docker: SVM guide
+`success` with live records (96.925%), Fashion-MNIST RF `success` (records per repetition live,
+capped now differs from smoke), sign-flipped soft tree killed 0.3 s after its epoch-1 record in
+a 40-epoch `full` run, and the same fault through the Orchestrator halted in `probe` after 5 s,
+regenerated with the evidence, `success` to `capped`.
+
+**Found end to end:** a false positive — `no_progress` in `capped` halted a *correct* soft tree
+(loss at ln 10, accuracy 3x chance) three times and exhausted the budget; fixed by restricting it
+to `full` and requiring no gain over chance, with the real curve added as a regression test. Also
+the SVM probe crashed twice because "deterministic subset" meant first-N rows of a label-sorted
+file; the prompt now requires seeded stratified subsets. The regenerated soft tree implemented
+the paper's misprinted Eq. 3 correctly on its own (expected cross-entropy, bound 0).
+
+---

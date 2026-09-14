@@ -75,6 +75,27 @@ the fix costs **no Docker run** — so the parser's message is fed straight back
 feedback and the loop continues. It still consumes one unit of retry budget: a
 model emitting invalid Python three times running is not converging either.
 
+### A halted run retries with its evidence (added 2026-09-14)
+
+`runner/` now watches every stage live and can end one with status **`halted`**:
+the script ran, but its learning-curve history showed it was not learning — a loss
+below its lower bound, a model worse than chance, a collapse after learning (rules
+in `runner/README.md`). A halt is not a verdict. `decide_after_run` routes it like a
+fixable script error, except that **no triage call is made**: the check-up's own
+evidence — which rule fired, at which epoch, with which numbers, plus advice on what
+to check — goes to the Coder verbatim as feedback. It consumes one unit of retry
+budget; when the budget is spent the verdict is `retry_budget_exhausted`. The rule
+and its message are kept on the attempt as `checkup_rule` / `checkup_message`
+(state files written before these fields existed still load).
+
+Verified end to end: a soft decision tree with a deliberately sign-flipped loss was
+halted 5 s into `probe` (`loss_below_lower_bound`); the regenerated script, written
+with that feedback, trained healthily to `capped` — `success` after one retry, with
+no human involved. `clear_stale_metrics` now removes stale history files too, so a
+retry is never judged on the previous attempt's curve. A Coder gate rejection for a
+missing progress history (`ScriptContractError`) takes the same no-Docker shortcut as
+a syntax error.
+
 ## Plateau guard
 
 Project plan §2.1, verbatim: *"if the Coder's last two attempts produced

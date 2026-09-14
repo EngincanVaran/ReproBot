@@ -4,7 +4,7 @@ Living tracker. Updated by hand as things land; the narrative history with full 
 lives in [`docs/agent-log.md`](docs/agent-log.md), and each stage's own README holds the
 deep version of its known issues.
 
-**Last updated:** 2026-09-14 · `main` (pushed, `d2db743`)
+**Last updated:** 2026-09-14 · `main` · **4th progress-report period** (everything since 2026-09-14)
 
 ---
 
@@ -20,9 +20,10 @@ runs showed.
 2. **The Critic agent** — judge each reproduced number against its claim.
 3. **Loop controls** — make the Orchestrator's retries targeted, bounded and auditable.
 
-Suggested starting point: priority 1 first. It is the smallest, it would have caught both
-bad runs of this phase automatically, and the learning-curve history it needs is also the
-Critic's input. Present a plan before building, as usual.
+**Priority 1 is done (2026-09-14)** — Runner live check-ups, the learning-curve history
+contract, and the classical-model ladder, verified by replaying real curves and live in Docker
+(details below and in `runner/README.md`). **Next: priority 2, the Critic.** The history
+files and halt evidence it needs now exist. Present a plan before building, as usual.
 
 ---
 
@@ -32,9 +33,9 @@ Critic's input. Present a plan before building, as usual.
 |---|---|---|---|---|
 | Tang 2013 | MLP + L2-SVM loss | MNIST test error 0.87% | **0.82%** | `full`, 54 min; needed manual `C` 1.0 → 0.1 ([ablation](docs/notes/tang-2013-ablation/README.md)) |
 | Wijaya 2023 | Dense regression net (Keras) | Boston test RMSE 3.02 | **4.48** (train 2.94 vs 2.69) | Orchestrated, 1 auto-repair; gap most likely the paper's unstated split |
-| Hsu/Chang/Lin SVM guide | RBF SVM | svmguide1 96.9% | **96.625%** | Orchestrated, 1 auto-repair, 73 s; `SVC` at the paper's C=γ=2 reproduces 66.925 / 96.15 / 96.875% **exactly** |
+| Hsu/Chang/Lin SVM guide | RBF SVM | svmguide1 96.9% | **96.625%** (rerun 2026-09-14 with check-ups: **96.925%**) | Orchestrated, 1 auto-repair, 73 s; `SVC` at the paper's C=γ=2 reproduces 66.925 / 96.15 / 96.875% **exactly**; the grid search's pick varies with fold assignment |
 | Fashion-MNIST (Xiao 2017) | Random forest | 0.873, mean of 5 | **0.8773** (0.8753–0.8792) | Orchestrated, 0 retries, 3.3 min |
-| Frosst & Hinton 2017 | Soft decision tree | MNIST 94.45% | **95.11%** | Orchestrated, 0 retries, 70 min; needed manual fix of the paper's misprinted loss (Eq. 3) |
+| Frosst & Hinton 2017 | Soft decision tree | MNIST 94.45% | **95.11%** | Orchestrated, 0 retries, 70 min; needed manual fix of the paper's misprinted loss (Eq. 3). Regenerated 2026-09-14 under the new prompt, the Coder implemented the correct loss on its own (verified to `capped` only) |
 | Network In Network, WRN | CIFAR-10 CNNs | — | smoke only | Full runs need a GPU (~22 days/WRN run on CPU) |
 
 All comparisons are by hand; no stage judges a number yet.
@@ -57,7 +58,7 @@ All comparisons are by hand; no stage judges a number yet.
 | `ocr/` | ✅ built | 11 papers extracted |
 | `reader/` | ✅ complete vs. §1.2 | 9 papers, all 5 fields; first clean convergences (SVM guide, Fashion-MNIST) |
 | `coder/` | ✅ built — PyTorch loop **or scikit-learn** by model family | 5 families generated and run |
-| `runner/` | ✅ built — **success = exit code only** (see Next phase) | every stage incl. `full`, 7 papers |
+| `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
 | **`critic/`** | ❌ **not started** — Next phase #2 | — |
 | **report generator** | ❌ not started | — |
@@ -67,19 +68,19 @@ All comparisons are by hand; no stage judges a number yet.
 
 ## Next phase (agreed priorities)
 
-### 1. Runner live check-ups
-- [ ] **Read the container's log while it runs, and act.** Both bad runs of phase 3 — Tang's
-      collapse and the soft tree's reversed loss (accuracy falling to 0.15%) — were caught by a
-      person reading `docker logs`, while every stage reported `success`. Stream the log during
-      `full` (and `capped`), parse per-epoch metrics, and stop early with a clear verdict on:
-      loss not moving for N epochs, NaN/inf, accuracy at or below chance, a cross-entropy loss
-      that goes negative, a loss sitting on the input-ignoring floor. Report the partial curve.
-- [ ] **Learning-curve history from every generated script** — per-epoch (or per-repetition)
-      train/eval loss and metric as JSON lines beside `metrics.json`, so the check-ups, the
-      Critic and reports plot curves without scraping logs. (The third report's curves were
-      scraped from logs by hand.)
-- [ ] **A ladder for models without epochs** — for the SVM and random forest, `smoke` and
-      `capped` gave identical numbers. Scale training-set size instead of epochs.
+### 1. Runner live check-ups — ✅ done 2026-09-14
+- [x] **Learning-curve history contract** — every generated script writes
+      `metrics.<mode>.history.jsonl` (+ `REPROBOT_PROGRESS` stdout lines) with `chance_metric`,
+      `target_value`, `loss_lower_bound`; Coder gate 3 rejects scripts without it.
+- [x] **Watcher + six rules** (`runner/checkups.py`) — kills the container and ends the stage
+      `halted`; Orchestrator retries with the evidence as feedback. 28 pytest replays of real
+      curves; live Docker kill at epoch 1 of 40; full halt → regenerate → `success` loop.
+- [x] **Ladder for models without epochs** — `model_family` → classical `capped` uses 5,000/2,000
+      rows (RF capped 0.8435 vs smoke 0.776, previously identical).
+- [x] Coder: capped subsets seeded random + stratified (svmguide1 first-N-rows single-class crash).
+- [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history;
+      consider a "no record for too long" hang rule; keep calibrating thresholds from every halt's
+      logged evidence (one false positive already found and fixed end to end).
 
 ### 2. The Critic agent (`critic/`)
 - [ ] **Compare `value` with `claims[].reported_value`** using `higher_is_better`, as explicit
@@ -96,7 +97,8 @@ All comparisons are by hand; no stage judges a number yet.
       (plateau similarities 0.22, 0.25, 0.27). Line-range edits, as AutoReproduce does.
 - [ ] **Freeze guessed hyperparameters across retries** unless the feedback targets them — the soft
       tree's crash fix also moved lr 0.01→0.1, batch 128→32, λ 0.1→0.01.
-- [ ] **Abort a running stage** when its live check-up fails, instead of burning the budget.
+- [x] **Abort a running stage** when its live check-up fails — done with the check-ups (the watcher
+      kills the container; the Orchestrator retries with the evidence).
 - [ ] **Per-paper time and API-cost budgets.**
 - [ ] **Record human corrections in the state object** — Tang's `C` and the soft tree's loss were
       fixed by hand in gitignored scripts; a regeneration would silently undo both.
@@ -150,7 +152,8 @@ Anything marked **cost** is actively wasting money or time on every run.
       and did not record the appendix's default-parameter accuracies as claims.
 
 ### `coder/`
-- [ ] **`wall_clock_seconds` timed from the training loop, not the run start** (contract says whole run).
+- [ ] **`wall_clock_seconds` timed from the training loop, not the run start** — prompt made explicit
+      2026-09-14 ("first statement of `main()`"); verify on the next regenerated scripts.
 - [ ] **Intermittent tool-field leak** — worked around in `_recover_leaked_fields`, not fixed.
 - [ ] **Bookkeeping can disagree with the code** — NIN reported `192→192→10`, code built `192→10→10`.
 - [ ] **Priors still supply unstated numbers** — disclosed, so *visible*, not *verified*.
@@ -162,9 +165,10 @@ Anything marked **cost** is actively wasting money or time on every run.
       produced an invalid call (fixed); similar phrasing may remain.
 
 ### `runner/`
-- [ ] **Success is decided on exit code alone** — Next phase #1.
-- [ ] **The escalation ladder cannot catch at-scale instability** — Tang passed probe → smoke →
-      capped, then collapsed in `full`. Live check-ups address this.
+- [ ] **Check-ups judge health, not fidelity** — a healthy run far from the paper's number
+      (Wijaya 4.48 vs 3.02) passes. That is the Critic's job (Next phase #2).
+- [ ] **Scripts from before the progress contract** fall back to exit-code-only judgement until
+      regenerated.
 - [ ] **The image is not reproducible byte-for-byte** — pin `python:3.11-slim` by digest.
 - [ ] **Container runs as root** — hidden on macOS, visible on a Linux host.
 - [ ] **`--memory` / `--cpus` unset** — deliberate (exit 137 looks like a crash), but two containers
@@ -209,6 +213,12 @@ Anything marked **cost** is actively wasting money or time on every run.
 ---
 
 ## Done
+
+### 4th-report period (from 2026-09-14)
+- [x] **Runner live check-ups** — history contract, watcher, six rules, `halted` status,
+      Orchestrator halt routing, classical ladder, `pytest` suite (28 tests from real curves)
+- [x] End-to-end in Docker: SVM guide `success` (96.925% vs 96.875%), Fashion-MNIST RF `success`
+      (0.8773), sign-flipped soft tree killed live at epoch 1/40, halt → regenerate → `success`
 
 ### Phase 3 (2026-09-13 → 14)
 - [x] Coder and Runner generalized beyond image classification — plain PyTorch loop, task-agnostic

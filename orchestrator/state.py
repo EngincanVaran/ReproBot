@@ -119,6 +119,10 @@ class AttemptRecord:
     action: str
     verdict: str | None
     reason: str
+    # Set when runner/'s live check-up halted this attempt: which rule fired and its
+    # evidence. Defaults keep state files written before check-ups existed loadable.
+    checkup_rule: str | None = None
+    checkup_message: str | None = None
 
 
 @dataclass

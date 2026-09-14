@@ -48,6 +48,7 @@ from loguru import logger
 
 from runner.docker_runner import (
     DEFAULT_CACHE_DIR,
+    DEFAULT_CHECKUP_INTERVAL,
     DEFAULT_IMAGE,
     DEFAULT_STAGE_TIMEOUTS,
     STAGE_ORDER,
@@ -238,6 +239,20 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--no-live-checkups",
+        action="store_true",
+        help=(
+            "Judge stages on exit code alone: do not read the script's progress history "
+            "while it runs, and never halt a run early"
+        ),
+    )
+    parser.add_argument(
+        "--checkup-interval",
+        type=float,
+        default=DEFAULT_CHECKUP_INTERVAL,
+        help="Seconds between live check-up reads of a running stage's history file",
+    )
+    parser.add_argument(
         "--no-triage",
         action="store_true",
         help="Never make the Haiku failure-classification call (runs fully offline)",
@@ -274,6 +289,8 @@ def main() -> None:
         cpus=args.cpus,
         network=args.network,
         run_triage=not args.no_triage,
+        live_checkups=not args.no_live_checkups,
+        checkup_interval=args.checkup_interval,
     )
     # A missing daemon or image is a setup problem, not a bug worth a traceback -
     # and it is the single most likely reason a first run does not start, so it

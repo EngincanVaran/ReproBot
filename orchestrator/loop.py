@@ -44,6 +44,12 @@ and the fix costs no Docker run - so the syntax message is fed straight back as
 feedback and the loop continues. It still consumes one unit of retry budget,
 because a model that emits invalid Python three times running is not converging.
 
+A `halted` run is not a verdict either. `runner/`'s live check-up stopped a script
+that was executing but not learning (a loss below its lower bound, a model worse
+than chance, a collapse after learning, ...). Its evidence goes to the Coder
+verbatim as feedback, with no triage call, and the retry is charged to the budget
+like any other; the rule and its message are kept on the attempt's record.
+
 PURE TRANSITIONS
 ----------------
 Every decision above is made by one of three small pure functions
@@ -66,7 +72,7 @@ from typing import Literal
 from anthropic import Anthropic
 from loguru import logger
 
-from coder.pipeline import CoderPipeline, ScriptSyntaxError
+from coder.pipeline import CoderPipeline, ScriptGateError
 from orchestrator.state import (
     STAGE_CODER,
     STAGE_ORCHESTRATOR,
@@ -77,7 +83,7 @@ from orchestrator.state import (
     RunnerOutputState,
     Verdict,
 )
-from runner.docker_runner import DockerRunner, RunnerOutput, metrics_path_for
+from runner.docker_runner import DockerRunner, RunnerOutput, history_path_for, metrics_path_for
 from runner.triage import TriageResult
 
 DEFAULT_RETRY_BUDGET = 3
@@ -213,6 +219,7 @@ def decide_after_run(
     triage: TriageResult | None,
     retry_count: int,
     retry_budget: int,
+    halt_feedback: str | None = None,
 ) -> LoopDecision:
     """Route one finished Docker run. The loop's central decision.
 
@@ -231,8 +238,30 @@ def decide_after_run(
             "timeout by design, so there is no specific fix to feed back - a slow but "
             "correct script must not be 'fixed' into a different one",
         )
+    if status == "halted":
+        # runner/'s live check-up stopped a run that was executing but not learning.
+        # Its evidence already is the diagnosis - which rule fired, at which epoch,
+        # with which numbers - so it goes to the Coder verbatim, with no triage call.
+        if retry_count >= retry_budget:
+            return LoopDecision(
+                "stop",
+                "retry_budget_exhausted",
+                f"a live check-up halted the run because training was not healthy, and the "
+                f"retry budget ({retry_budget}) is spent",
+            )
+        return LoopDecision(
+            "retry",
+            None,
+            "a live check-up halted the run: it executed but was not learning",
+            feedback=halt_feedback
+            or (
+                "The Runner's live check-up stopped the previous script because training was "
+                "not healthy. Re-check the objective, the optimisation settings the paper "
+                "leaves unstated, and that the model's parameters are actually updated."
+            ),
+        )
     if status != "error":
-        raise ValueError(f"unknown runner status {status!r}; expected success/error/timeout")
+        raise ValueError(f"unknown runner status {status!r}; expected success/error/timeout/halted")
 
     if triage is None:
         return LoopDecision(
@@ -286,9 +315,10 @@ def decide_after_syntax_error(
         "the generated script is not valid Python - caught by coder/'s ast.parse gate "
         "before any container started, so this retry costs no Docker run",
         feedback=(
-            f"The script you generated was not valid Python and was rejected before it "
+            f"The script you generated was rejected by a deterministic gate before it "
             f"could run: {message}. Emit a COMPLETE, syntactically valid script this time "
-            f"- no truncation, no placeholders, no unclosed brackets or strings."
+            f"that satisfies every contract in the instructions - no truncation, no "
+            f"placeholders, no unclosed brackets or strings, and the learning-curve history."
         ),
     )
 
@@ -329,6 +359,7 @@ def build_attempt(
 ) -> AttemptRecord:
     """Flatten one attempt's inputs, outcome and decision into a single record."""
     triage = runner_output.triage if runner_output else None
+    halt = runner_output.halt if runner_output else None
     return AttemptRecord(
         version=version,
         feedback_given=feedback,
@@ -348,6 +379,8 @@ def build_attempt(
         action=decision.action,
         verdict=decision.verdict,
         reason=decision.reason,
+        checkup_rule=str(halt.get("rule")) if halt else None,
+        checkup_message=str(halt.get("message")) if halt else None,
     )
 
 
@@ -390,10 +423,10 @@ class Orchestrator:
         run's. Removing them first makes "no metrics" mean no metrics.
         """
         for mode in self.modes:
-            stale = metrics_path_for(paper_dir, mode)
-            if stale.exists():
-                stale.unlink()
-                logger.info(f"  [workspace] removed stale {stale.name} from a previous attempt")
+            for stale in (metrics_path_for(paper_dir, mode), history_path_for(paper_dir, mode)):
+                if stale.exists():
+                    stale.unlink()
+                    logger.info(f"  [workspace] removed stale {stale.name} from a previous attempt")
 
     # -- the loop ----------------------------------------------------------- #
 
@@ -484,7 +517,7 @@ class Orchestrator:
                         f"{len(script_text.splitlines())} lines"
                         + (f", feedback applied: {feedback}" if feedback else ""),
                     )
-                except ScriptSyntaxError as exc:
+                except ScriptGateError as exc:
                     syntax_error = str(exc)
                     script_path = paper_dir / "train.py.invalid"
                     script_text = (
@@ -603,6 +636,12 @@ class Orchestrator:
                     f", triage={runner_output.triage.category}"
                     if runner_output.triage
                     else ", no triage"
+                )
+                + (
+                    f", halted by check-up '{runner_output.halt.get('rule')}' at "
+                    f"{runner_output.halt.get('kind')} {runner_output.halt.get('step')}"
+                    if runner_output.halt
+                    else ""
                 ),
             )
 
@@ -611,6 +650,9 @@ class Orchestrator:
                 triage=runner_output.triage,
                 retry_count=state.retry_count,
                 retry_budget=state.retry_budget,
+                halt_feedback=(
+                    str(runner_output.halt.get("feedback")) if runner_output.halt else None
+                ),
             )
             state.attempts.append(
                 build_attempt(

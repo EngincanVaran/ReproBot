@@ -271,9 +271,9 @@ picking hyperparameters. On the real run this worked: targeting `c34`
 (`0.01`, ×0.1 at 80/120, 160 epochs), plus mean/std normalization rather than
 ZCA and no dropout.
 
-## The two safety gates
+## The three safety gates
 
-Both are pure Python in `pipeline.py`, cost nothing, and catch failures that
+All three are pure Python in `pipeline.py`, cost nothing, and catch failures that
 would otherwise surface only inside the Runner's Docker sandbox.
 
 ```
@@ -293,6 +293,14 @@ writer.write()  ──►  script_content
               │ GATE 2: required flags  │  warns, does not fail
               └───────────┬───────────────┘
                           ▼
+              ┌───────────────────────┐
+              │ GATE 3: progress history│
+              └───────────┬───────────────┘
+                 ▼ ok          ▼ marker or .history.jsonl absent
+                 │           write train.py.invalid
+                 │           + coder_output.failed.json
+                 │           raise ScriptContractError
+                 ▼
               write train.py + coder_output.json
 ```
 
@@ -308,6 +316,44 @@ in the script text. Missing flags are warned about by name and recorded in
 `missing_cli_flags`. The model's own `cli_flags_included` self-report is
 cross-checked in both directions — a model can claim a flag it never wrote, and
 can write one it forgot to report.
+
+**Gate 3 — progress history (added 2026-09-14).** The script must write the
+learning-curve history that `runner/`'s live check-ups read while it trains: the
+`REPROBOT_PROGRESS` marker and a `.history.jsonl` file must both appear in the text.
+Without it a broken run can only be judged by its exit code, so a missing contract
+is rejected like a syntax error — `ScriptContractError`, a sibling of
+`ScriptSyntaxError` under `ScriptGateError` — and the Orchestrator feeds the message
+back to the Coder on a retry at no Docker cost.
+
+## The learning-curve history contract — what the Runner watches live
+
+Prompt rule 11b. Beside `metrics.<mode>.json` the script writes
+`metrics.<mode>.history.jsonl` (the `--metrics-output` path with `.json` replaced),
+truncated at startup, one record appended and flushed after every epoch — or after
+every repetition, fold or single fit for a classical estimator — and prints the
+same record to stdout after the marker:
+
+```
+REPROBOT_PROGRESS {"kind": "epoch", "step": 7, "steps_total": 40, "train_loss": 0.2956,
+  "eval_loss": 0.3106, "train_metric": 91.2, "eval_metric": 93.58, "metric": "test accuracy",
+  "unit": "%", "higher_is_better": true, "chance_metric": 11.35, "target_value": 94.45,
+  "loss_lower_bound": 0.0, "num_eval_samples": 10000, "elapsed_seconds": 713.2}
+```
+
+Three fields exist only for the check-ups: **`chance_metric`** (the claim's metric
+scored on the evaluation split by a trivial predictor fitted on the training split —
+majority class, or the mean target), **`target_value`** (the claim, so a claim that
+itself sits near chance is never called "stuck") and **`loss_lower_bound`** (0 for
+cross-entropy, squared error, hinge; `null` when the objective can legitimately be
+negative). Non-finite values are written as `NaN`/`Infinity`, never nulled — they are
+what the Runner most needs to see. Rules and verification: `runner/README.md`.
+
+Two related prompt changes landed with it. **Capped subsets are seeded random and
+stratified**, not the first N rows: svmguide1's training file is sorted by label, and
+a first-256-rows probe held one class and crashed twice in a row. And the tool schema
+gained a required **`model_family`** (`neural` / `classical`), recorded in
+`coder_output.json`, which `reproduce.sh` uses to give classical estimators a
+data-scaled `capped` stage (5,000 / 2,000 rows) instead of an epoch-scaled one.
 
 ## The metrics.json contract — the Runner/Critic interface
 

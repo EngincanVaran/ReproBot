@@ -49,6 +49,7 @@ from coder.script_writer import TrainingScriptWriter
 from orchestrator.loop import DEFAULT_PLATEAU_THRESHOLD, DEFAULT_RETRY_BUDGET, Orchestrator
 from runner.docker_runner import (
     DEFAULT_CACHE_DIR,
+    DEFAULT_CHECKUP_INTERVAL,
     DEFAULT_IMAGE,
     DEFAULT_STAGE_TIMEOUTS,
     STAGE_ORDER,
@@ -231,6 +232,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run ONLY this one mode per attempt, skipping the escalation ladder",
     )
 
+    parser.add_argument(
+        "--no-live-checkups",
+        action="store_true",
+        help=(
+            "Judge stages on exit code alone: do not read the script's progress history "
+            "while it runs, and never halt a run early"
+        ),
+    )
+    parser.add_argument(
+        "--checkup-interval",
+        type=float,
+        default=DEFAULT_CHECKUP_INTERVAL,
+        help="Seconds between live check-up reads of a running stage's history file",
+    )
     parser.add_argument("--image", default=DEFAULT_IMAGE, help="Sandbox image tag")
     parser.add_argument(
         "--build",
@@ -304,6 +319,8 @@ def main() -> None:
         cpus=args.cpus,
         network=args.network,
         run_triage=True,
+        live_checkups=not args.no_live_checkups,
+        checkup_interval=args.checkup_interval,
     )
     try:
         runner.check_daemon()

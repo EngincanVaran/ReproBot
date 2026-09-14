@@ -57,6 +57,64 @@ Stages run in order and stop at the **first** non-zero exit — a shape error
 costs seconds instead of hours. `full` is never reached by escalation; the
 default `--max-stage` is `capped`, and `full` has to be named explicitly.
 
+A stage also stops early when a **live check-up** halts it (next section). For a
+classical estimator (`model_family: "classical"` in `coder_output.json`), `capped`
+scales data instead of epochs — 5,000 training / 2,000 evaluation rows — because an
+SVM or a forest has no epochs, and the old epoch-based `capped` gave numbers
+identical to `smoke`.
+
+## Live check-ups — is it actually learning?
+
+An exit code says a script finished, never that it learned. Twice in phase 3 a
+`full` run exited normally with a broken model (Tang 2013's collapse; a soft decision
+tree whose sign-flipped loss drove accuracy to 0.15%), and both were caught by a
+person reading `docker logs`. `checkups.py` makes the Runner read the run itself.
+
+**The channel.** Every generated script appends one JSON record per epoch (or per
+repetition/fold/fit for a classical estimator) to `metrics.<mode>.history.jsonl` in
+the bind mount, and prints the same record after the `REPROBOT_PROGRESS` marker.
+The record carries the losses, the claim's metric on both splits, and three fields
+the rules need: `chance_metric` (a trivial predictor's score on the eval split,
+fitted on the training split), `target_value` (the claim) and `loss_lower_bound`.
+`coder/pipeline.py` rejects a script that does not write it.
+
+**The mechanism.** `run_stage` keeps its blocking `subprocess.run`; a watcher thread
+beside it reads new history lines every `--checkup-interval` seconds (default 5),
+logs them (at most ~20 lines per stage), and evaluates the rules. When one fires, the
+watcher kills the container by name — the timeout path's own `docker kill` — and the
+stage ends with status **`halted`** and the evidence. The rules run once more after
+exit, because a short stage can finish between two polls. No triage call is made: the
+rule's evidence is the diagnosis. A script that writes no history is judged on its
+exit code alone, with a warning. `--no-live-checkups` turns all of it off.
+
+**The rules** — pure functions, conservative, because a false halt kills a run that
+would have reproduced a paper:
+
+| Rule | Fires when | Stages |
+|---|---|---|
+| `non_finite` | a loss or metric is NaN/inf | all |
+| `loss_below_lower_bound` | a loss falls below its declared lower bound | all |
+| `worse_than_chance` | an accuracy-like metric is >3 binomial SEs below chance for 3 records running (from step 3) | capped, full |
+| `no_progress` | the loss is flat (<0.1% range) over the opening window **and** the metric is not meaningfully better than chance | full |
+| `stuck_at_chance` | after warmup (max(3, 10% of the run)), the metric is not meaningfully past chance for 3 records running — skipped when the claim itself sits near chance | full |
+| `diverged` | the loss is >1.5x its best **and** the metric has kept <50% of its best gain over chance, for 3 records running | full |
+
+"Meaningfully past chance" is max(3 SEs, 10% of the distance from chance to a perfect
+score). `no_progress` was first allowed in `capped` too, and end-to-end testing
+showed why it cannot be: a correctly generated soft tree, whose leaves start uniform,
+held its loss at ln 10 = 2.303 for all five capped epochs while accuracy was already
+30% — three times chance.
+
+**Verified** (`tests/test_checkups.py`, 22 replays of real curves; plus Docker):
+
+| Curve | Result |
+|---|---|
+| Tang ablation, as generated (mom 0.9, C=1.0) | halted at epoch 12, `diverged` |
+| Tang ablation, whitened PCA | halted at epoch 6, `diverged` |
+| Tang ablation, 4 stable configs; Tang C=0.1; Wijaya; soft tree (fixed, 40 epochs); random forest; SVM | never halted |
+| Soft tree, sign-flipped loss, **live `full` run in Docker** | halted at epoch 1 of 40, container killed 0.3 s after the record — ~70 min saved |
+| Same fault through the Orchestrator | halted in `probe` after 5 s → evidence fed to the Coder → regenerated script passed to `capped`, `success` |
+
 ## Class architecture
 
 ```
@@ -583,16 +641,14 @@ Everything this section once listed as written-but-unrun has now run:
 
 ### Still open
 
-- **Success is decided on exit code alone.** Nothing reads `train_metric`, so a
-  `capped` stage passes whether or not training learned anything — despite the stage
-  being described as answering "does it actually learn?".
-- **The escalation ladder cannot catch at-scale instability.** Tang 2013 learned
-  cleanly through probe → smoke → capped (train error 75% → 57% → 31%), then its
-  `full` run collapsed around epoch 20 into a network of dead ReLUs predicting one
-  class — failure that needed thousands of optimizer steps to appear. Had it
-  finished, it would have reported `success` at ~89% error against a claimed 0.87%.
-  See `docs/notes/tang-2013-ablation/`. Judging whether a number is sane is the
-  Critic's job, and the Critic does not exist yet.
+- **Check-ups judge health, not fidelity.** A run that learns healthily but lands far
+  from the paper's number (Wijaya: RMSE 4.48 vs 3.02) passes every check-up; comparing
+  a result with its claim is the Critic's job, and the Critic does not exist yet.
+- **Check-ups only see what the script records.** A script from before the progress
+  contract (NIN, WRN, Tang, Wijaya's current scripts) writes no history and is judged
+  on its exit code alone until regenerated.
+- **Thresholds are calibrated on nine papers' worth of curves.** Every halt logs its
+  evidence, so a false positive is visible; tune the constants in `checkups.py`.
 - **The image is not reproducible byte-for-byte.** `python:3.11-slim` is a moving tag
   and torch's own transitive dependencies are unpinned, so a rebuild can differ from
   the image an earlier run used. Pinning the base by digest would fix it.
