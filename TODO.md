@@ -20,18 +20,27 @@ runs showed.
 2. **The Critic agent** — judge each reproduced number against its claim.
 3. **Loop controls** — make the Orchestrator's retries targeted, bounded and auditable.
 
-**Priorities 1 and 2 are done (2026-09-14).**
-- **Runner live check-ups:** the learning-curve history contract and the classical-model
-  ladder, verified by replaying real curves and live in Docker.
-- **The Critic (`critic/`):** arithmetic verdicts with evidence-based tolerance, claim dedup,
-  extra seeds for inconclusive single runs, and one guided fidelity retry. It re-judges all
-  five real results the way a person did by hand. Its first end-to-end run was Wijaya: one
-  run inconclusive → seeds → **pass**.
+**Priority 1 is done and priority 2 is half done (2026-09-14).**
+- **Runner live check-ups:** done.
+- **Critic v1 (`critic/`, commit `f4a772c`):** the arithmetic half.
+  - Verdicts with evidence-based tolerance, claim dedup, extra seeds, and one templated guided
+    retry.
+  - All five real results pass. Wijaya went end to end: inconclusive → seeds → pass.
 
-Details are below and in `runner/README.md` and `critic/README.md`.
+**Correction agreed with Engincan (2026-09-14):** v1 is only half of project plan §2.5. The
+plan's Critic also uses an LLM, and Engincan expects the Critic to be an agent that reviews code,
+runner output and results and feeds back to the Coder. So **Critic v2** adds that half.
 
-**Next, as agreed:** the **report generator** (claim-by-claim Markdown from `state.json`), then
-**priority 3, loop controls**. Present a plan before building, as usual.
+**Next, in this order (Engincan, 2026-09-14):**
+1. **Build Critic v2** (plan below, under priority 2), then run its loop on one basic paper
+   (Wijaya, Boston Housing: full run ≈ 3 min).
+2. **Run the whole pipeline from scratch on that basic paper**: PDF → `ocr/` → `reader/` →
+   Orchestrator with the Critic.
+3. **Then the report generator.** A plan was already presented: template-driven Markdown per
+   paper, SVG learning curves, claim table, attempt timeline, collapsible final script and a
+   cross-paper index. Its open questions are an optional Sonnet gap paragraph, reruns of old
+   papers, and Markdown vs HTML.
+4. Priority 3, loop controls.
 
 ---
 
@@ -71,7 +80,7 @@ by-hand judgements.
 | `coder/` | ✅ built — PyTorch loop **or scikit-learn** by model family | 5 families generated and run |
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
-| `critic/` | ✅ built — arithmetic verdicts, claim dedup, seeds, guided retry | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
+| `critic/` | 🟡 v1 built (arithmetic verdicts, claim dedup, seeds, templated guided retry); **v2 LLM review next** | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
 | **report generator** | ❌ not started | — |
 | `viewer/` | 🟡 Mert's branch `origin/mert/runner-agent`, not merged | — |
 
@@ -93,7 +102,34 @@ by-hand judgements.
       consider a "no record for too long" hang rule; keep calibrating thresholds from every halt's
       logged evidence (one false positive already found and fixed end to end).
 
-### 2. The Critic agent (`critic/`) — ✅ done 2026-09-14
+### 2. The Critic agent (`critic/`) — v1 ✅ 2026-09-14, **v2 next**
+
+**Critic v2 plan (approved 2026-09-14): the LLM half of project plan §2.5.**
+- [ ] **Code review:** one Sonnet call after EVERY full run, passes included.
+  - Inputs: the Reader extraction (hyperparameters, architecture notes and `key_equations`,
+    data pipeline), the final `train.py`, the Coder's `assumptions`, and run evidence (history
+    curve summary, check-ups, metrics, seed values).
+  - Output: structured `matches` / `deviations` / `unstated_guesses`, each item citing the
+    paper's text and the script line (PaperBench's "Code Development" dimension).
+- [ ] **Diagnosis:** on `fail`, or `inconclusive` after seeds, ranked concrete hypotheses
+      replace the templated `guided_retry_feedback`. A **stated value the script got wrong is a
+      bug**, fixable with a normal retry. Unstated guesses keep the one-guided-retry limit.
+- [ ] **Guard rails:**
+  - The LLM never changes the arithmetic verdict.
+  - Every number in its text must appear in the facts it was given (deterministic check).
+  - Every claimed deviation must quote the paper.
+- [ ] **Feedback to the Runner** is only "what to run" (seeds, a longer stage); the
+      Orchestrator routes it. Code fixes go to the Coder.
+- [ ] **Defaults chosen** (Engincan did not answer these two questions): review every full run,
+      and Sonnet only. Opus escalation for borderline gaps is a later, optional step.
+- [ ] **Real cases it should catch**, all of which a human caught (or nobody did):
+  - The soft tree implemented the misprinted Eq. 3 and trained in the wrong direction.
+  - Tang's `C=1.0` collapsed the network.
+  - The old NIN script used gradient clipping the paper doesn't.
+  - Wijaya uses PyTorch BatchNorm defaults instead of Keras's.
+- [ ] Demo: the Critic loop on Wijaya, then the full pipeline from scratch on it.
+
+**v1 (done):**
 - [x] **Arithmetic verdicts** `pass` / `fail` / `inconclusive` / `not_evaluated` (project plan §2.5),
       with every number and the rule behind it; only `full` is comparable.
 - [x] **Tolerance** `max(2 × uncertainty, reporting precision)`. Uncertainty is the measured run

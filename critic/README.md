@@ -6,7 +6,15 @@ stage's job. It reads the paper's claims (`reader/`) and the reproduced value
 (`metrics.full.json`) and returns a verdict. Every verdict comes with the numbers and
 the rule behind it.
 
-**It is arithmetic, not a model.** It makes no API call, runs no Docker and needs no
+> **Status (2026-09-14): this is Critic v1, the arithmetic half of project plan §2.5.**
+> **Critic v2**, planned next, adds the LLM half:
+> - a Sonnet code review after every full run, checking the script against the paper
+>   with cited evidence;
+> - concrete, ranked diagnosis feedback to the Coder on a fail, replacing the template.
+>
+> The pass/fail verdict below stays arithmetic in v2. See `TODO.md`, priority 2.
+
+**The verdict is arithmetic, not a model.** It makes no API call, runs no Docker and needs no
 network. Project plan §2.5 is explicit that numeric comparison must not be left to
 an LLM, which may read 0.82 and 0.87 as "close" one time and "different" the next.
 Every threshold below is a formula you can check by hand.
