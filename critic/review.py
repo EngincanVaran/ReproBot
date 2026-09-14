@@ -45,7 +45,12 @@ from reader.tooluse import as_list, recover_leaked_fields, request_tool_use
 if TYPE_CHECKING:
     from anthropic import Anthropic
 
-MODEL = "claude-sonnet-5"
+# Opus 5, not Sonnet 5, after a controlled test on 2026-09-14: on the same inputs (a Wijaya
+# script with its train/validation unpacking swapped, so the model trained on 81 rows
+# instead of 324) Sonnet 5 missed the bug in three reviews - even with the script's own log
+# saying "81 train_fit, 324 val" - while Opus 5 found it, cited the log and lines 178-180,
+# and proposed the exact fix. One call per judged full run; `--review-model` overrides.
+MODEL = "claude-opus-5"
 MAX_TOKENS = 16000
 LOG = "critic:review"
 
@@ -66,6 +71,9 @@ CHANGE_TYPES: tuple[str, ...] = (
 STATED_PROBLEM_KINDS: frozenset[str] = frozenset({"deviates_from_paper", "implementation_bug"})
 SMALL_INTEGER_LIMIT = 10
 HISTORY_SAMPLES = 12
+LOG_HEAD_LINES = 60
+LOG_TAIL_LINES = 20
+LOG_MAX_CHARS = 8000
 
 REVIEW_TOOL: dict[str, Any] = {
     "name": "review_replication",
@@ -157,26 +165,37 @@ RULES
 optimizer, learning rate and schedule, epochs, batch size, data source, split, \
 preprocessing, initialisation, regularisation and how the metric is evaluated. Report the \
 important aspects as findings, including the ones that match.
-2. Classify each finding:
+2. TRACE THE DATA, line by line, before judging anything else. Which arrays does the model \
+train on, which does it monitor, which produce the final metric, and how many rows does \
+each hold? Compare those sizes with the paper's stated split, with the sample counts in \
+RUN EVIDENCE and with the sizes the script itself logged in RUNNER LOG. Check the unpacking \
+order of every split call (train_test_split returns train before test for each array), and \
+check that preprocessing is fitted on training data only. A model trained on the wrong \
+subset is an implementation_bug even when it runs well.
+3. Classify each finding:
    - matches_paper: the paper states it and the script does it.
    - deviates_from_paper: the paper states X and the script does something else.
    - unstated_choice: the paper is silent and the script had to choose. Disclosed guesses \
 belong here, even framework-default translations.
    - implementation_bug: wrong whatever the paper says - a loss optimised in the wrong \
 direction, test data leaking into training, the metric computed on the wrong split, a \
-literal implementation of a misprinted equation that cannot be minimised.
-3. Cite every finding: paper_quote is an EXACT quote (at most 30 words) copied from PAPER or \
+literal implementation of a misprinted equation that cannot be minimised. Behaviour the \
+paper itself specifies is never a bug: training for the stated number of epochs without \
+early stopping, when the paper does exactly that, is correct even if the curve overfits.
+4. Cite every finding: paper_quote is an EXACT quote (at most 30 words) copied from PAPER or \
 READER EXTRACTION, or the words "not stated". script_lines are line numbers from SCRIPT and \
 script_snippet is code copied exactly from those lines. Uncited findings are discarded.
-4. Use the learning curve and metrics in RUN EVIDENCE. A curve that stalls above the claim, \
+5. Use the learning curve and metrics in RUN EVIDENCE. A curve that stalls above the claim, \
 overfits, diverges or never beats chance is evidence about which hypothesis is right.
-5. When the verdict is fail or inconclusive, give ranked hypotheses for the gap, each with \
+6. When the verdict is fail or inconclusive, give ranked hypotheses for the gap, each with \
 the concrete script change it implies. Prefer stated deviations and bugs over unstated \
-choices. Never propose a change whose only justification is moving the test number, and \
-never propose changing a value the paper states unless the script got it wrong.
-6. Only use numbers that appear in the material below. Do not compute new ratios or \
+choices. Never propose a change whose only justification is moving the test number, never \
+propose changing a value the paper states unless the script got it wrong, and never \
+propose adding a technique the paper does not use (early stopping, checkpoint selection, \
+extra regularisation) as a fix_stated_deviation or fix_implementation_bug.
+7. Only use numbers that appear in the material below. Do not compute new ratios or \
 percentages; the facts already include the gap and the relative gap.
-7. Severity is about the likely effect on the reproduced result: high can plausibly \
+8. Severity is about the likely effect on the reproduced result: high can plausibly \
 explain the gap on its own, low is cosmetic.
 
 --- VERDICT FACTS ---
@@ -184,6 +203,9 @@ explain the gap on its own, low is cosmetic.
 
 --- RUN EVIDENCE ---
 {evidence}
+
+--- RUNNER LOG (the full stage's own output, per-epoch progress lines removed) ---
+{log}
 
 --- CODER BOOKKEEPING (what the Coder says it used and guessed) ---
 {bookkeeping}
@@ -285,11 +307,16 @@ def summarise_history(path: Path) -> dict[str, Any]:
     if not records:
         return {"available": False, "reason": f"{path.name} holds no records"}
     keys = ("step", "train_loss", "eval_loss", "train_metric", "eval_metric")
+    last = records[-1]
+    counts = {
+        k: last.get(k)
+        for k in ("num_train_samples", "num_eval_samples")
+        if isinstance(last.get(k), int)
+    }
     stride = max(1, len(records) // HISTORY_SAMPLES)
     sampled = records[::stride]
     if sampled[-1] is not records[-1]:
         sampled.append(records[-1])
-    last = records[-1]
     hib = last.get("higher_is_better")
     scored = [r for r in records if isinstance(r.get("eval_metric"), int | float)]
     best = None
@@ -304,6 +331,7 @@ def summarise_history(path: Path) -> dict[str, Any]:
         "higher_is_better": hib,
         "chance_metric": _round(last.get("chance_metric")),
         "target_value": _round(last.get("target_value")),
+        "monitoring_split_sample_counts": counts,
         "note": "eval_metric in this curve is the script's own monitoring split; the final "
         "reproduced value in VERDICT FACTS is computed on the held-out evaluation set.",
         "sampled": [{k: _round(r.get(k)) for k in keys if k in r} for r in sampled],
@@ -362,6 +390,39 @@ def build_facts(
         "learning_curve": history,
     }
     return verdict, evidence
+
+
+_PROGRESS_LINE = re.compile(r"REPROBOT_PROGRESS|\bEpoch\s+\d+\s*/\s*\d+", re.IGNORECASE)
+
+
+def log_excerpt(logs_dir: Path | None, mode: str = "full") -> str:
+    """The stage's own log lines (what the script said it did), without the per-epoch noise.
+
+    Added after the first fix loop: the review missed a swapped train/validation split
+    that the script's own log stated plainly ("81 train_fit, 324 val").
+    """
+    if logs_dir is None:
+        return "(no runner log available)"
+    lines: list[str] = []
+    for stream in ("stderr", "stdout"):
+        path = logs_dir / f"{mode}.{stream}.log"
+        if path.is_file():
+            kept = [
+                line
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if line.strip() and not _PROGRESS_LINE.search(line)
+            ]
+            lines += [f"[{stream}] {line}" for line in kept]
+    if not lines:
+        return "(no runner log available)"
+    if len(lines) > LOG_HEAD_LINES + LOG_TAIL_LINES:
+        omitted = len(lines) - LOG_HEAD_LINES - LOG_TAIL_LINES
+        lines = [
+            *lines[:LOG_HEAD_LINES],
+            f"... {omitted} lines omitted ...",
+            *lines[-LOG_TAIL_LINES:],
+        ]
+    return "\n".join(lines)[:LOG_MAX_CHARS]
 
 
 def numbered(script: str) -> str:
@@ -447,12 +508,75 @@ def quote_found(quote: str, sources: str) -> bool:
     return bool(fragments) and all(f in sources for f in fragments)
 
 
+_LINE_NUMBER_PREFIX = re.compile(r"^\s*\d+\s*\|\s?")
+
+
+def snippet_found(snippet: str, normalised_script: str) -> bool:
+    """Every quoted code line must occur in the script; the lines need not be adjacent.
+
+    Reviewers stitch non-adjacent lines into one snippet (Opus 5 did on its first
+    review) or elide with "..."; each real line still has to exist verbatim.
+    """
+    lines = [_LINE_NUMBER_PREFIX.sub("", line) for line in snippet.splitlines()]
+    fragments = [
+        fragment
+        for line in lines
+        for fragment in (f.strip(" .") for f in re.split(r"\.\.\.|…", _normalise(line)))
+        if fragment
+    ]
+    return bool(fragments) and all(f in normalised_script for f in fragments)
+
+
 def is_not_stated(quote: str) -> bool:
     return _normalise(quote).startswith(("not stated", "the paper does not state", "unstated"))
 
 
-def verify(review: Review, *, script: str, paper_sources: str, facts_text: str) -> Review:
-    """Mark every finding and hypothesis that fails a deterministic check."""
+# Training techniques a correctness fix must never ADD unless the paper uses them. Seen on
+# the first fix loop (2026-09-14): a review filed "trains the stated 1000 epochs with no
+# early stopping" as an implementation bug, the citations were real, and the Coder added
+# best-checkpoint restoring - moving the script away from the paper.
+ADD_ON_TECHNIQUES: dict[str, tuple[str, ...]] = {
+    "early stopping": ("early stopping", "early-stopping", "earlystopping", "patience"),
+    "checkpoint selection": ("checkpoint", "best epoch", "best-epoch", "best weights",
+                             "best model", "best-validation", "best validation", "restore best"),
+    "dropout": ("dropout",),
+    "weight decay": ("weight decay", "weight_decay", "l2 regularization", "l2 regularisation"),
+    "gradient clipping": ("gradient clipping", "clip_grad", "grad clipping"),
+    "learning-rate schedule": ("lr scheduler", "learning rate schedule", "learning-rate schedule",
+                               "reducelronplateau", "cosine annealing", "step decay"),
+    "data augmentation": ("augmentation",),
+    "ensembling": ("ensemble",),
+}  # fmt: skip
+_REMOVAL = re.compile(r"\b(remove|drop|delete|disable|stop using|take out|without adding)\b")
+_ABSENCE = re.compile(r"\b(no|without|lacks?|missing|never uses?|does not use)\b")
+
+
+def foreign_techniques(text: str, paper_sources: str) -> list[str]:
+    """Techniques named in `text` that the paper and its extraction never mention."""
+    lowered = text.lower()
+    foreign = []
+    for technique, words in ADD_ON_TECHNIQUES.items():
+        if any(w in lowered for w in words) and not any(w in paper_sources for w in words):
+            foreign.append(technique)
+    return foreign
+
+
+def verify(
+    review: Review,
+    *,
+    script: str,
+    paper_sources: str,
+    facts_text: str,
+    paper_text: str | None = None,
+) -> Review:
+    """Mark every finding and hypothesis that fails a deterministic check.
+
+    `paper_sources` (paper + extraction + Coder bookkeeping) backs quotes and numbers.
+    `paper_text` - the paper alone - backs the add-on-technique check: the extraction
+    and bookkeeping mention techniques as ABSENT ("dropout not mentioned"), which must
+    not count as the paper using them.
+    """
+    paper_only = paper_text if paper_text is not None else paper_sources
     lines = script.splitlines()
     known = context_numbers(facts_text, paper_sources, script)
     count = len(lines)
@@ -474,16 +598,26 @@ def verify(review: Review, *, script: str, paper_sources: str, facts_text: str) 
         if bad:
             finding.problems.append(f"script lines {bad} do not exist")
         snippet = _normalise(finding.script_snippet)
-        if snippet and not quote_found(finding.script_snippet, normalised_script):
+        if snippet and not snippet_found(finding.script_snippet, normalised_script):
             finding.problems.append("script_snippet not found in the script")
         if not finding.script_lines and not snippet:
             finding.problems.append("no script reference")
+        if finding.kind in STATED_PROBLEM_KINDS and _ABSENCE.search(finding.explanation.lower()):
+            for technique in foreign_techniques(finding.explanation, paper_only):
+                finding.problems.append(
+                    f"faults the script for lacking {technique}, which the paper never uses"
+                )
         finding.verified = not finding.problems
 
     for hypothesis in review.hypotheses:
         prose = f"{hypothesis.hypothesis} {hypothesis.evidence} {hypothesis.change}"
         for token in unsupported_numbers(prose, known, count):
             hypothesis.problems.append(f"number {token} is not in the material given")
+        if hypothesis.change_type != "run_more" and not _REMOVAL.search(hypothesis.change.lower()):
+            for technique in foreign_techniques(hypothesis.change, paper_only):
+                hypothesis.problems.append(
+                    f"proposes adding {technique}, which the paper never uses"
+                )
         hypothesis.verified = not hypothesis.problems
 
     for token in unsupported_numbers(f"{review.summary} {review.curve_assessment}", known, count):
@@ -554,9 +688,12 @@ def review_run(
     script: str,
     paper_markdown: str,
     history_path: Path,
+    logs_dir: Path | None = None,
+    model: str = MODEL,
 ) -> Review:
-    """One Sonnet review of a judged run, verified before it is returned."""
+    """One review of a judged run (Sonnet by default), verified before it is returned."""
     history = summarise_history(history_path)
+    log_text = log_excerpt(logs_dir)
     verdict, evidence = build_facts(judgement, metrics, history)
     bookkeeping = {
         k: coder_output.get(k)
@@ -581,20 +718,21 @@ def review_run(
     user_content = PROMPT.format(
         verdict=verdict_text,
         evidence=evidence_text,
+        log=log_text,
         bookkeeping=bookkeeping_text,
         extraction=extraction_text,
         script=numbered(script),
         paper=paper_markdown,
     )
     logger.info(
-        f"  [{LOG}] reviewing with {MODEL}: verdict {judgement.verdict}, script "
+        f"  [{LOG}] reviewing with {model}: verdict {judgement.verdict}, script "
         f"{len(script.splitlines())} lines, paper {len(paper_markdown)} chars, curve "
-        f"{history.get('records', 0)} records"
+        f"{history.get('records', 0)} records, log {len(log_text)} chars"
     )
     payload = request_tool_use(
         client,
         log_prefix=LOG,
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
         tool=REVIEW_TOOL,
         user_content=user_content,
@@ -602,11 +740,14 @@ def review_run(
         may_be_empty_keys=("hypotheses",),
     )
     payload = recover_leaked_fields(payload, list(REVIEW_TOOL["input_schema"]["required"]), LOG)
+    parsed = parse_review(payload)
+    parsed.model = model
     review = verify(
-        parse_review(payload),
+        parsed,
         script=script,
         paper_sources=_normalise(f"{paper_markdown}\n{extraction_text}\n{bookkeeping_text}"),
-        facts_text=f"{verdict_text}\n{evidence_text}",
+        facts_text=f"{verdict_text}\n{evidence_text}\n{log_text}",
+        paper_text=_normalise(paper_markdown),
     )
     log_review(review)
     return review

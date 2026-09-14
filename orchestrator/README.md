@@ -88,6 +88,7 @@ When `decide_after_run` says `done`, `_critic_phase` judges the result with
 | `pass`, `not_evaluated` | — | accept; the loop ends `success` |
 | `inconclusive` (one run, no noise estimate) | the full run took ≤ `--seed-budget` (1800 s) and `reproduce.sh` has `seed2\|seed3` | run `seed2` and `seed3` in the same container setup, judge the mean of three, route again (once) |
 | `inconclusive` | seeds already ran, or unaffordable | accept as inconclusive |
+| `fail` | **the Critic v2 review found verified high/medium deviations from what the paper states, or a bug**, and the retry budget has room | **fix**: regenerate with `deviation_feedback` (the cited problems plus fix hypotheses), a correctness retry that does not use the fidelity budget |
 | `fail` | a fidelity retry is left (`--fidelity-retry-budget`, default 1), the retry budget has room, and the Coder recorded unstated choices | **retry**: regenerate with `guided_retry_feedback`, which covers the gap and the Coder's own `assumptions` as the only things it may change |
 | `fail` | otherwise | accept as fail |
 
@@ -98,7 +99,11 @@ retry budget and increments `fidelity_retry_count`. After the retry, the regener
 script runs through the whole ladder again and is judged again. Its judgement is
 appended to `critic_output.judgements`, so a report can show both.
 
-`--no-critic` restores the execution-only loop.
+Once the verdict is final (after any seeds), **Critic v2 reviews the attempt**: one Sonnet
+call checks the script against the paper, and its verified findings decide between `fix`
+and the guided retry. The review is stored under `critic_output.review` and recorded as a
+`reviewed vN` history entry. A failed review call degrades to the v1 routing.
+`--no-review` skips it, and `--no-critic` restores the execution-only loop.
 
 ### A halted run retries with its evidence (added 2026-09-14)
 

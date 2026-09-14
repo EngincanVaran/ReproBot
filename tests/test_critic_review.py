@@ -167,3 +167,36 @@ def test_a_fail_with_stated_problems_routes_to_a_correctness_fix() -> None:
         == "accept"
     )
     assert decide_after_critic(**common, fidelity_retries_used=0, retry_count=0).action == "retry"
+
+
+def test_a_fix_may_not_add_a_technique_the_paper_never_uses() -> None:
+    # The first real fix loop: "no early stopping" filed as a high-severity bug.
+    overfit = finding(
+        kind="implementation_bug",
+        aspect="model selection",
+        severity="high",
+        paper_quote="trained for 1000 epochs",
+        script_lines=[5],
+        script_snippet='parser.add_argument("--epochs", type=int, default=1000)',
+        explanation="Trains all epochs with no early stopping and reports final-epoch weights.",
+    )
+    add = Hypothesis(1, "Overfits.", "Curve rises.", "Add early stopping on the monitoring split.",
+                     "fix_implementation_bug")  # fmt: skip
+    remove = Hypothesis(2, "Clipping.", "Not in paper.", "Remove the gradient clipping.",
+                        "fix_stated_deviation")  # fmt: skip
+    review = review_of(overfit, hypotheses=[add, remove])
+    assert not review.findings[0].verified
+    assert review.stated_problems() == []
+    assert not review.hypotheses[0].verified
+    assert review.hypotheses[1].verified
+
+
+def test_stitched_non_adjacent_snippet_lines_are_allowed() -> None:
+    # Opus 5's first review quoted lines 2 and 5 as one snippet, without "...".
+    stitched = finding(
+        script_lines=[2, 5],
+        script_snippet='scaler = StandardScaler()\nparser.add_argument("--epochs", type=int',
+    )
+    assert review_of(stitched).findings[0].verified
+    invented = finding(script_snippet="scaler = StandardScaler()\nmodel.fit(X_test)")
+    assert not review_of(invented).findings[0].verified

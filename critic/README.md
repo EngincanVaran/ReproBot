@@ -6,13 +6,14 @@ stage's job. It reads the paper's claims (`reader/`) and the reproduced value
 (`metrics.full.json`) and returns a verdict. Every verdict comes with the numbers and
 the rule behind it.
 
-> **Status (2026-09-14): this is Critic v1, the arithmetic half of project plan §2.5.**
-> **Critic v2**, planned next, adds the LLM half:
-> - a Sonnet code review after every full run, checking the script against the paper
->   with cited evidence;
-> - concrete, ranked diagnosis feedback to the Coder on a fail, replacing the template.
->
-> The pass/fail verdict below stays arithmetic in v2. See `TODO.md`, priority 2.
+The Critic has two halves (project plan §2.5):
+
+- **The verdict** (`judge.py`, v1) is arithmetic. It decides `pass` / `fail` /
+  `inconclusive` / `not_evaluated`, and no model can change it.
+- **The review** (`review.py`, v2) is one Sonnet call. It reads the paper, the script
+  and the run, and explains the verdict: is this the paper's method, what deviates, and
+  what should the Coder change? Its output passes deterministic checks before anything
+  reaches the Coder. See "Critic v2: the review" below.
 
 **The verdict is arithmetic, not a model.** It makes no API call, runs no Docker and needs no
 network. Project plan §2.5 is explicit that numeric comparison must not be left to
@@ -22,8 +23,9 @@ Every threshold below is a formula you can check by hand.
 ```
 critic/
 ├── claims.py    merge duplicate claims (one result printed in prose, table and figure)
-├── judge.py     tolerance + verdict for one claim, and the guided-retry feedback text
-└── pipeline.py  CLI: judge an Orchestrator state, or a reader JSON + metrics file
+├── judge.py     tolerance + verdict for one claim (v1 guided-retry text as a fallback)
+├── review.py    v2: Sonnet review of script vs paper, guards, feedback to the Coder
+└── pipeline.py  CLI: judge (and --review) an Orchestrator state, or reader JSON + metrics
 ```
 
 ## Verdicts
@@ -198,6 +200,69 @@ Every judgement is kept in `state.critic_output`: the latest at the top level, w
 attempt also records its `critic_verdict`. The fidelity retry count is
 `state.fidelity_retry_count`.
 
+## Critic v2: the review
+
+**Why.** The arithmetic says *whether* a number matches, never *why not*, and it can't
+tell whether a passing script is the paper's method at all. Every real defect found in
+this project so far was caught by a person reading code or logs:
+- the soft tree implemented the misprinted Eq. 3 and trained in the wrong direction;
+- Tang's `C=1.0` collapsed the network;
+- the old NIN script used gradient clipping the paper never mentions.
+
+**What it reads.** After a judged full run, one `claude-sonnet-5` call gets:
+- the verdict facts (claimed, reproduced, run values, gap, relative gap, tolerance);
+- the run evidence: final metrics and a compact learning curve (evenly spaced records, the
+  best eval point, chance level, target);
+- the Coder's bookkeeping (`hyperparameters_used`, `assumptions`);
+- the Reader extraction (method summary, architecture notes with equations,
+  hyperparameters, data pipeline);
+- the line-numbered script and the paper's Markdown.
+
+**What it returns** (forced tool use, `review_replication`):
+- `method_fidelity`: `faithful` / `minor_deviations` / `major_deviations`.
+- `findings`, each one of `matches_paper`, `deviates_from_paper`, `unstated_choice` or
+  `implementation_bug`, with a severity, an exact paper quote (or "not stated"), script
+  lines and an exact code snippet.
+- `hypotheses`, ranked, each with the concrete change it implies and a `change_type`
+  (`fix_stated_deviation`, `fix_implementation_bug`, `revisit_unstated_choice`,
+  `run_more`).
+- A short `summary` and `curve_assessment`.
+
+**Guards (deterministic, `verify`).** A finding or hypothesis that fails any of these is
+kept in the record with its problems, marked unverified, and **never fed to the Coder**:
+1. **Numbers.** Every number in its prose must appear in the material it was given, at the
+   precision it was written ("3.0" matches 3.02).
+   - Integers up to 10 are exempt.
+   - "1,000" and "[237,239]" are both read correctly.
+   - A number after "line" passes if the script has that line.
+2. **Quotes.** A paper quote must occur in the paper, the extraction or the Coder's
+   bookkeeping (case, whitespace and quote marks ignored; `...` joins fragments). A
+   `matches_paper` or `deviates_from_paper` finding cannot cite "not stated".
+3. **Script references.** Lines must exist, and the snippet must occur in the script
+   (`...` allowed).
+
+**Routing** (`decide_after_critic` in `orchestrator/loop.py`):
+
+| Verdict | Review | Action |
+|---|---|---|
+| `fail` | verified high/medium `deviates_from_paper` or `implementation_bug` | **`fix`**: a correctness retry on the normal retry budget. Feedback lists the verified problems with quotes and lines plus the fix hypotheses; changes are recorded as `deviation fix:` assumptions |
+| `fail` | none | the one guided fidelity retry, now with the review's verified `revisit_unstated_choice` hypotheses (`fidelity retry:` assumptions) |
+| `pass` | stated problems found | accepted (a pass is final). The problems are logged loudly and recorded for the report |
+| any | the call fails | logged, recorded in history, and the loop continues with v1 behaviour |
+
+Making the script do what the paper states is never tuning, which is why `fix` does not
+use the one fidelity retry.
+
+**Seen on the first real review (Wijaya's correct script, 2026-09-14).**
+- It rated the script `faithful`, with 5 `matches_paper` and 5 `unstated_choice` findings
+  (OpenML loader, batch size 32, PyTorch init vs Keras Glorot, Adam ε 1e-7, validation
+  split usage).
+- **The model leaked its whole `findings` array inside `curve_assessment`.** It was the
+  same failure the Coder had hit before. `reader/tooluse.py::recover_leaked_fields` now
+  splits it back out. The raw payload is the replay fixture in `tests/test_critic_review.py`.
+- After recovery, 9 of 10 findings passed the checks. The 10th had shortened a code snippet
+  with `...`, and elided snippets are now allowed.
+
 ## Usage
 
 ```bash
@@ -206,6 +271,9 @@ uv run python -m critic.pipeline --state orchestrator/output
 
 # judge one and store the verdict in its state.json
 uv run python -m critic.pipeline --state "orchestrator/output/<paper>" --write
+
+# add the Sonnet review of the script against the paper (one API call)
+uv run --extra orchestrator python -m critic.pipeline --state "orchestrator/output/<paper>" --review
 
 # judge a run made without the Orchestrator, optionally with extra seeds
 uv run python -m critic.pipeline --reader-json "reader/output/<paper>.json" \

@@ -281,6 +281,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--review-model",
+        default=None,
+        help="Model for the Critic review (default: claude-opus-5; claude-sonnet-5 is cheaper "
+        "but missed a swapped data split that Opus caught)",
+    )
+    parser.add_argument(
         "--seed-budget",
         type=float,
         default=DEFAULT_SEED_BUDGET_SECONDS,
@@ -393,6 +399,7 @@ def main() -> None:
         plateau_threshold=args.plateau_threshold,
         critic=not args.no_critic,
         review=not args.no_review,
+        review_model=args.review_model,
         seed_budget_seconds=args.seed_budget,
         fidelity_retry_budget=args.fidelity_retry_budget,
     )

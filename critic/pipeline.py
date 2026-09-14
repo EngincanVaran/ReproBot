@@ -85,12 +85,14 @@ def run_review(
     metrics: dict[str, Any] | None,
     reader_output: dict[str, Any],
     paper_dir: Path,
+    logs_dir: Path | None = None,
+    model: str | None = None,
 ) -> Review:
-    """The Sonnet review of one judged run, from the files the run left behind."""
+    """The review of one judged run, from the files the run left behind."""
     from anthropic import Anthropic
     from dotenv import load_dotenv
 
-    from critic.review import review_run
+    from critic.review import MODEL, review_run
 
     load_dotenv()
     coder_output = json.loads((paper_dir / "coder_output.json").read_text(encoding="utf-8"))
@@ -106,6 +108,8 @@ def run_review(
         script=(paper_dir / "train.py").read_text(encoding="utf-8"),
         paper_markdown=markdown.read_text(encoding="utf-8") if markdown.is_file() else "",
         history_path=paper_dir / "metrics.full.history.jsonl",
+        logs_dir=logs_dir,
+        model=model or MODEL,
     )
 
 
@@ -146,6 +150,11 @@ def main() -> None:
         help="also run the Sonnet review of the script against the paper (needs an API key)",
     )
     parser.add_argument(
+        "--review-model",
+        default=None,
+        help="model for --review (default: critic.review.MODEL, claude-sonnet-5)",
+    )
+    parser.add_argument(
         "--coder-output",
         type=Path,
         default=Path("coder/output"),
@@ -169,8 +178,13 @@ def main() -> None:
             if args.review:
                 reader = state.get("reader_output") or {}
                 metrics = (state.get("runner_output") or {}).get("reproduced_metrics")
+                logs = (state.get("runner_output") or {}).get("logs_path")
                 payload["review"] = run_review(
-                    judgement, metrics, reader, args.coder_output / paper
+                    judgement,
+                    metrics,
+                    reader,
+                    args.coder_output / paper,
+                    Path(logs) if logs else None,
                 ).to_dict()
             logger.info(f"  -> {write_output(args.output, paper, payload)}")
             if args.write:
@@ -200,7 +214,12 @@ def main() -> None:
     payload = {**judgement.to_dict(), "claim_groups": groups}
     if args.review:
         payload["review"] = run_review(
-            judgement, metrics, reader, args.metrics_json.parent
+            judgement,
+            metrics,
+            reader,
+            args.metrics_json.parent,
+            args.metrics_json.parent,
+            args.review_model,
         ).to_dict()
     logger.info(f"  -> {write_output(args.output, paper, payload)}")
 

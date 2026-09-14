@@ -74,6 +74,7 @@ from loguru import logger
 
 from coder.pipeline import CoderPipeline, ScriptGateError
 from critic.judge import Judgement, guided_retry_feedback, judge
+from critic.review import MODEL as REVIEW_MODEL
 from critic.review import Review, deviation_feedback, review_run, unstated_feedback
 from orchestrator.state import (
     STAGE_CODER,
@@ -496,6 +497,7 @@ class Orchestrator:
         plateau_threshold: float = DEFAULT_PLATEAU_THRESHOLD,
         critic: bool = True,
         review: bool = True,
+        review_model: str | None = None,
         seed_budget_seconds: float = DEFAULT_SEED_BUDGET_SECONDS,
         fidelity_retry_budget: int = DEFAULT_FIDELITY_RETRY_BUDGET,
     ) -> None:
@@ -506,6 +508,7 @@ class Orchestrator:
         self.plateau_threshold = plateau_threshold
         self.critic = critic
         self.review = review
+        self.review_model = review_model
         self.seed_budget_seconds = seed_budget_seconds
         self.fidelity_retry_budget = fidelity_retry_budget
 
@@ -943,6 +946,8 @@ class Orchestrator:
                 script=(paper_dir / "train.py").read_text(encoding="utf-8"),
                 paper_markdown=markdown.read_text(encoding="utf-8") if markdown.is_file() else "",
                 history_path=history_path_for(paper_dir, "full"),
+                logs_dir=Path(runner_output.logs_path) if runner_output.logs_path else None,
+                model=self.review_model or REVIEW_MODEL,
             )
         except Exception as exc:  # noqa: BLE001 - the review is advisory
             logger.error(f"  [critic] review failed, continuing without it: {exc}")
