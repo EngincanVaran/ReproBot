@@ -15,15 +15,20 @@ What a run does, per paper:
 3. On a failure, route on the triage category: an `environment_error` or a
    timeout stops immediately, a `recoverable_error` regenerates the script with
    the triage's `suggested_fix` as feedback and runs again.
-4. Stop on success, on an exhausted retry budget, or early if a regenerated
+4. On a run that finishes healthily, the Critic (`critic/`) judges the reproduced
+   number against the paper's claim: `pass`, `fail`, `inconclusive` or
+   `not_evaluated`. An inconclusive single run gets two extra seeds when the full run
+   was cheap (`--seed-budget`); a fail gets one guided retry that may change only
+   settings the paper does not state (`--fidelity-retry-budget`).
+5. Stop on success, on an exhausted retry budget, or early if a regenerated
    script comes back near-identical to the one that just failed.
-5. Write `orchestrator/output/<paper>/state.json`, with every attempt's script
+6. Write `orchestrator/output/<paper>/state.json`, with every attempt's script
    kept beside it under `attempts/`.
 
 This stage makes no LLM calls of its own. Every call it costs comes from the
 stages it drives: one Sonnet generation per attempt (`coder/`) and one Haiku
-triage per genuine failure (`runner/`). It also builds no Critic and compares no
-numbers - see `orchestrator/README.md`.
+triage per genuine failure (`runner/`). The Critic is arithmetic and costs nothing -
+see `orchestrator/README.md` and `critic/README.md`.
 
 Requires the `orchestrator` extra (`uv sync --extra orchestrator`), an
 ANTHROPIC_API_KEY in `.env`, and a reachable Docker daemon.
@@ -46,7 +51,13 @@ from loguru import logger
 
 from coder.pipeline import CoderPipeline, MissingPaperMarkdownError, resolve_paper_markdown
 from coder.script_writer import TrainingScriptWriter
-from orchestrator.loop import DEFAULT_PLATEAU_THRESHOLD, DEFAULT_RETRY_BUDGET, Orchestrator
+from orchestrator.loop import (
+    DEFAULT_FIDELITY_RETRY_BUDGET,
+    DEFAULT_PLATEAU_THRESHOLD,
+    DEFAULT_RETRY_BUDGET,
+    DEFAULT_SEED_BUDGET_SECONDS,
+    Orchestrator,
+)
 from runner.docker_runner import (
     DEFAULT_CACHE_DIR,
     DEFAULT_CHECKUP_INTERVAL,
@@ -108,6 +119,7 @@ def run_dataset(
         return
 
     verdicts: Counter[str] = Counter()
+    critic_verdicts: Counter[str] = Counter()
     errored = 0
     for reader_json_path in reader_json_paths:
         paper_id = reader_json_path.stem
@@ -140,6 +152,8 @@ def run_dataset(
         path = state.save(output_dir / OUTPUT_FILENAME)
         logger.info(f"  -> {path}")
         verdicts[str(state.verdict)] += 1
+        if state.critic_output:
+            critic_verdicts[str(state.critic_output.get("verdict"))] += 1
 
     summary = ", ".join(f"{count} {verdict}" for verdict, count in sorted(verdicts.items()))
     logger.info(
@@ -147,6 +161,11 @@ def run_dataset(
         + (f" ({summary})" if summary else "")
         + f", {errored} could not be run at all"
     )
+    if critic_verdicts:
+        judged = ", ".join(
+            f"{count} {verdict}" for verdict, count in sorted(critic_verdicts.items())
+        )
+        logger.info(f"[done] critic verdicts: {judged}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -246,6 +265,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CHECKUP_INTERVAL,
         help="Seconds between live check-up reads of a running stage's history file",
     )
+    parser.add_argument(
+        "--no-critic",
+        action="store_true",
+        help="Stop at execution: do not compare the reproduced number with the paper's claim",
+    )
+    parser.add_argument(
+        "--seed-budget",
+        type=float,
+        default=DEFAULT_SEED_BUDGET_SECONDS,
+        help=(
+            f"Run two extra seeds for an inconclusive result only when one full run took at "
+            f"most this many seconds (default: {DEFAULT_SEED_BUDGET_SECONDS:.0f}). 0 never does"
+        ),
+    )
+    parser.add_argument(
+        "--fidelity-retry-budget",
+        type=int,
+        default=DEFAULT_FIDELITY_RETRY_BUDGET,
+        help=(
+            f"Guided retries after a Critic fail, changing only unstated settings "
+            f"(default: {DEFAULT_FIDELITY_RETRY_BUDGET}). 0 makes a fail final"
+        ),
+    )
     parser.add_argument("--image", default=DEFAULT_IMAGE, help="Sandbox image tag")
     parser.add_argument(
         "--build",
@@ -297,6 +339,10 @@ def main() -> None:
         parser.error(str(exc))
     if args.retry_budget < 0:
         parser.error(f"--retry-budget must be >= 0, got {args.retry_budget}")
+    if args.seed_budget < 0:
+        parser.error(f"--seed-budget must be >= 0, got {args.seed_budget}")
+    if args.fidelity_retry_budget < 0:
+        parser.error(f"--fidelity-retry-budget must be >= 0, got {args.fidelity_retry_budget}")
     if not 0.0 < args.plateau_threshold <= 1.0:
         parser.error(f"--plateau-threshold must be in (0, 1], got {args.plateau_threshold}")
 
@@ -335,6 +381,9 @@ def main() -> None:
         modes=modes,
         retry_budget=args.retry_budget,
         plateau_threshold=args.plateau_threshold,
+        critic=not args.no_critic,
+        seed_budget_seconds=args.seed_budget,
+        fidelity_retry_budget=args.fidelity_retry_budget,
     )
 
     reader_json_paths = discover_reader_outputs(args.input)

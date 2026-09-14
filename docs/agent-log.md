@@ -1139,3 +1139,57 @@ file; the prompt now requires seeded stratified subsets. The regenerated soft tr
 the paper's misprinted Eq. 3 correctly on its own (expected cross-entropy, bound 0).
 
 ---
+
+### Direct — the Critic (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** next-phase priority 2, a Critic that judges each reproduced number against
+its claim. Design questions answered before building:
+- **Tolerance:** "up to you". Chosen as max(2 × uncertainty, reporting precision).
+- **Seeds:** run extra seeds only when a full run is cheap.
+- **Fail:** one guided retry rather than an immediate fail.
+- **Duplicate claims:** merge them inside the Critic without editing Reader output.
+
+The report generator comes after the Critic.
+
+**Built:**
+- `critic/claims.py`: claim dedup covering metric synonyms, precision-aware value match,
+  train/test conflicts, and model-name conflicts (location references such as "Table 3" are
+  stripped; other numbers are kept).
+- `critic/judge.py`:
+  - Uncertainty comes from measured run spread, else binomial test noise, else none.
+  - Verdicts are pass (including `exceeds_claim`), fail, inconclusive and not_evaluated.
+  - `guided_retry_feedback` names only the Coder's recorded unstated choices.
+- `critic/pipeline.py`: offline CLI over states or files.
+- Seed modes: `seed2`/`seed3` in the `reproduce.sh` template, plus Runner `SEED_MODES` with
+  full's timeout and rules.
+- Orchestrator:
+  - `decide_after_critic` and `_critic_phase` (extra seeds when full ≤ `--seed-budget`, one
+    fidelity retry).
+  - `critic_output`, `fidelity_retry_count`, per-attempt `critic_verdict`.
+  - CLI `--no-critic` / `--seed-budget` / `--fidelity-retry-budget`.
+- Tests: `tests/test_critic.py` (real claims and results) and `tests/test_loop_critic.py`
+  (routing).
+
+**Verified:**
+- Offline, the Critic gives the by-hand verdict on all five real results:
+  - Tang: pass, ±0.19 binomial.
+  - SVM guide: pass, ±0.55.
+  - Fashion-MNIST RF: pass and exceeds, ±0.0018 from the 5-run spread.
+  - Soft tree: pass and exceeds, ±0.46.
+  - Old Wijaya run: inconclusive.
+- Dedup over 243 claims from 9 papers merges only Wijaya's four groups (14 → 8). Two
+  over-merges found while building were fixed and are now tests: Fashion LinearSVC vs
+  LogisticRegression at 0.917, and WRN depth 40 vs 22 at 5.78%.
+- End to end on Wijaya (`--max-stage full --force`):
+  - One generation; all four stages healthy.
+  - Full ran 1000 epochs in 182 s: RMSE 3.75, `inconclusive`.
+  - The Orchestrator ran seed2 (2.84) and seed3 (3.40). Each also redraws the paper's
+    unstated split.
+  - Mean 3.33 vs 3.02, ±1.07: **pass**, with no retry and no human.
+- 53 tests pass.
+
+**Worth keeping:**
+- Wijaya's old 4.48 was one split. Three splits of the same implementation span 2.84–3.75,
+  and the paper's number sits inside that range.
+- That pass is on a wide band (35% of the claim), which a report must show.
+- The guided retry has not yet fired in a live run.

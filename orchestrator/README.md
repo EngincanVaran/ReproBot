@@ -12,8 +12,10 @@ genuine failure (`runner/`). §2.1 says the Orchestrator's transitions are
 deterministic given the triage category and the retry count, and they are — the
 routing table is plain Python.
 
-**It is not the Critic.** No reproduced number is compared to a claimed one and
-`critic_output` stays `null`. See "What this deliberately does not do".
+**It calls the Critic, but is not the Critic.** After a successful run, `critic/`
+compares the reproduced number with the paper's claim. The Critic is arithmetic,
+with no LLM. Its verdict can trigger extra seeds or one guided fidelity retry. See
+"The Critic phase" below and `critic/README.md`.
 
 ## The loop
 
@@ -74,6 +76,29 @@ It is a code bug the Coder can fix, it is caught before any container starts, an
 the fix costs **no Docker run** — so the parser's message is fed straight back as
 feedback and the loop continues. It still consumes one unit of retry budget: a
 model emitting invalid Python three times running is not converging either.
+
+### The Critic phase (added 2026-09-14)
+
+When `decide_after_run` says `done`, `_critic_phase` judges the result with
+`critic.judge` and routes the verdict through a fourth pure function,
+`decide_after_critic`:
+
+| Critic verdict | Condition | Action |
+|---|---|---|
+| `pass`, `not_evaluated` | — | accept; the loop ends `success` |
+| `inconclusive` (one run, no noise estimate) | the full run took ≤ `--seed-budget` (1800 s) and `reproduce.sh` has `seed2\|seed3` | run `seed2` and `seed3` in the same container setup, judge the mean of three, route again (once) |
+| `inconclusive` | seeds already ran, or unaffordable | accept as inconclusive |
+| `fail` | a fidelity retry is left (`--fidelity-retry-budget`, default 1), the retry budget has room, and the Coder recorded unstated choices | **retry**: regenerate with `guided_retry_feedback`, which covers the gap and the Coder's own `assumptions` as the only things it may change |
+| `fail` | otherwise | accept as fail |
+
+The loop's `verdict` stays an **execution** verdict (a fidelity `fail` still ends
+`success` if the script ran). The fidelity verdict lives in `critic_output` and on
+each attempt as `critic_verdict`. A fidelity retry charges one unit of the normal
+retry budget and increments `fidelity_retry_count`. After the retry, the regenerated
+script runs through the whole ladder again and is judged again. Its judgement is
+appended to `critic_output.judgements`, so a report can show both.
+
+`--no-critic` restores the execution-only loop.
 
 ### A halted run retries with its evidence (added 2026-09-14)
 
@@ -164,9 +189,10 @@ ReproState
 ├── reader_output      the whole reader/output/<paper>.json, embedded
 ├── coder_output       { script_path, script_version, diff_from_previous }
 ├── runner_output      { status, reproduced_metrics, logs_path, error_trace }
-├── critic_output      null — always, for now
+├── critic_output      latest Critic judgement + seed_run_values + all judgements, or null
 ├── retry_count        regenerations spent
 ├── retry_budget       regenerations allowed
+├── fidelity_retry_count  guided retries spent after a Critic fail
 ├── history            append-only [{ timestamp, stage, event, detail }]
 ├── verdict            the loop's terminal answer
 └── attempts           per-attempt record (see below)
@@ -179,9 +205,11 @@ anything.
 
 Four notes on fidelity to the plan:
 
-- **`critic_output` exists and is always `null`.** The Critic is not built. The
-  field is here so the schema does not change shape when it lands — code written
-  against this JSON today keeps working.
+- **`critic_output` is `null` until the Critic judges an attempt.** It was reserved
+  from the start so the schema did not change shape when the Critic landed. It holds
+  the latest judgement's fields (verdict, claimed, reproduced, tolerance, evidence,
+  merged claim ids, …) plus `script_version`, `seed_run_values` and the list of every
+  `judgements` entry. State files written before the Critic still load.
 - **`history` entries are structured, not prose strings.** §1.2 sketches them as
   free text. Splitting each into `timestamp` / `stage` / `event` / `detail` is
   the same append-only audit log with its fields separated, which is what makes
@@ -294,24 +322,23 @@ primitives and returns a verdict. A LangGraph node then wraps one stage call, an
 a conditional edge calls `decide_after_run` and switches on `decision.action`.
 Nothing about the routing rules would have to be rewritten.
 
-**When to do it:** when the Critic lands. That is what turns one conditional edge
-into real branching — pass → Report Generator, retry → Coder *with numeric*
-feedback, fail → escalate — and adds the Reader re-parse edge §1.1 sketches. A
-graph earns its keep at that shape; it does not at this one.
+**When to do it:** the Critic has now landed and added a second conditional edge
+(inconclusive → seeds, fail → guided retry). It is still four pure functions and one
+loop a reader can follow top to bottom, so the migration is still not worth its
+cost. Revisit when the Report Generator and the Reader re-parse edge (§1.1) arrive,
+or when a human-escalation edge needs to pause and resume a run.
 
 ## What this deliberately does not do
 
-**No Critic. No numeric comparison.** `critic_output` is `null` and nothing here
-reads `reader_output.claims` to diff a reproduced value against a reported one.
+**No fidelity verdict on cheap stages.** The Critic judges only a `full` run. The
+escalation modes `probe`, `smoke` and `capped` are execution gates, not
+reproductions: a `probe` is two optimizer steps, and its `test error` of ~92%
+against a claimed 4.00% says nothing except that the script ran. A run that stops
+below `full` is `not_evaluated`. Judging it would give a confident but meaningless
+verdict, which is the failure mode §2.5 cites Agent Laboratory for.
 
-That is not just "not built yet" — at this stage it would be actively
-misleading. The escalation modes the loop runs (`probe`, `smoke`, `capped`) are
-execution gates, not reproductions: a `probe` is two optimizer steps, and its
-`test error` of ~92% against the paper's claimed 4.00% says nothing except that
-the script ran. Only `full` produces a comparable number, and only on a GPU
-(~22 days on this CPU — see `runner/README.md`). A comparison built on `probe`
-numbers would produce a confident, meaningless verdict, which is precisely the
-failure mode §2.5 cites Agent Laboratory for.
+**No open-ended fidelity tuning.** One guided retry per paper, on unstated choices
+only. More retries would slowly fit unstated hyperparameters to the test split.
 
 Also not built: escalation to a human on `fail` (§2.1), the Reader re-parse edge
 (§1.1), and the Report Generator (§2.6) that consumes this state object.
@@ -352,6 +379,13 @@ uv run python -m orchestrator.pipeline --input reader/output/paper.json \
 # single-shot (generate + run, never retry), and a stricter plateau guard
 uv run python -m orchestrator.pipeline --input reader/output \
     --retry-budget 0 --plateau-threshold 0.999
+
+# a CPU-sized paper to its full setup, judged by the Critic (seeds if <= 30 min)
+uv run python -m orchestrator.pipeline --input reader/output/paper.json \
+    --max-stage full --seed-budget 1800 --fidelity-retry-budget 1
+
+# execution only, no fidelity judgement
+uv run python -m orchestrator.pipeline --input reader/output/paper.json --no-critic
 ```
 
 `--retry-budget` counts **regenerations**, not attempts: 2 means at most attempt
@@ -437,6 +471,28 @@ real 8038-char `diff_from_previous`, two `attempts` (v1 `error`/`recoverable_err
 `action: retry`, v2 `success`/`action: done`/`plateau_ratio: 0.4079`), and a
 7-entry `history` running orchestrator → coder → runner → orchestrator → coder →
 runner → orchestrator.
+
+### The Critic phase, end to end (2026-09-14)
+
+Wijaya 2023 (Boston Housing, claim RMSE 3.02) with `--max-stage full --force`:
+
+1. One Sonnet generation passed all three Coder gates.
+2. `probe`, `smoke` and `capped` passed healthy. `full` ran 1000 epochs in 182 s with
+   101 live progress records and reported RMSE **3.75**.
+3. The Critic merged claims c8 and c11 and judged the run **`inconclusive`**: one
+   RMSE, no noise model.
+4. `decide_after_critic` routed it to **`run_seeds`**, because 182 s is within the
+   1800 s seed budget and the new `reproduce.sh` has seed modes.
+5. `seed2` gave **2.84** and `seed3` gave **3.40**, 119 s and 118 s. Each seed also
+   redraws the paper's unstated split.
+6. The Critic re-judged the three runs: mean **3.33**, tolerance ±1.07 from their
+   spread, **`pass`**.
+7. The decision was `accept`, loop verdict `success`, 0 retries.
+
+`critic_output` holds the judgement with `run_values`, `seed_run_values` and
+`script_version: 1`, and attempt 1 carries `critic_verdict: "pass"`. The guided
+fidelity retry (`fail` → retry) has not happened in a live run yet. It is covered by
+`tests/test_loop_critic.py` only.
 
 ### Verified
 

@@ -17,7 +17,7 @@ This is the central design decision of the stage.
 The only command ever sent into a container is:
 
 ```bash
-bash reproduce.sh <mode>          # mode ∈ probe | smoke | capped | full
+bash reproduce.sh <mode>          # mode ∈ probe | smoke | capped | full | seed2 | seed3
 ```
 
 The Runner **never** constructs a `python` command, **never** passes a `--flag`,
@@ -35,9 +35,16 @@ Mode semantics come from the script's own header (see `coder/README.md`):
 | `smoke` | one full epoch over a small slice | execution reaches the eval path and the metrics write |
 | `capped` | 5 epochs / 512 samples, minutes | training actually learns — `train_metric` moving well past a trivial baseline (CIFAR-10's 10% chance accuracy; predicting the mean for a regression) |
 | `full` | the paper's real setup, hours | the only numbers comparable to the paper's claim; needs a GPU |
+| `seed2`, `seed3` | `full` again with `--seed 2` / `--seed 3` | run-to-run spread, when the Critic cannot judge one run; the Orchestrator asks for them only when a full run took ≤ 30 min |
 
 Each mode writes its **own** `metrics.<mode>.json`, so a cheap stage's numbers
 can never be mistaken for a real run's.
+
+The seed modes (added 2026-09-14 for the Critic) are **not** in the escalation
+ladder. `STAGE_ORDER` is still the four stages, and `SEED_MODES` sits beside it
+(`ALL_MODES` is both). They take full's 24 h timeout and all six check-up rules, and
+`has_seed_modes(paper_dir)` tells a caller whether a script generated before them can
+run them at all.
 
 > One sharp edge worth knowing: `reproduce.sh` with **no** argument defaults to
 > `full`. The Runner always passes an explicit mode, and the image's default
@@ -643,7 +650,8 @@ Everything this section once listed as written-but-unrun has now run:
 
 - **Check-ups judge health, not fidelity.** A run that learns healthily but lands far
   from the paper's number (Wijaya: RMSE 4.48 vs 3.02) passes every check-up; comparing
-  a result with its claim is the Critic's job, and the Critic does not exist yet.
+  a result with its claim is `critic/`'s job (added 2026-09-14), which runs after the
+  Runner inside the Orchestrator.
 - **Check-ups only see what the script records.** A script from before the progress
   contract (NIN, WRN, Tang, Wijaya's current scripts) writes no history and is judged
   on its exit code alone until regenerated.

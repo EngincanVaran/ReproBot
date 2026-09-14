@@ -90,6 +90,9 @@ STAGE_RULES: Final[dict[str, tuple[RuleName, ...]]] = {
     # uniform sat at ln 10 = 2.303 with 30% accuracy, three times chance).
     "capped": ("non_finite", "loss_below_lower_bound", "worse_than_chance"),
     "full": ALL_RULES,
+    # Extra seeds are the full run again with another seed, judged the same way.
+    "seed2": ALL_RULES,
+    "seed3": ALL_RULES,
 }
 
 

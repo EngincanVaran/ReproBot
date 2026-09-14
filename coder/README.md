@@ -357,7 +357,7 @@ data-scaled `capped` stage (5,000 / 2,000 rows) instead of an epoch-scaled one.
 
 ## The metrics.json contract — the Runner/Critic interface
 
-**This is the interface `runner/` and the future `critic/` consume.** The
+**This is the interface `runner/` and `critic/` consume.** The
 generated script writes this JSON to `--metrics-output` *and* prints the
 identical object as its final single line of stdout (so the Runner can recover
 it even if the file write never happened). It is task-agnostic; this example is
@@ -530,7 +530,7 @@ Output per paper (gitignored):
 ```
 coder/output/<paper>/
 ├── train.py             # the generated script (or train.py.invalid on gate 1 failure)
-├── reproduce.sh         # runnable wrapper: ./reproduce.sh [full|smoke]
+├── reproduce.sh         # runnable wrapper: ./reproduce.sh [probe|smoke|capped|full|seed2|seed3]
 └── coder_output.json    # bookkeeping (or coder_output.failed.json)
 ```
 
@@ -559,6 +559,7 @@ narrows from "nine CLI flags spelled exactly right" to "four mode names".
 ./reproduce.sh smoke    # 1 full epoch       — does it reach eval + write metrics?
 ./reproduce.sh capped   # 5 epochs, 512 imgs — does it actually learn?
 ./reproduce.sh full     # no training flags  — the paper's real setup
+./reproduce.sh seed2    # full again, --seed 2 → metrics.seed2.json (and seed3)
 ```
 
 The modes are cumulative gates: run them in order, stop at the first non-zero
@@ -569,6 +570,13 @@ stage's numbers can never be mistaken for a real run's. `full` passes no
 passed nothing, so the script wrote its default `metrics.json`, the Runner
 found no `metrics.full.json`, and the first two completed `full` runs were
 parsed only through the Runner's stdout fallback.
+
+`seed2` and `seed3` (added 2026-09-14) are not gates. They repeat `full` with
+`--seed 2` / `--seed 3` so the Critic can measure run-to-run spread when one run
+cannot settle a verdict (an RMSE on a 101-row split has no noise model). They come
+from the template, like every other mode, so the model cannot get them wrong. A
+script that seeds its data split from `--seed` therefore also varies the split,
+which is the variation a paper that never states its split leaves open.
 
 `capped` is the one that carries real signal on a CPU: on a few hundred examples
 a network should overfit fast, so **`train_metric`** moving well past a trivial

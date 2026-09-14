@@ -47,6 +47,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from runner.docker_runner import (
+    ALL_MODES,
     DEFAULT_CACHE_DIR,
     DEFAULT_CHECKUP_INTERVAL,
     DEFAULT_IMAGE,
@@ -188,7 +189,7 @@ def main() -> None:
     )
     stage_group.add_argument(
         "--mode",
-        choices=STAGE_ORDER,
+        choices=ALL_MODES,
         default=None,
         help="Run ONLY this one mode, skipping the escalation ladder entirely",
     )

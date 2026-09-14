@@ -424,6 +424,7 @@ def _write_reproduce_script(
 #   smoke   does a whole epoch reach eval and write metrics?
 #   capped  does training actually learn?    (CPU-sized, minutes)
 #   full    the paper's real setup            (needs a GPU; hours)
+#   seed2/3 full again with --seed 2/3        (asked for by the Critic)
 #
 # Each mode writes its own metrics file, so a cheap stage's numbers can never
 # be mistaken for a real run's. Modes are cumulative gates: run them in order
@@ -463,8 +464,16 @@ case "$MODE" in
     python {script_name} \\
       --metrics-output metrics.full.json
     ;;
+  seed2|seed3)
+    # Extra seeds for the Critic: the full run again with --seed 2 or 3, so it can
+    # measure run-to-run spread before judging a result that one run cannot decide.
+    # No training flags, exactly like full; its own metrics and history files.
+    python {script_name} \\
+      --seed "${{MODE#seed}}" \\
+      --metrics-output "metrics.${{MODE}}.json"
+    ;;
   *)
-    echo "usage: $0 [probe|smoke|capped|full]" >&2
+    echo "usage: $0 [probe|smoke|capped|full|seed2|seed3]" >&2
     exit 2
     ;;
 esac

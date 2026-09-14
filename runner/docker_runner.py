@@ -87,6 +87,10 @@ CONTAINER_DATA_DIR: Final[str] = "/workspace/data"
 CONTAINER_CACHE_DIR: Final[str] = "/cache"
 
 STAGE_ORDER: Final[tuple[str, ...]] = ("probe", "smoke", "capped", "full")
+# Extra seeds of the full run, asked for by the Critic when one run cannot decide a
+# verdict. Never part of escalation; `reproduce.sh <seedN>` reruns `full` with --seed N.
+SEED_MODES: Final[tuple[str, ...]] = ("seed2", "seed3")
+ALL_MODES: Final[tuple[str, ...]] = STAGE_ORDER + SEED_MODES
 
 # Per-stage wall-clock budgets, enforced independently so a hung cheap stage can
 # never eat the budget of the expensive one behind it.
@@ -120,6 +124,8 @@ DEFAULT_STAGE_TIMEOUTS: Final[dict[str, int]] = {
     "smoke": 900,  # 15 min: ~134 s measured-equivalent, warm cache
     "capped": 1800,  # 30 min: ~525 s measured-equivalent, warm cache
     "full": 86400,  # 24 h: GPU-only; ~22 days on this CPU, so never run it here
+    "seed2": 86400,  # an extra seed is a full run
+    "seed3": 86400,
 }
 
 # Budget for the short-lived control commands (`docker info`, `image inspect`,
@@ -222,8 +228,8 @@ def parse_timeout_overrides(values: list[str] | None) -> dict[str, int]:
         if not sep:
             raise ValueError(f"expected --timeout MODE=SECONDS, got {raw!r}")
         mode = mode.strip()
-        if mode not in STAGE_ORDER:
-            raise ValueError(f"unknown stage {mode!r} in --timeout; expected one of {STAGE_ORDER}")
+        if mode not in ALL_MODES:
+            raise ValueError(f"unknown stage {mode!r} in --timeout; expected one of {ALL_MODES}")
         try:
             parsed = int(seconds)
         except ValueError as exc:
@@ -371,6 +377,12 @@ def summarize_split_metrics(metrics: dict[str, Any]) -> str:
 def metrics_path_for(paper_dir: Path, mode: str) -> Path:
     """Where `reproduce.sh <mode>` writes its metrics, on the host side of the mount."""
     return paper_dir / f"metrics.{mode}.json"
+
+
+def has_seed_modes(paper_dir: Path) -> bool:
+    """Whether this paper's generated reproduce.sh can run extra seeds of `full`."""
+    script = paper_dir / "reproduce.sh"
+    return script.exists() and "seed2|seed3)" in script.read_text(encoding="utf-8")
 
 
 def history_path_for(paper_dir: Path, mode: str) -> Path:

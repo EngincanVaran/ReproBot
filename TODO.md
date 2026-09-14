@@ -20,10 +20,18 @@ runs showed.
 2. **The Critic agent** — judge each reproduced number against its claim.
 3. **Loop controls** — make the Orchestrator's retries targeted, bounded and auditable.
 
-**Priority 1 is done (2026-09-14)** — Runner live check-ups, the learning-curve history
-contract, and the classical-model ladder, verified by replaying real curves and live in Docker
-(details below and in `runner/README.md`). **Next: priority 2, the Critic.** The history
-files and halt evidence it needs now exist. Present a plan before building, as usual.
+**Priorities 1 and 2 are done (2026-09-14).**
+- **Runner live check-ups:** the learning-curve history contract and the classical-model
+  ladder, verified by replaying real curves and live in Docker.
+- **The Critic (`critic/`):** arithmetic verdicts with evidence-based tolerance, claim dedup,
+  extra seeds for inconclusive single runs, and one guided fidelity retry. It re-judges all
+  five real results the way a person did by hand. Its first end-to-end run was Wijaya: one
+  run inconclusive → seeds → **pass**.
+
+Details are below and in `runner/README.md` and `critic/README.md`.
+
+**Next, as agreed:** the **report generator** (claim-by-claim Markdown from `state.json`), then
+**priority 3, loop controls**. Present a plan before building, as usual.
 
 ---
 
@@ -32,13 +40,16 @@ files and halt evidence it needs now exist. Present a plan before building, as u
 | Paper | Model family | Claim | ReproBot | Notes |
 |---|---|---|---|---|
 | Tang 2013 | MLP + L2-SVM loss | MNIST test error 0.87% | **0.82%** | `full`, 54 min; needed manual `C` 1.0 → 0.1 ([ablation](docs/notes/tang-2013-ablation/README.md)) |
-| Wijaya 2023 | Dense regression net (Keras) | Boston test RMSE 3.02 | **4.48** (train 2.94 vs 2.69) | Orchestrated, 1 auto-repair; gap most likely the paper's unstated split |
+| Wijaya 2023 | Dense regression net (Keras) | Boston test RMSE 3.02 | ~~4.48~~ → **3.33** (mean of 3.75 / 2.84 / 3.40) | Rerun 2026-09-14 through the Critic: one run inconclusive → 2 seeds (each redraws the unstated split) → **pass**, ±1.07. The old 4.48 was one split |
 | Hsu/Chang/Lin SVM guide | RBF SVM | svmguide1 96.9% | **96.625%** (rerun 2026-09-14 with check-ups: **96.925%**) | Orchestrated, 1 auto-repair, 73 s; `SVC` at the paper's C=γ=2 reproduces 66.925 / 96.15 / 96.875% **exactly**; the grid search's pick varies with fold assignment |
 | Fashion-MNIST (Xiao 2017) | Random forest | 0.873, mean of 5 | **0.8773** (0.8753–0.8792) | Orchestrated, 0 retries, 3.3 min |
 | Frosst & Hinton 2017 | Soft decision tree | MNIST 94.45% | **95.11%** | Orchestrated, 0 retries, 70 min; needed manual fix of the paper's misprinted loss (Eq. 3). Regenerated 2026-09-14 under the new prompt, the Coder implemented the correct loss on its own (verified to `capped` only) |
 | Network In Network, WRN | CIFAR-10 CNNs | — | smoke only | Full runs need a GPU (~22 days/WRN run on CPU) |
 
-All comparisons are by hand; no stage judges a number yet.
+Since 2026-09-14 every row is judged by `critic/`: Tang, SVM guide, Fashion-MNIST, soft tree and
+Wijaya all **pass**. Fashion-MNIST and the soft tree exceed their claims. Wijaya passes on a wide
+band, ±1.07 on 3.02, because three splits vary that much. The verdicts match the earlier
+by-hand judgements.
 
 ---
 
@@ -60,7 +71,7 @@ All comparisons are by hand; no stage judges a number yet.
 | `coder/` | ✅ built — PyTorch loop **or scikit-learn** by model family | 5 families generated and run |
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
-| **`critic/`** | ❌ **not started** — Next phase #2 | — |
+| `critic/` | ✅ built — arithmetic verdicts, claim dedup, seeds, guided retry | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
 | **report generator** | ❌ not started | — |
 | `viewer/` | 🟡 Mert's branch `origin/mert/runner-agent`, not merged | — |
 
@@ -82,15 +93,23 @@ All comparisons are by hand; no stage judges a number yet.
       consider a "no record for too long" hang rule; keep calibrating thresholds from every halt's
       logged evidence (one false positive already found and fixed end to end).
 
-### 2. The Critic agent (`critic/`)
-- [ ] **Compare `value` with `claims[].reported_value`** using `higher_is_better`, as explicit
-      arithmetic (project plan §2.5), emitting pass / retry / fail with a reason the Coder can act on.
-- [ ] **Tolerance matched to how the claim was produced:** near-exact for deterministic library
-      procedures (SVM guide), a seed-variance band for stochastic training (Wijaya: one split can't
-      decide — run several seeds), the reported spread when the claim is a mean (Fashion-MNIST).
-- [ ] **Claim dedup first** — the Reader extracts the same result from prose, table and figure
-      (Wijaya: 14 claims for 8 results, mixed precision).
-- [ ] Feed the verdict into `ReproState.critic_output` (field already reserved) and the retry loop.
+### 2. The Critic agent (`critic/`) — ✅ done 2026-09-14
+- [x] **Arithmetic verdicts** `pass` / `fail` / `inconclusive` / `not_evaluated` (project plan §2.5),
+      with every number and the rule behind it; only `full` is comparable.
+- [x] **Tolerance** `max(2 × uncertainty, reporting precision)`. Uncertainty is the measured run
+      spread (claims that are means, extra seeds), else binomial test-set noise, else none, and
+      then a losing gap is `inconclusive`, not `fail`.
+- [x] **Claim dedup** — metric synonyms, precision-aware values, split and model-name conflicts;
+      Wijaya 14 → 8, 243 claims across 9 papers checked, two near-misses (Fashion LinearSVC/LogReg,
+      WRN depth 40/22) kept apart as regression tests.
+- [x] **Loop routing** (`decide_after_critic`): inconclusive → `seed2`/`seed3` when full ≤ 30 min;
+      fail → ONE guided retry on the Coder's recorded unstated choices only (`fidelity retry:`
+      assumptions). CLI `--no-critic`, `--seed-budget`, `--fidelity-retry-budget`. `critic_output`
+      filled; `critic/pipeline.py` judges states or files offline.
+- [ ] **Follow-ups:** exercise the guided retry in a live run (no real `fail` yet); flag passes
+      whose tolerance is wide relative to the claim (Wijaya ±35%) in the report; judge *every*
+      claim a run can speak to, not only the targeted one (report generator); consider seeds for
+      cheap single-run accuracy claims too (binomial noise ignores training variance).
 
 ### 3. Loop controls (`orchestrator/`)
 - [ ] **Patch, don't regenerate** — real one-line repairs rewrote 73–78% of a script
@@ -165,8 +184,7 @@ Anything marked **cost** is actively wasting money or time on every run.
       produced an invalid call (fixed); similar phrasing may remain.
 
 ### `runner/`
-- [ ] **Check-ups judge health, not fidelity** — a healthy run far from the paper's number
-      (Wijaya 4.48 vs 3.02) passes. That is the Critic's job (Next phase #2).
+- [x] **Check-ups judge health, not fidelity** — fidelity is now `critic/`'s job (2026-09-14).
 - [ ] **Scripts from before the progress contract** fall back to exit-code-only judgement until
       regenerated.
 - [ ] **The image is not reproducible byte-for-byte** — pin `python:3.11-slim` by digest.
@@ -215,6 +233,10 @@ Anything marked **cost** is actively wasting money or time on every run.
 ## Done
 
 ### 4th-report period (from 2026-09-14)
+- [x] **The Critic** — `critic/` (claims dedup, judge, CLI), seed modes in `reproduce.sh` and the
+      Runner, Orchestrator routing with extra seeds and one guided fidelity retry, 25 new tests
+- [x] End-to-end Critic run: Wijaya regenerated, full RMSE 3.75 → `inconclusive` → seeds 2.84 /
+      3.40 → mean 3.33 vs 3.02, ±1.07 → **pass**; all five earlier results re-judged offline
 - [x] **Runner live check-ups** — history contract, watcher, six rules, `halted` status,
       Orchestrator halt routing, classical ladder, `pytest` suite (28 tests from real curves)
 - [x] End-to-end in Docker: SVM guide `success` (96.925% vs 96.875%), Fashion-MNIST RF `success`
