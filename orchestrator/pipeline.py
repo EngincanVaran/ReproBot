@@ -19,7 +19,9 @@ What a run does, per paper:
    number against the paper's claim: `pass`, `fail`, `inconclusive` or
    `not_evaluated`. An inconclusive single run gets two extra seeds when the full run
    was cheap (`--seed-budget`); a fail gets one guided retry that may change only
-   settings the paper does not state (`--fidelity-retry-budget`).
+   settings the paper does not state (`--fidelity-retry-budget`). The Critic's Sonnet
+   review then checks the script against the paper (`--no-review` skips it); a
+   verified deviation from a stated setting turns a fail into a correctness retry.
 5. Stop on success, on an exhausted retry budget, or early if a regenerated
    script comes back near-identical to the one that just failed.
 6. Write `orchestrator/output/<paper>/state.json`, with every attempt's script
@@ -271,6 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop at execution: do not compare the reproduced number with the paper's claim",
     )
     parser.add_argument(
+        "--no-review",
+        action="store_true",
+        help=(
+            "Keep the Critic's arithmetic verdict but skip its Sonnet review of the script "
+            "against the paper (one API call per judged full run)"
+        ),
+    )
+    parser.add_argument(
         "--seed-budget",
         type=float,
         default=DEFAULT_SEED_BUDGET_SECONDS,
@@ -382,6 +392,7 @@ def main() -> None:
         retry_budget=args.retry_budget,
         plateau_threshold=args.plateau_threshold,
         critic=not args.no_critic,
+        review=not args.no_review,
         seed_budget_seconds=args.seed_budget,
         fidelity_retry_budget=args.fidelity_retry_budget,
     )

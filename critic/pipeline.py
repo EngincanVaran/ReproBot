@@ -9,8 +9,9 @@ Two ways in, same verdict logic (`critic/judge.py`):
 * `--reader-json` + `--metrics-json` - a run made without the Orchestrator (for
   example `runner.pipeline --mode full`), judged from the two files directly.
 
-Every verdict is also written to `critic/output/<paper>.json`. No API key, no Docker,
-no network: the Critic is arithmetic.
+Every verdict is also written to `critic/output/<paper>.json`. The verdict needs no API
+key, no Docker and no network: it is arithmetic. `--review` adds the Critic v2 Sonnet
+review of the script against the paper (one API call, `critic/review.py`).
 
 Usage:
     uv run python -m critic.pipeline --state "orchestrator/output/<paper>"
@@ -24,12 +25,15 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from critic.claims import group_claims
 from critic.judge import Judgement, judge
+
+if TYPE_CHECKING:
+    from critic.review import Review
 
 DEFAULT_OUTPUT = Path("critic/output")
 
@@ -76,6 +80,35 @@ def log_judgement(paper: str, judgement: Judgement) -> None:
         logger.info(f"  [critic] recommendation: {judgement.recommendation}")
 
 
+def run_review(
+    judgement: Judgement,
+    metrics: dict[str, Any] | None,
+    reader_output: dict[str, Any],
+    paper_dir: Path,
+) -> Review:
+    """The Sonnet review of one judged run, from the files the run left behind."""
+    from anthropic import Anthropic
+    from dotenv import load_dotenv
+
+    from critic.review import review_run
+
+    load_dotenv()
+    coder_output = json.loads((paper_dir / "coder_output.json").read_text(encoding="utf-8"))
+    markdown = Path(
+        str(coder_output.get("source_markdown") or reader_output.get("source_markdown"))
+    )
+    return review_run(
+        Anthropic(),
+        judgement=judgement,
+        metrics=metrics,
+        reader_output=reader_output,
+        coder_output=coder_output,
+        script=(paper_dir / "train.py").read_text(encoding="utf-8"),
+        paper_markdown=markdown.read_text(encoding="utf-8") if markdown.is_file() else "",
+        history_path=paper_dir / "metrics.full.history.jsonl",
+    )
+
+
 def write_output(output_dir: Path, paper: str, payload: dict[str, Any]) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{paper}.json"
@@ -107,6 +140,17 @@ def main() -> None:
         default=[],
         help="metrics files of extra seeds of the same run (e.g. metrics.seed2.json)",
     )
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="also run the Sonnet review of the script against the paper (needs an API key)",
+    )
+    parser.add_argument(
+        "--coder-output",
+        type=Path,
+        default=Path("coder/output"),
+        help="where <paper>/train.py, coder_output.json and the history files live",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--write", action="store_true", help="also store the verdict in the state's critic_output"
@@ -122,6 +166,12 @@ def main() -> None:
             paper = str(state.get("paper_id") or path.parent.name)
             log_judgement(paper, judgement)
             payload = judgement.to_dict()
+            if args.review:
+                reader = state.get("reader_output") or {}
+                metrics = (state.get("runner_output") or {}).get("reproduced_metrics")
+                payload["review"] = run_review(
+                    judgement, metrics, reader, args.coder_output / paper
+                ).to_dict()
             logger.info(f"  -> {write_output(args.output, paper, payload)}")
             if args.write:
                 state["critic_output"] = {**(state.get("critic_output") or {}), **payload}
@@ -148,6 +198,10 @@ def main() -> None:
     log_judgement(paper, judgement)
     groups = [group.to_dict() for group in group_claims(claims)]
     payload = {**judgement.to_dict(), "claim_groups": groups}
+    if args.review:
+        payload["review"] = run_review(
+            judgement, metrics, reader, args.metrics_json.parent
+        ).to_dict()
     logger.info(f"  -> {write_output(args.output, paper, payload)}")
 
 
