@@ -222,6 +222,16 @@ Anything marked **cost** is actively wasting money or time on every run.
       and did not record the appendix's default-parameter accuracies as claims.
 
 ### `coder/`
+- [ ] **Target-claim selection is unstable across runs.** Fashion-MNIST picked the random forest
+      (c17, 0.873, ~3 min) on 2026-09-13 and the RBF SVC (c21, 0.897, hours) on 2026-09-20 — same
+      paper, same prompt. Wijaya's Reader output also dropped from 14 claims to 4 between runs. So
+      "the paper's headline claim" is not reproducible: **pin claims with `--claim-id` for any
+      comparison**, and prefer multi-claim runs over one model-chosen claim.
+- [ ] **Cost is not part of claim selection.** Nothing warns that a claim implies hours of CPU. The
+      Coder knows the estimator and the row count, so a rough cost estimate in `coder_output.json`
+      would let the Orchestrator confirm or refuse an expensive target before the container starts.
+      LIBSVM is single-threaded: one `SVC` fit on 60k x 784 is tens of minutes, and the paper asks
+      for five.
 - [ ] **`wall_clock_seconds` timed from the training loop, not the run start** — prompt made explicit
       2026-09-14 ("first statement of `main()`"); verify on the next regenerated scripts.
 - [ ] **Intermittent tool-field leak** — worked around in `reader/tooluse.py`'s shared
@@ -240,6 +250,12 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [x] **Check-ups judge health, not fidelity** — fidelity is now `critic/`'s job (2026-09-14).
 - [ ] **Scripts from before the progress contract** fall back to exit-code-only judgement until
       regenerated.
+- [ ] **A run that writes NO record is invisible to the check-ups.** Every rule needs at least one
+      history record, so a script stuck inside its first fit is never halted. Hit for real on
+      2026-09-20: Fashion-MNIST targeted the SVC claim (c21, 0.897), one LIBSVM fit on 60k x 784 is
+      tens of minutes single-threaded, and the paper's protocol repeats it 5 times — 15 minutes in,
+      the history file was still empty and nothing had fired. Killed by hand. **Needs a
+      "no first record within N minutes of the stage starting" rule**, with N per stage.
 - [ ] **The image is not reproducible byte-for-byte** — pin `python:3.11-slim` by digest.
 - [ ] **Container runs as root** — hidden on macOS, visible on a Linux host.
 - [ ] **`--memory` / `--cpus` unset** — deliberate (exit 137 looks like a crash), but two containers
