@@ -907,6 +907,10 @@ coder = [
     { name = "anthropic" },
     { name = "python-dotenv" },
 ]
+critic = [
+    { name = "anthropic" },
+    { name = "python-dotenv" },
+]
 orchestrator = [
     { name = "anthropic" },
     { name = "python-dotenv" },
@@ -940,6 +944,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'coder'", specifier = ">=0.69" },
+    { name = "anthropic", marker = "extra == 'critic'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'orchestrator'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'reader'", specifier = ">=0.69" },
     { name = "anthropic", marker = "extra == 'runner'", specifier = ">=0.69" },
@@ -949,12 +954,13 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'vlm'", specifier = ">=10.0" },
     { name = "pypdfium2", marker = "extra == 'vlm'", specifier = ">=4.30" },
     { name = "python-dotenv", marker = "extra == 'coder'", specifier = ">=1.0" },
+    { name = "python-dotenv", marker = "extra == 'critic'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'orchestrator'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'reader'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'runner'", specifier = ">=1.0" },
     { name = "python-dotenv", marker = "extra == 'vlm'", specifier = ">=1.0" },
 ]
-provides-extras = ["pdfplumber", "vlm", "reader", "coder", "runner", "orchestrator"]
+provides-extras = ["pdfplumber", "vlm", "reader", "coder", "runner", "orchestrator", "critic"]
 
 [package.metadata.requires-dev]
 dev = [

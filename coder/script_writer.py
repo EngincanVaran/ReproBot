@@ -83,7 +83,6 @@ deterministic gates, and writes `train.py`.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
@@ -92,6 +91,7 @@ from anthropic.types import Message, ToolChoiceToolParam, ToolParam
 from loguru import logger
 
 from coder.base import CodeWriter
+from reader.tooluse import recover_leaked_fields
 
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 16384
@@ -907,80 +907,6 @@ TOOL_FIELDS: tuple[str, ...] = (
     "script_content",
 )
 
-# Two leak shapes have been observed in real runs, so both are matched:
-#   <parameter name="dataset_used">...</dataset_used>
-#   <architecture_used>...</architecture_used>
-_LEAKED_PARAMETER = re.compile(
-    r'<(?:parameter name=")?(' + "|".join(TOOL_FIELDS) + r')"?>(.*?)(?:</\1>|\Z)',
-    re.DOTALL,
-)
-
-
-def _coerce_leaked(raw: str) -> object:
-    """A leaked value arrives as text; array-valued fields arrive as JSON text."""
-    if raw.startswith(("[", "{")):
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return raw
-    return raw
-
-
-def _recover_leaked_fields(payload: dict[str, object]) -> dict[str, object]:
-    """Split apart tool fields the model serialized *inside* another field.
-
-    Observed for real on the first two Wide Residual Networks runs: instead of
-    emitting `dataset_used` and `hyperparameters_used` as separate tool inputs,
-    the model appended them to the end of `architecture_used` using the literal
-    delimiter syntax it sees internally::
-
-        ...model_variant='WRN 28-10'.</architecture_used>
-        <parameter name="dataset_used">CIFAR-10 (torchvision...)</dataset_used>
-        <parameter name="hyperparameters_used">[{"name": "optimizer", ...}]
-
-    The result is a payload that is missing two schema-required fields while one
-    other field carries 1700 characters of the wrong content. This recovery is
-    deterministic and costs nothing: find a `</field>` closer inside a string
-    value, truncate that field there, and re-home each trailing
-    `<parameter name="...">` block onto the key it names. Only keys genuinely
-    absent from the payload are filled, so a properly emitted field is never
-    overwritten by a leaked duplicate.
-    """
-    recovered = dict(payload)
-    for key, value in payload.items():
-        if not isinstance(value, str):
-            continue
-        closer = f"</{key}>"
-        head, marker, tail = value.partition(closer)
-        if not marker:
-            continue
-        logger.warning(
-            f"  [training_script] field '{key}' contains a leaked '{closer}' delimiter - "
-            f"the model serialized other tool fields inside it; splitting them back out"
-        )
-        recovered[key] = head.strip()
-        found = 0
-        for match in _LEAKED_PARAMETER.finditer(tail):
-            leaked_key = match.group(1)
-            found += 1
-            if leaked_key in payload:
-                logger.warning(
-                    f"  [training_script] ignoring leaked duplicate of '{leaked_key}' - "
-                    f"the model also emitted it properly"
-                )
-                continue
-            recovered[leaked_key] = _coerce_leaked(match.group(2).strip())
-            logger.warning(f"  [training_script] recovered leaked field '{leaked_key}'")
-        if not found:
-            # The delimiter leaked but no re-homeable blocks followed it, so the
-            # remaining fields were never emitted at all. Show the tail rather
-            # than failing blind - this is the only view of what came back.
-            logger.warning(
-                f"  [training_script] nothing recoverable after the leaked '{closer}' "
-                f"({len(tail)} chars of tail): {tail[:500]!r}"
-            )
-    return recovered
-
 
 def _optional_str(payload: dict[str, object], key: str) -> str:
     """Read a schema-required *bookkeeping* string, tolerating its absence.
@@ -1111,7 +1037,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
         failure: the model serializing its tool fields as literal
         `<parameter name="...">` text inside another field instead of as
         separate tool inputs, sometimes swallowing `script_content` itself.
-        `_recover_leaked_fields` repairs the recoverable shape; this retry
+        `recover_leaked_fields` repairs the recoverable shape; this retry
         covers the shape where the remaining fields were never emitted at all.
         It is NOT a quality retry - a structurally valid but bad script is
         returned as-is for the gates (and later the Runner/Critic) to judge.
@@ -1196,7 +1122,7 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
                 f"{message.usage.output_tokens} out"
             )
 
-            payload = _recover_leaked_fields(_tool_input(message))
+            payload = recover_leaked_fields(_tool_input(message), TOOL_FIELDS, "training_script")
             logger.info(f"  [training_script] tool fields returned: {', '.join(sorted(payload))}")
             if "script_content" in payload:
                 break

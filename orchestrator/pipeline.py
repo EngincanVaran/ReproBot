@@ -276,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-review",
         action="store_true",
         help=(
-            "Keep the Critic's arithmetic verdict but skip its Sonnet review of the script "
+            "Keep the Critic's arithmetic verdict but skip its model review of the script "
             "against the paper (one API call per judged full run)"
         ),
     )

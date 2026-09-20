@@ -24,7 +24,7 @@ Every threshold below is a formula you can check by hand.
 critic/
 ├── claims.py    merge duplicate claims (one result printed in prose, table and figure)
 ├── judge.py     tolerance + verdict for one claim (v1 guided-retry text as a fallback)
-├── review.py    v2: Sonnet review of script vs paper, guards, feedback to the Coder
+├── review.py    v2: model review of script vs paper, guards, feedback to the Coder
 └── pipeline.py  CLI: judge (and --review) an Orchestrator state, or reader JSON + metrics
 ```
 
@@ -319,7 +319,7 @@ uv run python -m critic.pipeline --state orchestrator/output
 # judge one and store the verdict in its state.json
 uv run python -m critic.pipeline --state "orchestrator/output/<paper>" --write
 
-# add the Sonnet review of the script against the paper (one API call)
+# add the model review of the script against the paper (one API call, Opus 5)
 uv run --extra orchestrator python -m critic.pipeline --state "orchestrator/output/<paper>" --review
 
 # judge a run made without the Orchestrator, optionally with extra seeds

@@ -10,7 +10,7 @@ Two ways in, same verdict logic (`critic/judge.py`):
   example `runner.pipeline --mode full`), judged from the two files directly.
 
 Every verdict is also written to `critic/output/<paper>.json`. The verdict needs no API
-key, no Docker and no network: it is arithmetic. `--review` adds the Critic v2 Sonnet
+key, no Docker and no network: it is arithmetic. `--review` adds the Critic v2 model
 review of the script against the paper (one API call, `critic/review.py`).
 
 Usage:
@@ -147,12 +147,12 @@ def main() -> None:
     parser.add_argument(
         "--review",
         action="store_true",
-        help="also run the Sonnet review of the script against the paper (needs an API key)",
+        help="also run the model review of the script against the paper (needs an API key)",
     )
     parser.add_argument(
         "--review-model",
         default=None,
-        help="model for --review (default: critic.review.MODEL, claude-sonnet-5)",
+        help="model for --review (default: critic.review.MODEL, claude-opus-5)",
     )
     parser.add_argument(
         "--coder-output",

@@ -352,7 +352,7 @@ def _write_reproduce_script(
     script path - rather than asked of the model. A shell wrapper is pure
     templating, so generating it in Python costs nothing, cannot hallucinate a
     flag the script does not define, and cannot be swallowed by the tool-field
-    leak `script_writer._recover_leaked_fields` exists to undo.
+    leak `reader/tooluse.py`'s `recover_leaked_fields` exists to undo.
 
     Two invocations are emitted, and the difference between them is the whole
     point: the full run carries no flags at all, because every default in the

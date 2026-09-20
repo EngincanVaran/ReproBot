@@ -2,7 +2,8 @@
 
 The arithmetic verdict in `judge.py` says WHETHER the number matches. It cannot say
 WHY not, or whether a passing script is even the paper's method. This module adds
-the half of project plan §2.5 that needs a model: one Sonnet call that reads the
+the half of project plan §2.5 that needs a model: one Claude call (Opus 5 by
+default, see MODEL below) that reads the
 paper's extraction, the paper itself, the final script and the run's evidence (the
 learning curve, the metrics, extra seeds) and returns
 

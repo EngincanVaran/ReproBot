@@ -242,3 +242,7 @@ orchestrator/output/
 
 # ReproBot: Critic verdicts (JSON judged from reader claims + reproduced metrics)
 critic/output/
+
+# macOS Finder metadata and the ruff cache
+.DS_Store
+.ruff_cache/

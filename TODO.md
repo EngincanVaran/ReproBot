@@ -104,7 +104,7 @@ by-hand judgements.
 
 **Critic v2 (built 2026-09-14): the LLM half of project plan §2.5.** Items below are the
 approved plan and are done, except where marked. Results are in `critic/README.md`.
-- [x] **Code review:** one Sonnet call after EVERY full run, passes included.
+- [x] **Code review:** one Claude call (Opus 5) after EVERY full run, passes included.
   - Inputs: the Reader extraction (hyperparameters, architecture notes and `key_equations`,
     data pipeline), the final `train.py`, the Coder's `assumptions`, and run evidence (history
     curve summary, check-ups, metrics, seed values).
@@ -216,7 +216,9 @@ Anything marked **cost** is actively wasting money or time on every run.
 ### `coder/`
 - [ ] **`wall_clock_seconds` timed from the training loop, not the run start** — prompt made explicit
       2026-09-14 ("first statement of `main()`"); verify on the next regenerated scripts.
-- [ ] **Intermittent tool-field leak** — worked around in `_recover_leaked_fields`, not fixed.
+- [ ] **Intermittent tool-field leak** — worked around in `reader/tooluse.py`'s shared
+      `recover_leaked_fields` (used by the Coder and the Critic), not fixed. Two real shapes
+      replayed in `tests/test_tooluse.py`.
 - [ ] **Bookkeeping can disagree with the code** — NIN reported `192→192→10`, code built `192→10→10`.
 - [ ] **Priors still supply unstated numbers** — disclosed, so *visible*, not *verified*.
 - [ ] **Unstated guesses can fail in combination** — Tang's momentum 0.9 + `C=1.0`; argues for a

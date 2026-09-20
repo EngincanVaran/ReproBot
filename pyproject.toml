@@ -72,6 +72,13 @@ orchestrator = [
     "python-dotenv>=1.0",
 ]
 
+# The Critic's verdict is pure arithmetic, but its v2 review is one Claude call,
+# so it needs the same client as every other model-calling stage.
+critic = [
+    "anthropic>=0.69",
+    "python-dotenv>=1.0",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.13",

@@ -636,7 +636,7 @@ inputs, in two observed shapes:
 This produced a payload missing two schema-required fields on one run, and
 missing `script_content` entirely on two others. Two mitigations are in place:
 
-- `_recover_leaked_fields()` — deterministic and free. It finds a `</field>`
+- `recover_leaked_fields()` (shared, in `reader/tooluse.py`) — deterministic and free. It finds a `</field>`
   closer inside a string value, truncates that field there, and re-homes each
   trailing block onto the key it names. Matching is restricted to the nine
   known `TOOL_FIELDS`, so a `<` or `>` operator inside `script_content` cannot
