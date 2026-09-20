@@ -40,11 +40,13 @@ and text classification from a plain corpus URL.
 1. ~~Build Critic v2 and run its loop on Wijaya~~ — done 2026-09-14.
 2. **Run the whole pipeline from scratch on that basic paper**: PDF → `ocr/` → `reader/` →
    Orchestrator with the Critic.
-3. **Then the report generator.** A plan was already presented: template-driven Markdown per
-   paper, SVG learning curves, claim table, attempt timeline, collapsible final script and a
-   cross-paper index. Its open questions are an optional Sonnet gap paragraph, reruns of old
-   papers, and Markdown vs HTML.
-4. Priority 3, loop controls.
+3. ~~The report generator~~ — **done 2026-09-20** (`report/`, deterministic, no LLM). Open
+   follow-ups: one report per *paper* rather than per state file, and a cross-paper narrative.
+4. **Multi-claim evaluation.** One run still targets one claim; Wijaya's report shows 1 of 8
+   distinct results tested, and the four new papers state 35+ claims between them. Cheapest
+   first: judge every claim the existing run already answers, then loop one paper over its
+   claims (Breiman's 13 datasets are seconds each).
+5. Priority 3, loop controls.
 
 ---
 
@@ -85,7 +87,7 @@ by-hand judgements.
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
 | `critic/` | ✅ v1 arithmetic verdicts + v2 Opus review (cited findings, guards, `fix` route) | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
-| **report generator** | ❌ not started | — |
+| `report/` | ✅ built 2026-09-20 — Markdown + SVG curve, claim table, gap, review, timeline | generated from the real Wijaya state; 14 tests |
 | `viewer/` | 🟡 Mert's branch `origin/mert/runner-agent`, not merged | — |
 
 ---

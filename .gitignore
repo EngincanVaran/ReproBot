@@ -243,6 +243,9 @@ orchestrator/output/
 # ReproBot: Critic verdicts (JSON judged from reader claims + reproduced metrics)
 critic/output/
 
+# ReproBot: generated replication reports (Markdown + curve SVGs)
+report/output/
+
 # macOS Finder metadata and the ruff cache
 .DS_Store
 .ruff_cache/

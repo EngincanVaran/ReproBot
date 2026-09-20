@@ -6,7 +6,7 @@
 
 ## Project status
 
-**Six of the seven stages are built:** `ocr/` (PDF extraction), `reader/` (method, architecture, claims, hyperparameters and data pipeline, with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution with live training check-ups), `orchestrator/` (shared state and the retry loop) and `critic/` (fidelity verdicts plus a model review of the script against the paper). Only the **Report Generator** is still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md).
+**All seven stages are built:** `ocr/` (PDF extraction), `reader/` (method, architecture, claims, hyperparameters and data pipeline, with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution with live training check-ups), `orchestrator/` (shared state and the retry loop) `critic/` (fidelity verdicts plus a model review of the script against the paper) and `report/` (the replication report). **Every stage in the original design now exists**; what remains is depth — loop controls, multi-claim evaluation and GPU-scale papers.
 
 **Five papers reproduce at full fidelity on a CPU**, across five model families, and the Critic judges every one of them the same way a person did by hand:
 
@@ -30,6 +30,7 @@ ReproBot/
 ├── runner/                     # runs a generated script in a Docker sandbox; live check-ups; triage
 ├── orchestrator/               # shared-memory state + the retry loop over every stage
 ├── critic/                     # reproduced number vs the paper's claim: verdict + cited review
+├── report/                     # the replication report: claim table, curve, gap, timeline
 ├── tests/                      # pytest replays of real runs (curves, verdicts, reviews)
 ├── dataset/                    # 8 CIFAR-10 papers, ReproBot's first replication targets
 ├── papers/                     # 9 agent-framework reference papers (literature review)
@@ -67,7 +68,7 @@ Orchestrator (shared memory state)
                                    of the script; extra seeds, or a diagnosis back to the Coder
     │
     ▼
-Structured Markdown replication report (claim-by-claim comparison + gap analysis)   ← not built yet
+Structured Markdown replication report (claim-by-claim comparison + gap analysis)
 ```
 
 The main evaluation set is **CIFAR-10 image-classification papers** (see [`docs/literature-review/CIFAR10_Candidate_Replication_Targets.md`](docs/literature-review/CIFAR10_Candidate_Replication_Targets.md) for the 8-paper shortlist). Those need a GPU — one full WRN-28-10 run measures at ~22 days on this project's CPU — so the fidelity results above come from the CPU-sized papers in `extra-papers/`, which since 2026-09-13 deliberately span several model families rather than images alone. See [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md) for the full feasibility assessment, architecture deep dive, timeline, and cost budget.
@@ -76,6 +77,7 @@ The main evaluation set is **CIFAR-10 image-classification papers** (see [`docs/
 
 ```bash
 uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --extra runner --extra orchestrator --extra critic --group dev
+# report/ needs no extra at all — it calls no model and draws its own SVG
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 uv run pre-commit install
 ```
@@ -87,4 +89,4 @@ uv run python -m orchestrator.pipeline --input "reader/output/<paper>.json" --ma
 uv run --extra orchestrator pytest tests          # replay tests, no Docker or API key needed
 ```
 
-See `ocr/README.md`, `reader/README.md`, `coder/README.md`, `runner/README.md`, `orchestrator/README.md` and `critic/README.md` for how to run each stage on its own.
+See `ocr/README.md`, `reader/README.md`, `coder/README.md`, `runner/README.md`, `orchestrator/README.md`, `critic/README.md` and `report/README.md` for how to run each stage on its own.
