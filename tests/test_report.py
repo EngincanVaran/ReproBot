@@ -250,6 +250,16 @@ def test_judged_mode_prefers_what_the_critic_judged() -> None:
     assert judged_mode({}) == "full"
 
 
+def test_a_state_written_with_a_pseudo_unit_still_reads_cleanly() -> None:
+    # States written before 2026-09-20 carry unit "value" from the Reader.
+    state = {**STATE, "critic_output": {**STATE["critic_output"], "unit": "value"}}
+    text = render(ReportInputs(state=state))
+    # The word must not end up glued to the number ("3.02value"); it may still appear
+    # in the Critic's own prose ("the reproduced value is within tolerance").
+    assert "3.02value" not in text and "value," not in text
+    assert "against the paper's 3.02," in text
+
+
 def test_the_index_lists_every_paper_with_its_band() -> None:
     index = render_index([("paper-a", STATE, "paper-a/report.md")])
     assert "[paper-a](paper-a/report.md)" in index

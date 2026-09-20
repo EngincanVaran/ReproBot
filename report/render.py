@@ -97,7 +97,7 @@ def _headline(paper: str, state: dict[str, Any], critic: dict[str, Any]) -> str:
 def _one_line(critic: dict[str, Any]) -> str:
     if not critic or critic.get("claimed") is None or critic.get("reproduced") is None:
         return str(critic.get("reason") or "no comparable result was produced")
-    unit = str(critic.get("unit") or "")
+    unit = normalise_unit(critic.get("unit"))
     runs = len(critic.get("run_values") or [])
     over = f" (mean of {runs} runs)" if runs > 1 else ""
     band = (
@@ -181,7 +181,8 @@ def _gap(critic: dict[str, Any]) -> str:
     if not critic or critic.get("claimed") is None:
         return ""
     lines = ["## The gap, and what is noise", "", "| | |", "|---|---|"]
-    unit = str(critic.get("unit") or "")
+    # States written before 2026-09-20 can carry a pseudo-unit; normalise on read too.
+    unit = normalise_unit(critic.get("unit"))
     rows: list[tuple[str, str]] = [
         ("Paper claims", f"{critic['claimed']:.6g}{unit}"),
         ("ReproBot", f"{critic['reproduced']:.6g}{unit}"),
@@ -401,7 +402,7 @@ def render_index(reports: list[tuple[str, dict[str, Any], str]]) -> str:
     ]
     for paper, state, href in sorted(reports):
         critic = state.get("critic_output") or {}
-        unit = str(critic.get("unit") or "")
+        unit = normalise_unit(critic.get("unit"))
         claimed = critic.get("claimed")
         reproduced = critic.get("reproduced")
         tolerance = critic.get("tolerance")
