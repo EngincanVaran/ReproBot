@@ -30,6 +30,12 @@ runs showed.
   - With Sonnet the same loop misdiagnosed the bug and pushed the Coder away from the paper.
     See `critic/README.md`, "The first Critic loops".
 
+**Replication targets (2026-09-20):** four more CPU-sized papers added to `extra-papers/` —
+Breiman's Random Forests, Isolation Forest, fastText and Pang & Lee 2002. Between them they
+state **35+ per-dataset claims**, every dataset verified reachable, and they add two task
+shapes the pipeline has never seen: anomaly detection scored by AUC with no train/test split,
+and text classification from a plain corpus URL.
+
 **Next, in this order (Engincan, 2026-09-14):**
 1. ~~Build Critic v2 and run its loop on Wijaya~~ — done 2026-09-14.
 2. **Run the whole pipeline from scratch on that basic paper**: PDF → `ocr/` → `reader/` →
