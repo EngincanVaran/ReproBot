@@ -42,6 +42,23 @@ _SPLIT_WORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Words a model writes where a unit symbol belongs. The Reader's schema now asks for a
+# symbol or nothing (2026-09-20), but a run before that fix - or one that ignores it -
+# produced claims with unit "value", which printed as "3.02value" in every verdict and
+# report, and made two otherwise identical claims look different when merging.
+NON_UNITS: frozenset[str] = frozenset(
+    {"value", "values", "score", "scores", "unit", "units", "unitless", "dimensionless",
+     "none", "na", "n/a", "number", "count", "ratio", "fraction", "points", "point",
+     "accuracy", "error", "metric", "raw", "absolute"}
+)  # fmt: skip
+
+
+def normalise_unit(unit: str | None) -> str:
+    """A unit symbol, or "" when the field holds a word that is not a unit."""
+    text = str(unit or "").strip()
+    return "" if re.sub(r"[^a-z]", "", text.lower()) in NON_UNITS else text
+
+
 def normalise_metric(name: str) -> str:
     key = re.sub(r"[^a-z0-9]", "", name.lower())
     return METRIC_SYNONYMS.get(key, key)
@@ -130,7 +147,9 @@ def _same_result(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return False
     if normalise_text(a.get("dataset")) != normalise_text(b.get("dataset")):
         return False
-    if normalise_text(a.get("unit")) != normalise_text(b.get("unit")):
+    if normalise_text(normalise_unit(a.get("unit"))) != normalise_text(
+        normalise_unit(b.get("unit"))
+    ):
         return False
     va, vb = a.get("reported_value"), b.get("reported_value")
     if not isinstance(va, int | float) or not isinstance(vb, int | float):

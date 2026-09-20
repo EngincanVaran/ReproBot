@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from critic.claims import ClaimGroup, group_claims
+from critic.claims import ClaimGroup, group_claims, normalise_unit
 from report.curves import Curve
 
 VERDICT_WORDS: dict[str, str] = {
@@ -137,7 +137,7 @@ def _claims(state: dict[str, Any], critic: dict[str, Any]) -> str:
 def _claim_row(group: ClaimGroup, targeted: set[str], critic: dict[str, Any]) -> str:
     claim = group.canonical
     ids = ", ".join(f"`{i}`" for i in group.claim_ids)
-    unit = str(claim.get("unit") or "")
+    unit = normalise_unit(claim.get("unit"))
     claimed = claim.get("reported_value")
     claimed_text = f"{claimed:.6g}{unit}" if isinstance(claimed, int | float) else str(claimed)
     variant = str(claim.get("model_variant") or "").strip()
