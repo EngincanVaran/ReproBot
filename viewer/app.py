@@ -1,10 +1,12 @@
-"""Streamlit viewer for the ocr/, reader/, and coder/ pipeline outputs.
+"""Streamlit viewer for the ocr/, reader/, coder/, and runner/ pipeline outputs.
 
-Mostly read-only: it loads files that `ocr/`, `reader/`, and `coder/` have
-already written to `ocr/output/vlm/*.md`, `reader/output/*.json`, and
-`coder/output/<paper>/coder_output.json` and displays them, without altering
-how any stage extracts or operates. Three exceptions, each calling a stage's
-own entry-point function directly, unmodified, exactly as its CLI does:
+Mostly read-only: it loads files that `ocr/`, `reader/`, `coder/`, and
+`runner/` have already written to `ocr/output/vlm/*.md`,
+`reader/output/*.json`, `coder/output/<paper>/coder_output.json`, and
+`runner/output/<paper>/runner_output.json`, and displays them, without
+altering how any stage extracts, generates, or executes. Three exceptions,
+each calling a stage's own entry-point function directly, unmodified, exactly
+as its CLI does:
 
 - The "Import a paper" section lets a user upload a new PDF and run OCR on
   it, via `ocr/vlm_extract.py`'s `run_vlm()`.
@@ -19,6 +21,10 @@ own entry-point function directly, unmodified, exactly as its CLI does:
   `coder_output.json`, and `reproduce.sh`.
 
 None of these reimplement or change the extraction/generation logic itself.
+`runner/` output has no trigger button here, deliberately: a real run can take
+up to 45 minutes on a cold cache (see `runner/docker_runner.py`'s stage
+timeouts) and needs a reachable Docker daemon, so it stays a CLI-only action
+(`uv run python -m runner.pipeline`) and this app only displays what it wrote.
 
 Uploaded PDFs are saved to `viewer/uploads/`, not `dataset/` - `dataset/` is
 curated by someone else in parallel (see CLAUDE.md), so this app never
@@ -58,6 +64,7 @@ UPLOADS_DIR = REPO_ROOT / "viewer" / "uploads"
 OCR_DIR = REPO_ROOT / "ocr" / "output" / "vlm"
 READER_DIR = REPO_ROOT / "reader" / "output"
 CODER_DIR = REPO_ROOT / "coder" / "output"
+RUNNER_DIR = REPO_ROOT / "runner" / "output"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
 
@@ -101,6 +108,13 @@ def coder_json_path(paper: str) -> Path:
 
 def coder_failed_json_path(paper: str) -> Path:
     return CODER_DIR / paper / "coder_output.failed.json"
+
+
+def runner_json_path(paper: str) -> Path:
+    """runner/pipeline.py writes `runner/output/<paper>/runner_output.json`
+    after every escalation run, win or lose - a script failure is a recorded
+    `status: "error"`, not a missing file."""
+    return RUNNER_DIR / paper / "runner_output.json"
 
 
 @st.cache_data
@@ -245,6 +259,11 @@ def render_pipeline_status(papers: list[str]) -> None:
         if has_reader:
             data = load_json_output(str(reader_path), reader_path.stat().st_mtime)
             flags = len(data.get("validation", {}).get("flags", []))
+        runner_path = runner_json_path(paper)
+        runner_status = "-"
+        if runner_path.exists():
+            runner_data = load_json_output(str(runner_path), runner_path.stat().st_mtime)
+            runner_status = runner_data.get("status", "unknown")
         rows.append(
             {
                 "Paper": paper,
@@ -252,6 +271,7 @@ def render_pipeline_status(papers: list[str]) -> None:
                 "Reader": "done" if has_reader else "-",
                 "Coder": "done" if has_coder else ("failed" if coder_failed else "-"),
                 "Validation flags": flags if has_reader else "-",
+                "Runner": runner_status,
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -414,10 +434,74 @@ def render_code(coder_data: dict[str, Any]) -> None:
             st.markdown(f"- {assumption}")
 
 
+def render_runner(runner_data: dict[str, Any]) -> None:
+    status = runner_data.get("status", "unknown")
+    status_banner = {"success": st.success, "error": st.error, "timeout": st.warning}.get(
+        status, st.info
+    )
+    status_banner(f"Status: **{status}**")
+
+    st.markdown(f"**Stage reached:** {runner_data.get('stage_reached') or '-'}")
+    if runner_data.get("failed_stage"):
+        st.markdown(
+            f"**Failed at:** `{runner_data['failed_stage']}` "
+            f"(exit code {runner_data.get('exit_code')})"
+        )
+    st.markdown(f"**Total wall clock:** {runner_data.get('wall_clock_seconds', 0):.1f}s")
+
+    metrics = runner_data.get("reproduced_metrics")
+    if metrics:
+        st.markdown(f"**Reproduced metrics** (from the `{runner_data.get('metrics_mode')}` stage)")
+        st.json(metrics)
+    else:
+        st.info("No metrics were produced by this run.")
+
+    triage = runner_data.get("triage")
+    if triage:
+        st.markdown(f"**Triage:** `{triage.get('category')}`")
+        if triage.get("reasoning"):
+            st.markdown(triage["reasoning"])
+        if triage.get("suggested_fix"):
+            st.markdown(f"**Suggested fix:** {triage['suggested_fix']}")
+
+    if runner_data.get("error_trace"):
+        with st.expander("Error trace"):
+            st.code(runner_data["error_trace"], language="python")
+
+    stages = runner_data.get("stages", [])
+    if not stages:
+        return
+    st.markdown("**Stages**")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Mode": stage.get("mode"),
+                    "Status": stage.get("status"),
+                    "Exit code": stage.get("exit_code"),
+                    "Wall clock (s)": stage.get("wall_clock_seconds"),
+                    "Timeout (s)": stage.get("timeout_seconds"),
+                }
+                for stage in stages
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    for stage in stages:
+        with st.expander(f"`{stage.get('mode')}` logs ({stage.get('status')})"):
+            st.code(stage.get("log_excerpt", "") or "(empty)", language="text")
+            for label, path_key in (("stdout", "stdout_path"), ("stderr", "stderr_path")):
+                log_path = Path(stage[path_key]) if stage.get(path_key) else None
+                if log_path and log_path.exists():
+                    st.caption(f"Full {label}: `{log_path}`")
+
+
 def render_paper(paper: str) -> None:
     reader_path = reader_json_path(paper)
     ocr_path = ocr_markdown_path(paper)
     coder_path = coder_json_path(paper)
+    runner_path = runner_json_path(paper)
 
     if not reader_path.exists() and not ocr_path.exists():
         st.warning(f"No pipeline output yet for '{paper}'.")
@@ -436,6 +520,11 @@ def render_paper(paper: str) -> None:
         coder_data = load_json_output(str(coder_failed_path), coder_failed_path.stat().st_mtime)
     else:
         coder_data = None
+    runner_data = (
+        load_json_output(str(runner_path), runner_path.stat().st_mtime)
+        if runner_path.exists()
+        else None
+    )
 
     tab_names = ["Overview"]
     if data is not None:
@@ -446,6 +535,8 @@ def render_paper(paper: str) -> None:
         tab_names += ["Claims", "Hyperparameters", "Data Pipeline", "Validation", "Raw JSON"]
     if coder_data is not None:
         tab_names.append("Code")
+    if runner_data is not None:
+        tab_names.append("Runner")
     if ocr_path.exists():
         tab_names.append("Raw OCR Markdown")
 
@@ -489,6 +580,17 @@ def render_paper(paper: str) -> None:
             if st.button("Generate code", key=f"run_coder_{paper}"):
                 run_coder_extraction(reader_path, paper)
 
+        if runner_data is not None:
+            st.markdown(
+                f"- Runner status: **{runner_data.get('status')}** "
+                f"(reached `{runner_data.get('stage_reached') or '-'}`)"
+            )
+        elif coder_data is not None:
+            st.caption(
+                "Run via the CLI: `uv run python -m runner.pipeline --input "
+                f'"coder/output/{paper}"`.'
+            )
+
     if data is not None:
         if "Method Summary" in tab_by_name:
             with tab_by_name["Method Summary"]:
@@ -511,6 +613,10 @@ def render_paper(paper: str) -> None:
         with tab_by_name["Code"]:
             render_code(coder_data)
 
+    if runner_data is not None:
+        with tab_by_name["Runner"]:
+            render_runner(runner_data)
+
     if ocr_path.exists():
         with tab_by_name["Raw OCR Markdown"]:
             st.markdown(load_markdown(str(ocr_path), ocr_path.stat().st_mtime))
@@ -520,9 +626,10 @@ def main() -> None:
     st.set_page_config(page_title="ReproBot Pipeline Viewer", layout="wide")
     st.title("ReproBot Pipeline Viewer")
     st.caption(
-        "Displays ocr/output/, reader/output/, and coder/output/ as-is; the "
-        "import section below and the per-paper Overview buttons can trigger "
-        "each stage's own pipeline, unmodified."
+        "Displays ocr/output/, reader/output/, coder/output/, and runner/output/ "
+        "as-is; the import section below and the per-paper Overview buttons can "
+        "trigger the OCR/Reader/Coder stages, unmodified. Runner is CLI-only "
+        "(a real run can take up to 45 minutes) and shown here read-only."
     )
 
     papers = list_papers()
