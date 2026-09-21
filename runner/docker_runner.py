@@ -464,14 +464,26 @@ class DockerRunner:
         logger.info(f"[docker] daemon reachable, server version {probe.stdout.strip()}")
 
     def image_exists(self) -> bool:
+        """Check presence via `docker images -q`, NOT `docker image inspect`.
+
+        Measured false negative on a Docker Desktop host using the containerd
+        image snapshotter (`docker info`'s `driver-type
+        io.containerd.snapshotter.v1`): a buildx-built image carrying
+        attestation manifests exists, appears in `docker images`, and runs
+        fine via `docker run`, but `docker image inspect <tag>` reports "No
+        such image" for it anyway. That false negative made `ensure_image`
+        rebuild on every single invocation, even with `--no-build`, on an
+        image that was already there. `docker images -q` reads the same tag
+        index `docker images` does, so it does not share the bug.
+        """
         result = subprocess.run(
-            ["docker", "image", "inspect", self.image],
+            ["docker", "images", "-q", self.image],
             capture_output=True,
             text=True,
             timeout=DOCKER_CONTROL_TIMEOUT,
             check=False,
         )
-        return result.returncode == 0
+        return result.returncode == 0 and bool(result.stdout.strip())
 
     def build_image(self) -> None:
         """Build the sandbox image from `runner/Dockerfile`.
