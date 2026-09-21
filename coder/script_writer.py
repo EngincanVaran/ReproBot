@@ -640,6 +640,35 @@ def _strip_code_fences(script: str) -> str:
     return "\n".join(lines[1:-1]) + "\n"
 
 
+def _unescape_flattened_script(script: str) -> str:
+    """Undo a model quirk where the whole script arrives as one literal line.
+
+    Observed on AutoReproduce's declined-paper stub: instead of a real
+    multi-line string, the model emitted literal `\\n`/`\\"` two-character
+    escape sequences, as if it were hand-escaping a JSON string instead of
+    letting the API's own JSON encoding do that. The result is syntactically
+    valid Python - a file that is one giant `#` comment - that silently does
+    nothing when run, including swallowing an intended `raise SystemExit(...)`
+    into that same comment. `ast.parse` cannot catch this (a comment-only file
+    parses fine), so it would otherwise reach disk as a quiet no-op dressed up
+    as a passing script.
+
+    Zero real newlines is the trigger and the safety net: every legitimate
+    generated training script is many lines, so a flattened one-liner is never
+    a false positive here, and a normal multi-line script is returned as-is.
+    """
+    if "\n" in script or "\\n" not in script:
+        return script
+    logger.warning(
+        "  [training_script] script_content arrived as a single literal line with "
+        'escaped \\n/\\" sequences instead of real newlines/quotes - unescaping it '
+        "so the file is not silently a no-op comment"
+    )
+    return (
+        script.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+    )
+
+
 def _log_architecture_inputs(reader_output: dict[str, Any]) -> None:
     """Log what the `architecture_notes` stage actually handed this call.
 
@@ -810,7 +839,9 @@ class TrainingScriptWriter(CodeWriter[TrainingScript]):
             ],
             assumptions=[str(item) for item in _as_list(payload.get("assumptions"))],
             cli_flags_included=[str(flag) for flag in _as_list(payload.get("cli_flags_included"))],
-            script_content=_strip_code_fences(str(payload["script_content"])),
+            script_content=_unescape_flattened_script(
+                _strip_code_fences(str(payload["script_content"]))
+            ),
         )
 
         # Logged loudly and in full: a wrong claim pick silently reproduces the
