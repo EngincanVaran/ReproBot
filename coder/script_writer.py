@@ -239,6 +239,17 @@ rate, augmentation - all straight from the reader output's `hyperparameters` \
 entries for the matched regime. Record each one you actually used in \
 `hyperparameters_used` as `{name, value_used}`, where `value_used` is the \
 concrete value the script encodes (e.g. "0.1, x0.2 at epochs 60/120/160").
+   SCHEDULE UNITS ARE A TRAP: papers state schedules in EPOCHS, but \
+`transformers.Trainer` calls `scheduler.step()` once per OPTIMIZER STEP. Passing \
+epoch numbers as `MultiStepLR` milestones (or `StepLR` step_size, etc.) fires \
+them after a few hundred steps - a paper's "x0.2 at epoch 60" becomes "x0.2 at \
+step 60", the rate collapses inside the first epoch, and the run trains 200 \
+epochs at a near-zero rate without any error. Convert epochs to steps: \
+`steps_per_epoch = len(train_dataset) // train_batch_size` (the script uses \
+`dataloader_drop_last=True`), computed AFTER the dataset is capped by \
+`--max-train-samples` and sized by `--batch-size`, and set milestones to \
+`epoch * steps_per_epoch`. Write a one-line comment at the scheduler stating \
+the unit conversion, and log the resulting step milestones.
 
 4. WRITE A HAND-ROLLED `nn.Module`, built from `architecture_notes` exactly as \
 the section above prescribes, from `torch.nn` primitives. Do NOT use \
