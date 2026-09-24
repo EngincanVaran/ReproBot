@@ -55,7 +55,9 @@ from runner.docker_runner import (
     DockerRunner,
     DockerUnavailableError,
     ImageMissingError,
+    add_gpu_arguments,
     parse_timeout_overrides,
+    runner_kwargs_from_args,
     stages_up_to,
 )
 
@@ -231,7 +233,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run ONLY this one mode per attempt, skipping the escalation ladder",
     )
 
-    parser.add_argument("--image", default=DEFAULT_IMAGE, help="Sandbox image tag")
+    parser.add_argument(
+        "--image",
+        default=None,
+        help=f"Sandbox image tag (default {DEFAULT_IMAGE}, or the CUDA image with --gpu)",
+    )
+    add_gpu_arguments(parser)
     parser.add_argument(
         "--build",
         action=argparse.BooleanOptionalAction,
@@ -297,7 +304,7 @@ def main() -> None:
     # would end as `untriaged_error` on the first attempt and the loop would never
     # retry anything.
     runner = DockerRunner(
-        image=args.image,
+        **runner_kwargs_from_args(args),
         cache_dir=args.cache_dir,
         stage_timeouts=stage_timeouts,
         memory=args.memory,

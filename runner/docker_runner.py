@@ -45,7 +45,9 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -61,10 +63,12 @@ from runner.triage import TriageResult, triage_failure
 
 RUNNER_DIR: Final[Path] = Path(__file__).resolve().parent
 DOCKERFILE_PATH: Final[Path] = RUNNER_DIR / "Dockerfile"
+DOCKERFILE_CUDA_PATH: Final[Path] = RUNNER_DIR / "Dockerfile.cuda"
 BUILD_CONTEXT: Final[Path] = RUNNER_DIR
 DEFAULT_CACHE_DIR: Final[Path] = RUNNER_DIR / "cache"
 
 DEFAULT_IMAGE: Final[str] = "reprobot-runner:latest"
+DEFAULT_CUDA_IMAGE: Final[str] = "reprobot-runner:cuda"
 
 CONTAINER_WORKDIR: Final[str] = "/workspace"
 CONTAINER_DATA_DIR: Final[str] = "/workspace/data"
@@ -344,6 +348,8 @@ def build_run_command(
     memory: str | None = None,
     cpus: str | None = None,
     network: str = "bridge",
+    gpus: str | None = None,
+    user: str | None = None,
 ) -> list[str]:
     """Assemble the `docker run` argv for one stage.
 
@@ -365,6 +371,11 @@ def build_run_command(
 
     `--rm` because the results are already on the host through the mount, so a
     stopped container carries nothing worth keeping.
+
+    `gpus` (e.g. "all") adds `--gpus`; it needs the NVIDIA container toolkit on
+    the host and a CUDA image. `user` (e.g. "1000:1000") adds `--user`, so files
+    the container writes into the bind mounts are owned by the host user instead
+    of root - invisible on macOS Docker Desktop, real on a Linux host.
     """
     command = [
         "docker",
@@ -383,12 +394,48 @@ def build_run_command(
         "--network",
         network,
     ]
+    if gpus:
+        command += ["--gpus", gpus]
+    if user:
+        command += ["--user", user]
     if memory:
         command += ["--memory", memory]
     if cpus:
         command += ["--cpus", cpus]
     command += [image, "bash", "reproduce.sh", mode]
     return command
+
+
+def add_gpu_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register `--gpu` / `--as-host-user`, shared by runner/ and orchestrator/ CLIs."""
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help=(
+            "Run on the host's NVIDIA GPU: uses the CUDA image (runner/Dockerfile.cuda) "
+            "and passes `--gpus all`. Needs the NVIDIA container toolkit on the host"
+        ),
+    )
+    parser.add_argument(
+        "--as-host-user",
+        action="store_true",
+        help=(
+            "Run the container as the host's uid:gid so files written into the bind mounts "
+            "are not root-owned. Off by default; matters on a Linux host, not Docker Desktop"
+        ),
+    )
+
+
+def runner_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    """Translate `--image` / `--gpu` / `--as-host-user` into `DockerRunner` kwargs."""
+    kwargs: dict[str, Any] = {"image": args.image or DEFAULT_IMAGE}
+    if args.gpu:
+        kwargs.update(
+            image=args.image or DEFAULT_CUDA_IMAGE, dockerfile=DOCKERFILE_CUDA_PATH, gpus="all"
+        )
+    if args.as_host_user:
+        kwargs["user"] = f"{os.getuid()}:{os.getgid()}"
+    return kwargs
 
 
 def decode_stream(value: str | bytes | None) -> str:
@@ -423,8 +470,14 @@ class DockerRunner:
         cpus: str | None = None,
         network: str = "bridge",
         run_triage: bool = True,
+        dockerfile: Path = DOCKERFILE_PATH,
+        gpus: str | None = None,
+        user: str | None = None,
     ) -> None:
         self.image = image
+        self.dockerfile = dockerfile
+        self.gpus = gpus
+        self.user = user
         self.cache_dir = cache_dir
         self.stage_timeouts = {**DEFAULT_STAGE_TIMEOUTS, **(stage_timeouts or {})}
         self.memory = memory
@@ -492,7 +545,7 @@ class DockerRunner:
         generated script is in it, by design: the image stays static across every
         Coder regeneration and its layer cache is never invalidated by one.
         """
-        logger.info(f"[docker] building {self.image} from {DOCKERFILE_PATH}")
+        logger.info(f"[docker] building {self.image} from {self.dockerfile}")
         logger.info(f"[docker] build context: {BUILD_CONTEXT} (no generated code is copied in)")
         started = time.monotonic()
         result = subprocess.run(
@@ -502,7 +555,7 @@ class DockerRunner:
                 "--tag",
                 self.image,
                 "--file",
-                str(DOCKERFILE_PATH),
+                str(self.dockerfile),
                 str(BUILD_CONTEXT),
             ],
             capture_output=True,
@@ -530,7 +583,7 @@ class DockerRunner:
             raise ImageMissingError(
                 f"image {self.image} does not exist locally and --no-build was given. "
                 f"Run once with --build, or `docker build -t {self.image} "
-                f"-f {DOCKERFILE_PATH} {BUILD_CONTEXT}`."
+                f"-f {self.dockerfile} {BUILD_CONTEXT}`."
             )
         self.build_image()
 
@@ -599,6 +652,8 @@ class DockerRunner:
             memory=self.memory,
             cpus=self.cpus,
             network=self.network,
+            gpus=self.gpus,
+            user=self.user,
         )
         logger.info(f"  [{mode}] container: {container_name}")
         logger.info(f"  [{mode}] budget: {timeout_seconds}s")
