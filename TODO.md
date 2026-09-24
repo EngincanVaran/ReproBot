@@ -4,7 +4,7 @@ Living tracker. Updated by hand as things land; the narrative history with full 
 lives in [`docs/agent-log.md`](docs/agent-log.md), and each stage's own README holds the
 deep version of its known issues.
 
-**Last updated:** 2026-08-22 · `main` @ `4befad5`
+**Last updated:** 2026-09-25 · branch `mert/runner-agent`
 
 ---
 
@@ -38,8 +38,12 @@ Roughly in the order that unblocks the most.
       under an explicit numeric tolerance. Deliberately simple arithmetic, not an LLM
       eyeballing numbers (project plan §2.5). Buildable and testable now against synthetic
       metrics; verdicts only become *meaningful* once a real run exists (see Blockers).
-- [ ] **Secure GPU compute** — gates every fidelity result. Worth starting in parallel,
-      not after.
+- [x] **Secure GPU compute** — done 2026-09-24: Vast.ai VM instance, 1x RTX 4090, ~$0.44/hr.
+      `runner --gpu` + `runner/Dockerfile.cuda`. First fidelity result: WRN-28-10 CIFAR-10
+      reproduced at **3.83%** vs the paper's 4.00% (200 epochs, 3.4 h, one seed). Compared by
+      hand; no Critic yet.
+- [ ] **Regenerate the other papers' scripts** — the Coder prompt now converts epoch-based LR
+      milestones to optimizer steps; only WRN has been regenerated with it.
 - [ ] **Extend coverage** — 4 papers have Reader output, only 2 have been coded/run.
       Costs API calls, not new code, and turns single demonstrations into distributions.
 - [ ] **Build the report generator** — the promised deliverable and the cheapest remaining
@@ -86,6 +90,11 @@ Ordered by stage. Anything marked **cost** is actively wasting money or time on 
       unknown and not reproducible on demand.
 
 ### `coder/`
+- [ ] **Generated eval drops the last partial batch** — WRN's reported error is over 9,984 of
+      10,000 test images (`dataloader_drop_last` applies to eval). Small but real.
+- [x] **LR schedule units** — epoch milestones were passed to a per-step scheduler, collapsing the
+      LR to 0.0008 within half an epoch. Passed every gate; caught only in a real run. Fixed
+      in the prompt (2026-09-24); no deterministic gate exists for it.
 - [ ] **Intermittent tool-field leak** — the model serialises later tool fields as literal
       `<parameter name="...">` text inside an earlier field, twice swallowing
       `script_content` entirely. Worked around deterministically in
@@ -101,6 +110,11 @@ Ordered by stage. Anything marked **cost** is actively wasting money or time on 
       prior below a paper-sourced value.
 
 ### `runner/`
+- [ ] **GPU path only verified on one host** — Vast VM, x86_64, driver 575, cu124. Blackwell
+      (sm_120+) and aarch64 need a newer torch pin. `--as-host-user` ran as root, so its real
+      case is untested. Stage timeouts are still CPU-era estimates; `full` measured ~61 s/epoch.
+- [ ] **CIFAR-10 download is throttled** (~68 kB/s per connection from toronto.edu); a cold
+      cache costs ~40 min. Parallel range requests are ~8x faster (server allows ~8 connections).
 - [ ] **Container runs as root** — macOS Docker Desktop hides this; a Linux host will
       leave root-owned files in `coder/output/`. Fix is `--user $(id -u):$(id -g)` plus a
       writable `HOME` in the container; unverified, so not applied blind.
