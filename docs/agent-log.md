@@ -864,3 +864,382 @@ retry budget, since the validator flags it every run. Cost has risen materially
 — five extractors plus a validator inside a retry loop, ~3 passes per paper.
 
 ---
+
+### Coding Agent — wire the Coder to build from `architecture_notes` (2026-08-22, `9729c7e`)
+
+**Asked:** Make the Coder prompt consume the new `architecture_notes` field as its
+primary architecture source, and verify on Network In Network — deliberately not
+Wide ResNet, which a model rebuilds from memory and would prove nothing.
+
+**Result:** Three-level source precedence (extraction → paper Markdown → disclosed
+model memory). The NIN script built a real mlpconv cascade with zero `nn.Linear` and
+excluded both decoy equations by name. Two caveats recorded: channel widths still
+came from memory (disclosed, so visible rather than verified), and the bookkeeping
+described stage 3 as `192→192→10` while the code built `192→10→10`.
+
+---
+
+### Direct — progress report, handouts, slides (2026-08-22 → 2026-08-27)
+
+Second progress report written in both LaTeX column formats from one generator
+(`docs/progress-reports/second-progress-report/generate.py`), then expanded to 15
+pages. One-page handouts per stage in `docs/handouts/`, a title-less Coder slide
+diagram, and several claude.ai artifacts (pipeline audit, developer handoff,
+checkpoint deck). Two CSS traps found and recorded in the handouts README.
+
+---
+
+### Direct — correct stale `CLAUDE.md` claims (2026-09-13, `95515f9`)
+
+Several statements described landed work as future or missing, including that the
+Coder didn't use `architecture_notes`. Each correction was checked against the code
+first, and every edit was guarded to match exactly once — after an earlier edit on
+the handouts silently matched nothing while still reporting success.
+
+---
+
+### Direct — find non-CIFAR papers to test the pipeline end to end (2026-09-13)
+
+**Asked (Engincan):** a basic ML paper, e.g. house price prediction, that can be
+tested end to end. **Finding first:** the pipeline was hardwired to image
+classification — the Coder prompt (torchvision, `pixel_values`, `Trainer`), the
+metrics contract (`train_accuracy`), and the Runner image (no pandas/sklearn).
+Recommended an in-scope MNIST paper (Tang 2013) to test the pipeline as it was.
+**Engincan overruled:** ReproBot must handle multiple paper types — fix the stages
+and run both Tang and a house-price paper (Wijaya 2023). Wijaya caveats recorded up
+front: an unstated 405/101 split method on a small dataset (noisy metric), and
+Boston Housing's racially-derived feature, which is why scikit-learn removed it.
+
+---
+
+### Coding Agent — generalize `coder/` and `runner/` beyond image classification (2026-09-13, `dc5a541`)
+
+**Asked:** Four design decisions handed down: plain PyTorch loop instead of HF
+`Trainer`; always PyTorch, disclosing framework-default differences; `task_type`
+inferred by the Coder; a task-agnostic metrics contract (`train_metric`/`eval_metric`,
+`task_type`, `higher_is_better`). Plus dataset-agnostic loading and tabular deps in
+the image. Regression-test NIN into a scratch directory without clobbering outputs.
+
+**Result:** Implemented; all gates pass; image rebuilt with pinned pandas,
+scikit-learn and scipy in the same pip step as numpy. NIN regression script kept its
+mlpconv architecture and zero `nn.Linear`, and its probe passed — verified
+independently (contract keys, schema, no `Trainer`/`transformers`/`pixel_values` left).
+
+**Found on review, not by the agent:** the regression probe's loss was **~947**
+where the old script reported 2.30. Traced to the old `Trainer` script never setting
+`max_grad_norm`, so it inherited clipping at 1.0 (confirmed inside the image) — which
+the paper never uses. The old "working" result was partly an artifact of a hidden
+default, which is precisely the stated reason for dropping `Trainer`.
+
+**Also found (direct, in parallel):** the `vlm` OCR extra never declared Pillow,
+needed by `bitmap.to_pil()`; it only worked because the `pdfplumber` extra pulls
+Pillow in transitively. OCR on both new papers failed on every paper with exit code
+0 — surfacing that `ocr/`, `reader/` and `coder/` never signal failure.
+
+---
+
+### Direct — Reader on the two new papers (2026-09-13)
+
+Both extracted exactly (Tang's `Softmax: 0.99% / DLSVM: 0.87%` and Wijaya's Table 3
+verbatim). Tang's equation roles were right, including the subtle L1- vs
+L2-gradient distinction. Three Reader defects logged in `TODO.md`: no field records
+a missing **hyperparameter** (so Tang's momentum and SVM `C` went unflagged — the
+exact two guesses that later collapsed training); the same result claimed two or
+three times across prose/table/figure; and the exit-code bug above.
+
+---
+
+### Direct — first tabular run fails; triage misroutes it (2026-09-13)
+
+Wijaya's probe failed in 5 s: the generated script fetched Boston Housing from CMU
+StatLib, which returns HTTP 403 to every client (verified with curl and urllib, with
+and without a user agent). Triage classified it `environment_error`, so the
+Orchestrator stopped with **zero retries** on a failure one regeneration would fix.
+
+Fixes, each verified by re-triaging the real log: download failures from one refusing
+source are now `recoverable_error`; the Coder prefers OpenML over remembered URLs and
+must assert it fetched the intended dataset. Iterating on `suggested_fix` exposed
+three more hazards, each fixed with a rule: it offered "a standard alternative
+regression dataset" (changes what is reproduced), suggested the removed `load_boston`,
+and then confidently named Boston Housing as OpenML **`data_id=506`** — which is
+actually `analcatdata_gsssexsurvey` (Boston is 531). A wrong id doesn't fail; it
+silently trains on the wrong data. Wijaya rerun pending.
+
+---
+
+### Direct — Tang's first `full` run collapses; ablation isolates the cause (2026-09-13)
+
+ReproBot's **first `full`-stage run**. Tang learned through probe → smoke → capped,
+then collapsed by epoch ~20 to ~89% error against a claimed 0.87%. The loss sat on
+the exact optimum of a network ignoring its input (3.599 predicted vs ~3.607
+observed; always predicting digit "1", 88.8% error) — dead ReLUs. Stopped at ~epoch
+250 (orchestrator killed first, so it could not triage and regenerate).
+
+A six-config ablation, importing the real generated script and varying only the four
+unstated guesses, showed the collapse needs **momentum 0.9 and `C=1.0` together** —
+reducing either alone stabilizes it (2.6–2.8% test error at epoch 30). Damage is
+always in layer 2; PCA whitening collapses fastest. Recommended `C=0.1` as a
+one-line controlled change. Full write-up, script and raw data:
+`docs/notes/tang-2013-ablation/`. Rerun pending.
+
+**Pipeline lessons:** nothing judges whether a number is sane — the run would have
+been reported `success`; `capped` claims to check learning but reads only the exit
+code; and the escalation ladder cannot catch instability that needs thousands of
+steps to appear.
+
+---
+
+### Direct — generalization test finished: the first two fidelity numbers (2026-09-13)
+
+Resumed from `TODO.md` in a fresh session, both runs at once. No subagents.
+
+**Wijaya 2023** (Orchestrator, `--claim-id c11 --max-stage full --retry-budget 2 --force`).
+Attempt 1's probe crashed in 7.5 s: `fetch_openml(data_id=531, version=1)` — scikit-learn
+rejects both together. The cause was our own prompt, which twice said "OpenML data_id and
+version"; the wording is fixed. Haiku triaged it `recoverable_error` with the correct
+one-line fix (verified against the traceback), the plateau guard measured 0.2207, and
+attempt 2 passed probe → smoke → capped → full, asserting dataset name and shape before
+training. **The retry loop's first repair of a bug nobody planted.** Result after 1000
+epochs: **test RMSE 4.48 vs claimed 3.02**, train RMSE 2.94 vs 2.69. Validation RMSE sat at
+~3.2–3.5 throughout, so the gap is at least partly the unstated 405/101 split; one seed
+can't say how much. Also seen: the Keras-defaults rule followed for Adam ε but not for
+BatchNorm or init.
+
+**Tang 2013** (`runner.pipeline --mode full`, `svm_C` 1.0 → 0.1 by hand, nothing else).
+No collapse; train error fell smoothly to 0.062%. **Test error 0.82% vs claimed 0.87%** —
+about half a binomial standard error, one seed. A human-in-the-loop result: the ablation
+picked `C`, and it had logged short-horizon test error. Detail appended to
+`docs/notes/tang-2013-ablation/README.md`.
+
+**Bug found and fixed:** `reproduce.sh full` ran the script with no flags, so it wrote
+`metrics.json` while the Runner reads `metrics.full.json`; both results above were
+recovered only through the Runner's stdout fallback (values verified identical to the
+file). The template now passes `--metrics-output metrics.full.json`; the four existing
+generated `reproduce.sh` files were patched the same way.
+
+**Cost of running both at once:** each container claimed every core — Wijaya's 1000
+tiny epochs took 1906 s and Tang 3223 s (estimate ~28 min).
+
+---
+
+### Direct — third progress report (2026-09-13)
+
+Written directly (no subagent — the content was this session's own work). Same
+construction as the second report: one body in
+`docs/progress-reports/third-progress-report/generate.py`, emitted as single- and
+two-column `.tex`, prose identical by construction (verified by diffing the two files:
+only float environments and geometry differ). The Tang and Wijaya training-curve plots
+are TikZ with coordinates computed in Python from the real run logs, since this TeX
+install has no pgfplots. Mert's `viewer/` branch was read for its own section
+(`git show origin/mert/runner-agent`), not merged.
+
+Every page of both PDFs was rendered and inspected. Fixed on inspection: overfull tables
+(narrower columns, ragged-right cells), a retry arrow crossing a row label, a legend
+touching a marker line, a claimed-value line coloured like the data series, and
+two-column vertical stretching on page 1 and pages 9–10 (`\raggedbottom`). A fact-check
+pass against the repo removed one false sentence (that the stage handouts match the
+current code — they predate the generalization) and qualified two others.
+
+---
+
+### Direct — scikit-learn support in `coder/`; three classical-ML papers orchestrated; report made self-contained (2026-09-13)
+
+**Asked (Engincan):** run the soft decision tree, SVM and random-forest papers through the
+Orchestrator for the report, and make the third report independent of the earlier reports
+(explain prior facts plainly instead of citing them).
+
+**Coder change:** prompt rule 5 now picks the library by model family (classical estimators in
+scikit-learn, neural models — including gradient-trained trees — in PyTorch), adds paper-era
+library-version defaults, LIBSVM-format loading, generated-data handling, no-op flags for
+estimators, nullable loss/epoch metrics, and repeated-run protocols (`num_runs`, `run_values`).
+Runner code and image unchanged (scikit-learn 1.5.2 was already there).
+
+**Runs (all `--max-stage full --retry-budget 2`):**
+- SVM guide c1: attempt 1 crashed — svmguide1's training file is label-sorted (first 2,000 rows
+  one class), so the probe's first 256 rows had one class; triage recoverable; retry sampled at
+  random and passed. Full: 96.625% vs 96.9%. Independent check in the runner image: `SVC` at the
+  paper's settings gives 66.925 / 96.15 / 96.875% **exactly**; the grid search chose C=γ=8.
+- Fashion-MNIST c17: success first try, 5-run mean 0.8773 vs 0.873. Reader first kept 0 of 124
+  rows (dataset paper, no "own method"); validator flag recovered 26 claims.
+- Soft decision tree c1: in-place autograd crash repaired by retry; then all check stages
+  passed with below-chance accuracy and a negative constant loss. Regeneration also changed
+  lr, batch size and λ unasked. Full run left running; no number reported.
+
+Report: abstract, introduction, status table and conclusion rewritten; all references to the
+first/second reports and their bibliography entries removed; new sections for the three
+papers, the SVM exactness check, and two findings (exactness where the library is the method;
+the ladder does not fit non-iterative models).
+
+---
+
+### Direct — soft decision tree: why it never learned (2026-09-13)
+
+Engincan suspected the running full job was not learning. `docker logs` on the live container:
+test accuracy 0.28% → 0.15% over four epochs, loss -1.56 → -3.01. Root cause: the paper prints
+Eq. 3 as `L = -log(Σ_ℓ P^ℓ Σ_k T_k log Q_k^ℓ)`, whose bracket is never positive. The Reader
+extracted it verbatim (correctly), the Coder implemented it faithfully and wrote
+`-log(-inner_sum)` to keep the log defined — which maximizes cross-entropy. The loss plateau
+-3.03 = -log(20.7), and 20.7 = -log(1e-9), the script's probability clamp. A copy with the one
+line replaced by the expected cross-entropy (`-inner_sum`) reached 54% test accuracy after 3
+epochs on 5,000 images. Report paragraph updated with the diagnosis.
+
+---
+
+### Direct — soft decision tree rerun; third report reworked around results (2026-09-13 → 14)
+
+**Asked (Engincan):** run the fixed soft tree through the Orchestrator; rework the report to
+focus on working code, a learning graph per model and the comparison with each paper, telling
+problems briefly as problem → solution; add Runner live check-ups, the Critic and loop controls
+to TODO; finalize when the run ends.
+
+**Run:** one-line loss fix applied to the existing script, then
+`orchestrator.pipeline --claim-id c1 --max-stage full --use-existing-script --force`. A persistent
+Monitor polled `docker logs` every 30 s and reported each epoch live — the practice the new
+TODO item asks the Runner to automate. Result: **95.11% vs 94.45%**, train 98.29%, 70 min,
+`success`, 0 retries; 94.45% first reached at epoch 11.
+
+**Learning-graph data** for the two classical models was computed in the runner image by
+importing the generated scripts' own functions: the SVM's 5-fold CV grid (best 96.9894% at
+C=γ=8, identical to the run) and the random forest's accuracy as trees are added (0.8773 at 100
+trees, identical to repetition 1).
+
+**Report:** rewritten results-first — five-panel learning-curve figure, results table,
+problem/solution table, lessons, future work; ablation, collapse diagnosis and failure-focused
+findings reduced to single lines. 10 pages single-column, 8 two-column; figure pages checked.
+
+---
+
+### Direct — Runner live check-ups (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** next-phase priority 1 — watch training while it runs instead of judging
+by exit code — plus any Coder changes it needs. Plan approved with: halt → retry with evidence,
+a pytest replay suite, and the classical-model ladder now. He decided the Critic stays a
+separate next step (check-ups judge health; the Critic judges fidelity).
+
+**Built:** `runner/checkups.py` (record parser, incremental history reader, six pure rules with
+per-stage allow-lists, persistence and chance-based margins); a watcher thread in
+`DockerRunner.run_stage` that kills the container on a halt and re-judges after exit; `halted`
+status and `--no-live-checkups` / `--checkup-interval`; Orchestrator routing of halts as a
+retry with the evidence as feedback, recorded on `AttemptRecord`; Coder prompt rule 11b (history
+contract), gate 3 (`ScriptContractError`), required `model_family`, classical `capped` ladder,
+seeded stratified caps, explicit wall-clock start; `tests/` with 28 pytest cases.
+
+**Verified:** replays of real curves — Tang ablation A halted at epoch 12 and E at 6
+(`diverged`), all stable configs and every healthy phase-3 run untouched. Docker: SVM guide
+`success` with live records (96.925%), Fashion-MNIST RF `success` (records per repetition live,
+capped now differs from smoke), sign-flipped soft tree killed 0.3 s after its epoch-1 record in
+a 40-epoch `full` run, and the same fault through the Orchestrator halted in `probe` after 5 s,
+regenerated with the evidence, `success` to `capped`.
+
+**Found end to end:** a false positive — `no_progress` in `capped` halted a *correct* soft tree
+(loss at ln 10, accuracy 3x chance) three times and exhausted the budget; fixed by restricting it
+to `full` and requiring no gain over chance, with the real curve added as a regression test. Also
+the SVM probe crashed twice because "deterministic subset" meant first-N rows of a label-sorted
+file; the prompt now requires seeded stratified subsets. The regenerated soft tree implemented
+the paper's misprinted Eq. 3 correctly on its own (expected cross-entropy, bound 0).
+
+---
+
+### Direct — the Critic (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** next-phase priority 2, a Critic that judges each reproduced number against
+its claim. Design questions answered before building:
+- **Tolerance:** "up to you". Chosen as max(2 × uncertainty, reporting precision).
+- **Seeds:** run extra seeds only when a full run is cheap.
+- **Fail:** one guided retry rather than an immediate fail.
+- **Duplicate claims:** merge them inside the Critic without editing Reader output.
+
+The report generator comes after the Critic.
+
+**Built:**
+- `critic/claims.py`: claim dedup covering metric synonyms, precision-aware value match,
+  train/test conflicts, and model-name conflicts (location references such as "Table 3" are
+  stripped; other numbers are kept).
+- `critic/judge.py`:
+  - Uncertainty comes from measured run spread, else binomial test noise, else none.
+  - Verdicts are pass (including `exceeds_claim`), fail, inconclusive and not_evaluated.
+  - `guided_retry_feedback` names only the Coder's recorded unstated choices.
+- `critic/pipeline.py`: offline CLI over states or files.
+- Seed modes: `seed2`/`seed3` in the `reproduce.sh` template, plus Runner `SEED_MODES` with
+  full's timeout and rules.
+- Orchestrator:
+  - `decide_after_critic` and `_critic_phase` (extra seeds when full ≤ `--seed-budget`, one
+    fidelity retry).
+  - `critic_output`, `fidelity_retry_count`, per-attempt `critic_verdict`.
+  - CLI `--no-critic` / `--seed-budget` / `--fidelity-retry-budget`.
+- Tests: `tests/test_critic.py` (real claims and results) and `tests/test_loop_critic.py`
+  (routing).
+
+**Verified:**
+- Offline, the Critic gives the by-hand verdict on all five real results:
+  - Tang: pass, ±0.19 binomial.
+  - SVM guide: pass, ±0.55.
+  - Fashion-MNIST RF: pass and exceeds, ±0.0018 from the 5-run spread.
+  - Soft tree: pass and exceeds, ±0.46.
+  - Old Wijaya run: inconclusive.
+- Dedup over 243 claims from 9 papers merges only Wijaya's four groups (14 → 8). Two
+  over-merges found while building were fixed and are now tests: Fashion LinearSVC vs
+  LogisticRegression at 0.917, and WRN depth 40 vs 22 at 5.78%.
+- End to end on Wijaya (`--max-stage full --force`):
+  - One generation; all four stages healthy.
+  - Full ran 1000 epochs in 182 s: RMSE 3.75, `inconclusive`.
+  - The Orchestrator ran seed2 (2.84) and seed3 (3.40). Each also redraws the paper's
+    unstated split.
+  - Mean 3.33 vs 3.02, ±1.07: **pass**, with no retry and no human.
+- 53 tests pass.
+
+**Worth keeping:**
+- Wijaya's old 4.48 was one split. Three splits of the same implementation span 2.84–3.75,
+  and the paper's number sits inside that range.
+- That pass is on a wide band (35% of the claim), which a report must show.
+- The guided retry has not yet fired in a live run.
+
+### Direct — Critic v2: the model review, and the first Critic loops (2026-09-14, 4th-report period)
+
+**Asked (Engincan):** "Why is the Critic not an LLM agent?" He expects the Critic to review the
+Coder's code and the Runner's output and feed back to both. Project plan §2.5 agrees: an
+arithmetic verdict plus model-drafted feedback and a Code Development check. v1 had built only
+the arithmetic, a scope I narrowed without asking. He approved Critic v2, a loop demo on one
+basic paper, then a from-scratch run, then the report generator. He asked that README and
+memory be saved first because of session limits.
+
+**Built:**
+- `critic/review.py`: one forced tool-use call returning cited findings, ranked hypotheses,
+  `method_fidelity` and a curve assessment.
+- Deterministic guards: numbers must be in the material, paper quotes must exist, script
+  lines and snippets must exist (line by line), and add-on techniques the paper never uses
+  are rejected.
+- A filtered runner-log excerpt as input.
+- `decide_after_critic` gains `fix`: a verified stated problem is a correctness retry on the
+  normal budget.
+- `deviation_feedback` / `unstated_feedback` replace the template when a review exists.
+- `reader/tooluse.py::recover_leaked_fields`.
+- CLI: `--no-review` / `--review-model`, and `critic.pipeline --review`.
+- Tests: `tests/test_critic_review.py`, using the first real payload as a fixture. 65 tests
+  pass.
+
+**Found by running it:**
+1. **Leaked fields.** On the first real review, the model leaked `findings` inside
+   `curve_assessment`. `recover_leaked_fields` now handles it.
+2. **Sonnet 5 missed an injected swapped train/validation unpacking three times.**
+   - First live, then offline with a data-tracing prompt, then with the log line
+     "81 train_fit, 324 val".
+   - Live, it filed "no early stopping" as a high-severity bug. The citations were real, so
+     every guard passed.
+   - The Coder then added checkpoint selection the paper never uses. The loop still ended in
+     `pass` (2.96), on an unfaithful script, which the next review flagged.
+3. **Opus 5 caught the bug on the same inputs**, citing the log line and lines 178–180.
+
+**Changed:** default review model → Opus 5; runner log in the prompt; data-tracing
+instructions; the add-on-technique guard; line-wise snippet checks.
+
+**Verified end to end (Opus):**
+- Injected script: fail 4.76 vs 3.02 (±0.62, three runs).
+- Review: `major_deviations`, split swap and scaler, 12/12 verified.
+- `fix` retry: two `deviation fix:` entries, nothing else changed.
+- Result: pass 3.40 (±1.05), review `faithful`, 13/13 verified.
+- 11 minutes, one retry, no human involved.
+
+**Worth keeping:**
+- Guards prove citations are real, never that the reasoning is right.
+- One injected bug is a demonstration, not a measurement.

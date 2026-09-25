@@ -36,6 +36,19 @@ therefore gets an explicit `--name` chosen before launch, and the timeout path
 issues a `docker kill` against that name (idempotent - "no such container" is
 success, since `--rm` may already have reaped it).
 
+LIVE CHECK-UPS
+--------------
+An exit code says a script finished, not that it learned. While every stage
+runs, a watcher thread reads the script's learning-curve history file
+(`metrics.<mode>.history.jsonl`, one JSON record per epoch or repetition) from
+the bind mount, logs each record, and applies `runner/checkups.py`'s rules. When
+one fires - a non-finite loss, a loss below its own lower bound, a model worse
+than chance, no progress, stuck at chance, a collapse after learning - the
+container is killed by name, exactly as on a timeout, and the stage ends with
+status `halted` plus the evidence. The rules run once more after the process
+exits, because a short stage can finish between two polls. A script that writes
+no history keeps the old exit-code-only behaviour, with a warning.
+
 Usage:
     from runner.docker_runner import DockerRunner
     runner = DockerRunner()
@@ -51,7 +64,9 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -59,6 +74,7 @@ from typing import Any, Final, Literal
 from anthropic import Anthropic
 from loguru import logger
 
+from runner.checkups import HISTORY_SUFFIX, Halt, HistoryTail, ProgressRecord, evaluate
 from runner.triage import TriageResult, triage_failure
 
 RUNNER_DIR: Final[Path] = Path(__file__).resolve().parent
@@ -75,6 +91,10 @@ CONTAINER_DATA_DIR: Final[str] = "/workspace/data"
 CONTAINER_CACHE_DIR: Final[str] = "/cache"
 
 STAGE_ORDER: Final[tuple[str, ...]] = ("probe", "smoke", "capped", "full")
+# Extra seeds of the full run, asked for by the Critic when one run cannot decide a
+# verdict. Never part of escalation; `reproduce.sh <seedN>` reruns `full` with --seed N.
+SEED_MODES: Final[tuple[str, ...]] = ("seed2", "seed3")
+ALL_MODES: Final[tuple[str, ...]] = STAGE_ORDER + SEED_MODES
 
 # Per-stage wall-clock budgets, enforced independently so a hung cheap stage can
 # never eat the budget of the expensive one behind it.
@@ -108,6 +128,8 @@ DEFAULT_STAGE_TIMEOUTS: Final[dict[str, int]] = {
     "smoke": 900,  # 15 min: ~134 s measured-equivalent, warm cache
     "capped": 1800,  # 30 min: ~525 s measured-equivalent, warm cache
     "full": 86400,  # 24 h: GPU-only; ~22 days on this CPU, so never run it here
+    "seed2": 86400,  # an extra seed is a full run
+    "seed3": 86400,
 }
 
 # Budget for the short-lived control commands (`docker info`, `image inspect`,
@@ -126,11 +148,16 @@ STDOUT_TAIL_CHARS: Final[int] = 2400
 STDERR_HEAD_CHARS: Final[int] = 1200
 STDERR_TAIL_CHARS: Final[int] = 3600
 
+# How often the live check-up watcher reads a running stage's history file.
+DEFAULT_CHECKUP_INTERVAL: Final[float] = 5.0
+# Progress records logged per stage, at most, so a 1000-epoch run stays readable.
+PROGRESS_LOG_LINES: Final[int] = 20
+
 # The tail of stderr kept as `error_trace` when the process died without ever
 # printing a Python traceback (an OOM kill, a signal, a shell-level failure).
 ERROR_TRACE_FALLBACK_CHARS: Final[int] = 2000
 
-type RunStatus = Literal["success", "error", "timeout"]
+type RunStatus = Literal["success", "error", "timeout", "halted"]
 
 
 class DockerUnavailableError(RuntimeError):
@@ -157,6 +184,8 @@ class StageRun:
     metrics: dict[str, Any] | None
     log_excerpt: str
     error_trace: str | None
+    # Live check-up summary: records seen, the last one, and the halt (if any).
+    checkup: dict[str, Any] | None = None
 
 
 @dataclass
@@ -178,6 +207,8 @@ class RunnerOutput:
     error_trace: str | None
     triage: TriageResult | None
     stages: list[StageRun] = field(default_factory=list)
+    # The live check-up halt that stopped the run, when status is "halted".
+    halt: dict[str, Any] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -201,8 +232,8 @@ def parse_timeout_overrides(values: list[str] | None) -> dict[str, int]:
         if not sep:
             raise ValueError(f"expected --timeout MODE=SECONDS, got {raw!r}")
         mode = mode.strip()
-        if mode not in STAGE_ORDER:
-            raise ValueError(f"unknown stage {mode!r} in --timeout; expected one of {STAGE_ORDER}")
+        if mode not in ALL_MODES:
+            raise ValueError(f"unknown stage {mode!r} in --timeout; expected one of {ALL_MODES}")
         try:
             parsed = int(seconds)
         except ValueError as exc:
@@ -312,9 +343,62 @@ def parse_metrics_from_stdout(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def summarize_split_metrics(metrics: dict[str, Any]) -> str:
+    """Describe a metrics object's per-split numbers, whichever contract shape it is.
+
+    Two shapes exist on disk and both must keep working, so nothing here reads a
+    key strictly:
+
+    * CURRENT (task-agnostic): `task_type`, `higher_is_better`, `train_metric`,
+      `eval_metric` - the claim's own metric on each split, for classification
+      and regression alike.
+    * LEGACY (image classification only): `train_accuracy` / `eval_accuracy`,
+      written by the Network In Network and Wide Residual Networks scripts
+      generated before coder/ dropped HuggingFace `Trainer`.
+
+    The current keys win when either is present; the legacy pair is the
+    fallback. `task_type` and `higher_is_better` are reported whenever present,
+    independently, since a partially-conforming file is still worth reading.
+    """
+    parts: list[str] = []
+    if "task_type" in metrics:
+        parts.append(f"task_type={metrics.get('task_type')}")
+    if "higher_is_better" in metrics:
+        parts.append(f"higher_is_better={metrics.get('higher_is_better')}")
+    if "train_metric" in metrics or "eval_metric" in metrics:
+        parts.append(f"train_metric={metrics.get('train_metric')}")
+        parts.append(f"eval_metric={metrics.get('eval_metric')}")
+    elif "train_accuracy" in metrics or "eval_accuracy" in metrics:
+        parts.append(f"train_accuracy={metrics.get('train_accuracy')}")
+        parts.append(f"eval_accuracy={metrics.get('eval_accuracy')}")
+        parts.append("legacy accuracy-shaped metrics")
+    else:
+        parts.append("no per-split metrics reported")
+    parts.append(f"epochs_completed={metrics.get('epochs_completed')}")
+    return ", ".join(parts)
+
+
 def metrics_path_for(paper_dir: Path, mode: str) -> Path:
     """Where `reproduce.sh <mode>` writes its metrics, on the host side of the mount."""
     return paper_dir / f"metrics.{mode}.json"
+
+
+def has_seed_modes(paper_dir: Path) -> bool:
+    """Whether this paper's generated reproduce.sh can run extra seeds of `full`."""
+    script = paper_dir / "reproduce.sh"
+    return script.exists() and "seed2|seed3)" in script.read_text(encoding="utf-8")
+
+
+def history_path_for(paper_dir: Path, mode: str) -> Path:
+    """Where `reproduce.sh <mode>`'s script appends its learning-curve history."""
+    return paper_dir / f"metrics.{mode}{HISTORY_SUFFIX}"
+
+
+def progress_log_every(record: ProgressRecord) -> int:
+    """Log every Nth record so at most ~PROGRESS_LOG_LINES lines appear per stage."""
+    if record.steps_total and record.steps_total > PROGRESS_LOG_LINES:
+        return max(1, record.steps_total // PROGRESS_LOG_LINES)
+    return 1
 
 
 def read_metrics_file(paper_dir: Path, mode: str) -> dict[str, Any] | None:
@@ -360,12 +444,13 @@ def build_run_command(
       entire results channel.
     * `<cache>/datasets` -> /workspace/data, read-write. The generated scripts
       default `--data-dir` to `./data` relative to the script, and `reproduce.sh`
-      never overrides it, so this nested mount turns a per-paper CIFAR-10
-      download into ONE shared copy across all eight papers. Docker orders mounts
-      by path depth, so /workspace lands first and this shadows it. If some
-      future paper's script uses a different directory name the mount is simply
-      unused and its download lands in the paper's own mount - slower, never
-      broken. `./data` is a convention here, not a contract.
+      never overrides it, so this nested mount turns a per-paper dataset download
+      (CIFAR-10 via torchvision, an OpenML table via scikit-learn) into ONE
+      shared copy across every paper that uses it. Docker orders mounts by path
+      depth, so /workspace lands first and this shadows it. A script that
+      ignores `./data` still runs - its download just lands in the paper's own
+      mount, slower - which is why coder/ now enforces `--data-dir` as a
+      required flag with that exact default rather than trusting convention.
     * `<cache>/home` -> /cache, read-write. HOME/HF_HOME/TORCH_HOME point here in
       the image, so any HuggingFace or torch.hub fetch also survives `--rm`.
 
@@ -393,6 +478,9 @@ def build_run_command(
         f"{(cache_dir / 'home').resolve()}:{CONTAINER_CACHE_DIR}",
         "--network",
         network,
+        # Progress lines should reach the logs as they happen, not in one flush at exit.
+        "--env",
+        "PYTHONUNBUFFERED=1",
     ]
     if gpus:
         command += ["--gpus", gpus]
@@ -473,6 +561,8 @@ class DockerRunner:
         dockerfile: Path = DOCKERFILE_PATH,
         gpus: str | None = None,
         user: str | None = None,
+        live_checkups: bool = True,
+        checkup_interval: float = DEFAULT_CHECKUP_INTERVAL,
     ) -> None:
         self.image = image
         self.dockerfile = dockerfile
@@ -484,6 +574,8 @@ class DockerRunner:
         self.cpus = cpus
         self.network = network
         self.run_triage = run_triage
+        self.live_checkups = live_checkups
+        self.checkup_interval = checkup_interval
 
     # -- daemon plumbing ---------------------------------------------------- #
 
@@ -587,7 +679,7 @@ class DockerRunner:
             )
         self.build_image()
 
-    def kill_container(self, name: str) -> None:
+    def kill_container(self, name: str, reason: str = "the timeout did not stop it") -> None:
         """Kill a container by name, tolerating one that is already gone.
 
         THE reason `--name` exists. A `subprocess` timeout kills only the
@@ -596,7 +688,7 @@ class DockerRunner:
         until something explicitly stops it. "No such container" is a success
         here: with `--rm` the daemon may already have reaped it.
         """
-        logger.warning(f"[docker] killing container {name} (the timeout did not stop it)")
+        logger.warning(f"[docker] killing container {name} ({reason})")
         result = subprocess.run(
             ["docker", "kill", name],
             capture_output=True,
@@ -659,6 +751,46 @@ class DockerRunner:
         logger.info(f"  [{mode}] budget: {timeout_seconds}s")
         logger.info(f"  [{mode}] command: {' '.join(command)}")
 
+        history_path = history_path_for(paper_dir, mode)
+        if history_path.exists():
+            history_path.unlink()
+            logger.info(f"  [{mode}] removed stale {history_path.name} from an earlier run")
+        tail = HistoryTail(history_path)
+        records: list[ProgressRecord] = []
+        halts: list[Halt] = []
+        stop_watching = threading.Event()
+
+        def absorb(new: list[ProgressRecord]) -> None:
+            for record in new:
+                records.append(record)
+                every = progress_log_every(record)
+                if (
+                    len(records) <= 3
+                    or record.step % every == 0
+                    or (record.steps_total is not None and record.step >= record.steps_total)
+                ):
+                    logger.info(f"  [{mode}] progress: {record.describe()}")
+
+        def watch() -> None:
+            while not stop_watching.wait(self.checkup_interval):
+                new = tail.read_new()
+                if not new:
+                    continue
+                absorb(new)
+                halt = evaluate(records, mode)
+                if halt is not None:
+                    halts.append(halt)
+                    logger.error(
+                        f"  [{mode}] HALTED by live check-up '{halt.rule}' at {halt.kind} "
+                        f"{halt.step}: {halt.message}"
+                    )
+                    self.kill_container(container_name, reason=f"live check-up '{halt.rule}'")
+                    return
+
+        watcher = threading.Thread(target=watch, name=f"checkup-{mode}", daemon=True)
+        if self.live_checkups:
+            watcher.start()
+
         started = time.monotonic()
         status: RunStatus
         try:
@@ -684,6 +816,14 @@ class DockerRunner:
             status = "timeout"
             logger.error(f"  [{mode}] TIMEOUT after {elapsed:.1f}s (budget {timeout_seconds}s)")
             self.kill_container(container_name)
+        finally:
+            stop_watching.set()
+            if watcher.is_alive():
+                watcher.join()
+
+        checkup = self._finish_checkup(mode, status, tail, records, halts, absorb)
+        if checkup.get("halt") is not None:
+            status = "halted"
 
         stdout_path = logs_dir / f"{mode}.stdout.log"
         stderr_path = logs_dir / f"{mode}.stderr.log"
@@ -709,15 +849,15 @@ class DockerRunner:
             logger.info(
                 f"  [{mode}] metrics ({metrics_source}): claim_id={metrics.get('claim_id')} "
                 f"{metrics.get('metric')}={metrics.get('value')} {metrics.get('unit', '')} "
-                f"(eval_accuracy={metrics.get('eval_accuracy')}, "
-                f"train_accuracy={metrics.get('train_accuracy')}, "
-                f"epochs_completed={metrics.get('epochs_completed')})"
+                f"({summarize_split_metrics(metrics)})"
             )
 
         if status == "success":
             logger.info(f"  [{mode}] PASSED in {elapsed:.1f}s (exit 0)")
         elif status == "error":
             logger.error(f"  [{mode}] FAILED in {elapsed:.1f}s (exit {exit_code})")
+        elif status == "halted":
+            logger.error(f"  [{mode}] HALTED after {elapsed:.1f}s by a live check-up")
 
         metrics_file = metrics_path_for(paper_dir, mode)
         return StageRun(
@@ -732,8 +872,55 @@ class DockerRunner:
             metrics_path=str(metrics_file) if metrics_file.exists() else None,
             metrics=metrics,
             log_excerpt=build_log_excerpt(stdout, stderr),
-            error_trace=extract_error_trace(stderr) if status != "success" else None,
+            error_trace=extract_error_trace(stderr) if status == "error" else None,
+            checkup=checkup,
         )
+
+    def _finish_checkup(
+        self,
+        mode: str,
+        status: RunStatus,
+        tail: HistoryTail,
+        records: list[ProgressRecord],
+        halts: list[Halt],
+        absorb: Callable[[list[ProgressRecord]], None],
+    ) -> dict[str, Any]:
+        """Read what the watcher had not seen yet, judge the whole curve once more,
+        and summarise the check-up for the stage record.
+
+        The final evaluation matters as much as the live one: a short stage can
+        start and finish between two polls, and its whole curve arrives here.
+        """
+        absorb(tail.read_new())
+        if not halts and self.live_checkups and status != "timeout":
+            final = evaluate(records, mode)
+            if final is not None:
+                halts.append(final)
+                logger.error(
+                    f"  [{mode}] HALTED by live check-up '{final.rule}' at {final.kind} "
+                    f"{final.step} (judged after exit): {final.message}"
+                )
+        if not self.live_checkups:
+            logger.info(f"  [{mode}] live check-ups disabled")
+        elif not records:
+            logger.warning(
+                f"  [{mode}] no progress history was written - live check-ups were "
+                f"unavailable, so this stage is judged on its exit code alone"
+            )
+        else:
+            logger.info(
+                f"  [{mode}] check-up: {len(records)} progress record(s), "
+                f"{'HALTED' if halts else 'healthy'}"
+                + (f", {tail.malformed_lines} malformed line(s)" if tail.malformed_lines else "")
+            )
+        return {
+            "enabled": self.live_checkups,
+            "records": len(records),
+            "malformed_lines": tail.malformed_lines,
+            "history_path": str(tail.path) if tail.path.exists() else None,
+            "last_record": records[-1].describe() if records else None,
+            "halt": halts[0].to_dict() if halts else None,
+        }
 
     def run_paper(
         self,
@@ -799,6 +986,11 @@ class DockerRunner:
                 )
         elif overall == "timeout":
             logger.info("[run] timeout is mechanical, no triage call made")
+        elif overall == "halted":
+            logger.info(
+                "[run] halted by a live check-up; its evidence is the diagnosis, so no "
+                "triage call is made"
+            )
         elif overall == "success":
             logger.info(f"[run] all {len(stages)} stage(s) passed in {total_elapsed:.1f}s")
 
@@ -818,4 +1010,5 @@ class DockerRunner:
             error_trace=last.error_trace if last else None,
             triage=triage,
             stages=stages,
+            halt=last.checkup.get("halt") if last and last.checkup else None,
         )

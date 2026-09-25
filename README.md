@@ -6,7 +6,19 @@
 
 ## Project status
 
-Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperparameters, and data-pipeline extraction with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution), and `orchestrator/` (the Coder↔Runner retry loop) are built.** `reader/` is now complete against its spec — method summary, claims, hyperparameters, architecture notes, and data pipeline. Still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md): the **Critic** (nothing yet compares a reproduced number against the paper's claim) and the Report Generator. The chain is proven end to end and is now a loop — a failing script is triaged, fed back to the Coder, and regenerated. Each pipeline stage lives in its own top-level folder built one small, verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
+**Six of the seven stages are built:** `ocr/` (PDF extraction), `reader/` (method, architecture, claims, hyperparameters and data pipeline, with a validation retry loop), `coder/` (training-script generation), `runner/` (Docker-sandboxed execution with live training check-ups), `orchestrator/` (shared state and the retry loop) and `critic/` (fidelity verdicts plus a model review of the script against the paper). Only the **Report Generator** is still design-only, per [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md).
+
+**Five papers reproduce at full fidelity on a CPU**, across five model families, and the Critic judges every one of them the same way a person did by hand:
+
+| Paper | Claimed | ReproBot |
+|---|---|---|
+| Tang 2013 — MLP with an L2-SVM loss | MNIST 0.87% test error | **0.82%** |
+| Hsu/Chang/Lin — RBF SVM guide | svmguide1 96.9% | **96.925%** |
+| Xiao 2017 — Fashion-MNIST random forest | 0.873 (mean of 5) | **0.8773** |
+| Frosst & Hinton — soft decision tree | MNIST 94.45% | **95.11%** |
+| Wijaya 2023 — dense regression net | Boston RMSE 3.02 | **3.33** (mean of 3 seeds) |
+
+The chain is a loop, not a line: a failing script is triaged and regenerated, a run that stops learning is halted mid-training with evidence, and a result that misses its claim is either re-run with more seeds or sent back to the Coder with a cited diagnosis. Each stage lives in its own top-level folder, built one verified increment at a time — see [`CLAUDE.md`](CLAUDE.md) for the full convention and current state.
 
 ## Repository structure
 
@@ -14,9 +26,11 @@ Implementation has started: **`ocr/` (PDF extraction), `reader/` (claims, hyperp
 ReproBot/
 ├── ocr/                        # PDF → Markdown extraction (4 backends; pdfplumber + Claude VLM verified)
 ├── reader/                     # Markdown → structured method/architecture/claims/hyperparameters/data JSON
-├── coder/                      # reader JSON + paper Markdown → HuggingFace Trainer training script
-├── runner/                     # executes a generated script in a Docker sandbox, triages the outcome
-├── orchestrator/               # shared-memory state + the Coder↔Runner retry loop
+├── coder/                      # reader JSON + paper Markdown → self-contained PyTorch/scikit-learn script
+├── runner/                     # runs a generated script in a Docker sandbox; live check-ups; triage
+├── orchestrator/               # shared-memory state + the retry loop over every stage
+├── critic/                     # reproduced number vs the paper's claim: verdict + cited review
+├── tests/                      # pytest replays of real runs (curves, verdicts, reviews)
 ├── dataset/                    # 8 CIFAR-10 papers, ReproBot's first replication targets
 ├── papers/                     # 9 agent-framework reference papers (literature review)
 ├── docs/
@@ -25,6 +39,7 @@ ReproBot/
 │   ├── project-plan/                # Detailed implementation-ready project plan
 │   ├── literature-review/           # Cross-paper comparison, per-paper summaries,
 │   │                                 # the CIFAR-10 shortlist, and the polished Intro/Lit-Review draft
+│   ├── handouts/                    # One-page explainers per stage (HTML + A4 PDF)
 │   ├── notes/                       # Narrower working notes (e.g. Reader-agent precedents)
 │   └── agent-log.md                 # Record of every delegated subagent task and result
 ├── TODO.md                     # status, open bugs, next steps — start here
@@ -45,24 +60,31 @@ PDF paper
     ▼
 Orchestrator (shared memory state)
     │
-    Reader (pdfplumber + VLM)   → method summary, claims, datasets, hyperparameters
-    Coder (HuggingFace Trainer) → self-contained training script
-    Runner (Docker sandbox)     → executes script, captures metrics + error traces
-    Critic                      → compares reproduced metrics vs. paper's claimed numbers,
-                                   emits pass/retry/fail verdict, feeds targeted fixes back to Coder
+    Reader (Claude VLM)         → method summary, claims, architecture, hyperparameters, data
+    Coder (PyTorch/scikit-learn)→ self-contained training script, three gates before it runs
+    Runner (Docker sandbox)     → executes it, watches the curve live, triages a failure
+    Critic                      → arithmetic verdict vs the paper's claim, then a cited review
+                                   of the script; extra seeds, or a diagnosis back to the Coder
     │
     ▼
-Structured Markdown replication report (claim-by-claim comparison + gap analysis)
+Structured Markdown replication report (claim-by-claim comparison + gap analysis)   ← not built yet
 ```
 
-Initial evaluation scope is deliberately narrow: **CIFAR-10 image-classification papers** (see [`docs/literature-review/CIFAR10_Candidate_Replication_Targets.md`](docs/literature-review/CIFAR10_Candidate_Replication_Targets.md) for the 8-paper shortlist, ordered by publish date), trading topic breadth for a stricter numeric tolerance in the Critic's pass/fail logic. See [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md) for the full feasibility assessment, architecture deep dive, timeline, and cost budget.
+The main evaluation set is **CIFAR-10 image-classification papers** (see [`docs/literature-review/CIFAR10_Candidate_Replication_Targets.md`](docs/literature-review/CIFAR10_Candidate_Replication_Targets.md) for the 8-paper shortlist). Those need a GPU — one full WRN-28-10 run measures at ~22 days on this project's CPU — so the fidelity results above come from the CPU-sized papers in `extra-papers/`, which since 2026-09-13 deliberately span several model families rather than images alone. See [`docs/project-plan/ReproBot_Project_Plan.md`](docs/project-plan/ReproBot_Project_Plan.md) for the full feasibility assessment, architecture deep dive, timeline, and cost budget.
 
 ## Setup
 
 ```bash
-uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --extra runner --extra orchestrator --group dev
+uv sync --extra pdfplumber --extra vlm --extra reader --extra coder --extra runner --extra orchestrator --extra critic --group dev
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 uv run pre-commit install
 ```
 
-See `ocr/README.md`, `reader/README.md`, `coder/README.md`, `runner/README.md`, and `orchestrator/README.md` for how to actually run each stage.
+Running the whole loop over one paper, Critic included:
+
+```bash
+uv run python -m orchestrator.pipeline --input "reader/output/<paper>.json" --max-stage full
+uv run --extra orchestrator pytest tests          # replay tests, no Docker or API key needed
+```
+
+See `ocr/README.md`, `reader/README.md`, `coder/README.md`, `runner/README.md`, `orchestrator/README.md` and `critic/README.md` for how to run each stage on its own.

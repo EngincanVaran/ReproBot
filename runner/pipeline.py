@@ -47,7 +47,9 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from runner.docker_runner import (
+    ALL_MODES,
     DEFAULT_CACHE_DIR,
+    DEFAULT_CHECKUP_INTERVAL,
     DEFAULT_IMAGE,
     DEFAULT_STAGE_TIMEOUTS,
     STAGE_ORDER,
@@ -189,7 +191,7 @@ def main() -> None:
     )
     stage_group.add_argument(
         "--mode",
-        choices=STAGE_ORDER,
+        choices=ALL_MODES,
         default=None,
         help="Run ONLY this one mode, skipping the escalation ladder entirely",
     )
@@ -211,8 +213,9 @@ def main() -> None:
         type=Path,
         default=DEFAULT_CACHE_DIR,
         help=(
-            "Host directory for the shared CIFAR-10 / HuggingFace caches, bind-mounted "
-            "into every run so the ~170 MB dataset is downloaded once, not per paper"
+            "Host directory for the shared dataset (torchvision, OpenML, URL) and "
+            "HuggingFace/torch caches, bind-mounted into every run so a dataset "
+            "(e.g. CIFAR-10's ~170 MB) is downloaded once, not per paper"
         ),
     )
     parser.add_argument(
@@ -238,10 +241,24 @@ def main() -> None:
         "--network",
         default="bridge",
         help=(
-            "Container network mode. Stays 'bridge' by default because torchvision "
-            "downloads CIFAR-10 on the first run; once the cache is warm, 'none' "
-            "makes the sandbox fully offline"
+            "Container network mode. Stays 'bridge' by default because a script "
+            "downloads its dataset (torchvision, OpenML, a URL) on the first run; "
+            "once the cache is warm, 'none' makes the sandbox fully offline"
         ),
+    )
+    parser.add_argument(
+        "--no-live-checkups",
+        action="store_true",
+        help=(
+            "Judge stages on exit code alone: do not read the script's progress history "
+            "while it runs, and never halt a run early"
+        ),
+    )
+    parser.add_argument(
+        "--checkup-interval",
+        type=float,
+        default=DEFAULT_CHECKUP_INTERVAL,
+        help="Seconds between live check-up reads of a running stage's history file",
     )
     parser.add_argument(
         "--no-triage",
@@ -280,6 +297,8 @@ def main() -> None:
         cpus=args.cpus,
         network=args.network,
         run_triage=not args.no_triage,
+        live_checkups=not args.no_live_checkups,
+        checkup_interval=args.checkup_interval,
     )
     # A missing daemon or image is a setup problem, not a bug worth a traceback -
     # and it is the single most likely reason a first run does not start, so it

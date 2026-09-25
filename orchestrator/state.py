@@ -56,6 +56,7 @@ type Verdict = Literal[
 STAGE_ORCHESTRATOR = "orchestrator"
 STAGE_CODER = "coder"
 STAGE_RUNNER = "runner"
+STAGE_CRITIC = "critic"
 
 
 @dataclass
@@ -119,6 +120,12 @@ class AttemptRecord:
     action: str
     verdict: str | None
     reason: str
+    # Set when runner/'s live check-up halted this attempt: which rule fired and its
+    # evidence. Defaults keep state files written before check-ups existed loadable.
+    checkup_rule: str | None = None
+    checkup_message: str | None = None
+    # The Critic's verdict on this attempt, when it ran and was judged.
+    critic_verdict: str | None = None
 
 
 @dataclass
@@ -150,6 +157,8 @@ class ReproState:
     critic_output: dict[str, Any] | None = None
     retry_count: int = 0
     retry_budget: int = 3
+    # Guided retries spent after a Critic `fail` (also counted in retry_count).
+    fidelity_retry_count: int = 0
     history: list[HistoryEntry] = field(default_factory=list)
     verdict: Verdict | None = None
     attempts: list[AttemptRecord] = field(default_factory=list)
@@ -197,6 +206,7 @@ class ReproState:
             critic_output=_optional_dict(payload.get("critic_output")),
             retry_count=int(payload.get("retry_count", 0)),
             retry_budget=int(payload.get("retry_budget", 3)),
+            fidelity_retry_count=int(payload.get("fidelity_retry_count", 0)),
             history=[HistoryEntry(**entry) for entry in payload.get("history", [])],
             verdict=payload.get("verdict"),
             attempts=[AttemptRecord(**attempt) for attempt in payload.get("attempts", [])],
