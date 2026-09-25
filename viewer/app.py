@@ -26,6 +26,11 @@ up to 45 minutes on a cold cache (see `runner/docker_runner.py`'s stage
 timeouts) and needs a reachable Docker daemon, so it stays a CLI-only action
 (`uv run python -m runner.pipeline`) and this app only displays what it wrote.
 
+`critic/` is the opposite case: its verdict is arithmetic (no API key, no Docker), so the
+Runner tab has a "Judge this run with the Critic" button that calls `critic.judge.judge()`
+directly. The model review costs an API call, so it stays CLI-only
+(`critic.pipeline --review`); the Critic tab displays it when present and never deletes it.
+
 Uploaded PDFs are saved to `viewer/uploads/`, not `dataset/` - `dataset/` is
 curated by someone else in parallel (see CLAUDE.md), so this app never
 writes into it. The paper list below merges `dataset/*.pdf` and
@@ -56,6 +61,9 @@ from loguru import logger
 
 from coder.pipeline import MissingPaperMarkdownError, ScriptSyntaxError
 from coder.pipeline import run_pipeline as run_coder_pipeline
+from critic.claims import group_claims
+from critic.judge import judge
+from critic.pipeline import write_output as write_critic_output
 from ocr.vlm_extract import run_vlm
 from reader.pipeline import run_pipeline as run_reader_pipeline
 
@@ -66,6 +74,7 @@ OCR_DIR = REPO_ROOT / "ocr" / "output" / "vlm"
 READER_DIR = REPO_ROOT / "reader" / "output"
 CODER_DIR = REPO_ROOT / "coder" / "output"
 RUNNER_DIR = REPO_ROOT / "runner" / "output"
+CRITIC_DIR = REPO_ROOT / "critic" / "output"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
 
@@ -116,6 +125,12 @@ def runner_json_path(paper: str) -> Path:
     after every escalation run, win or lose - a script failure is a recorded
     `status: "error"`, not a missing file."""
     return RUNNER_DIR / paper / "runner_output.json"
+
+
+def critic_json_path(paper: str) -> Path:
+    """`critic.pipeline` writes `critic/output/<paper>.json`: the verdict, the claim
+    groups, and - only when it was run with `--review` - the model review."""
+    return CRITIC_DIR / f"{paper}.json"
 
 
 @st.cache_data
@@ -265,6 +280,12 @@ def render_pipeline_status(papers: list[str]) -> None:
         if runner_path.exists():
             runner_data = load_json_output(str(runner_path), runner_path.stat().st_mtime)
             runner_status = runner_data.get("status", "unknown")
+        critic_path = critic_json_path(paper)
+        critic_verdict = "-"
+        if critic_path.exists():
+            critic_verdict = load_json_output(str(critic_path), critic_path.stat().st_mtime).get(
+                "verdict", "unknown"
+            )
         rows.append(
             {
                 "Paper": paper,
@@ -273,6 +294,7 @@ def render_pipeline_status(papers: list[str]) -> None:
                 "Coder": "done" if has_coder else ("failed" if coder_failed else "-"),
                 "Validation flags": flags if has_reader else "-",
                 "Runner": runner_status,
+                "Critic": critic_verdict,
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -467,14 +489,18 @@ def parse_training_curves(log_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(evals).drop_duplicates("epoch", keep="last"), pd.DataFrame(rates)
 
 
+def reader_claims(reader_data: dict[str, Any]) -> list[dict[str, Any]]:
+    claims = reader_data.get("claims", [])
+    if isinstance(claims, dict):
+        claims = claims.get("claims", [])
+    return list(claims)
+
+
 def find_claim(reader_data: dict[str, Any] | None, claim_id: str | None) -> dict[str, Any] | None:
     """The reader claim a run targeted, so the run can be shown next to the paper's number."""
     if not reader_data or not claim_id:
         return None
-    claims = reader_data.get("claims", [])
-    if isinstance(claims, dict):
-        claims = claims.get("claims", [])
-    return next((c for c in claims if c.get("claim_id") == claim_id), None)
+    return next((c for c in reader_claims(reader_data) if c.get("claim_id") == claim_id), None)
 
 
 def render_runner_context(runner_data: dict[str, Any], reader_data: dict[str, Any] | None) -> None:
@@ -596,6 +622,160 @@ def render_runner(runner_data: dict[str, Any], reader_data: dict[str, Any] | Non
                     st.caption(f"Full {label}: `{log_path}`")
 
 
+def run_critic_verdict(
+    paper: str, reader_data: dict[str, Any], runner_data: dict[str, Any]
+) -> None:
+    """Judge a finished run with `critic.judge.judge()`, unmodified. The verdict is pure
+    arithmetic - no API key, no Docker - so unlike the model review it is safe to run here.
+    An existing model review is kept: it is a separate, paid artefact this button must not
+    delete."""
+    claims = reader_claims(reader_data)
+    judgement = judge(
+        claims,
+        runner_data.get("reproduced_metrics"),
+        runner_status=str(runner_data.get("status") or "missing"),
+        metrics_mode=runner_data.get("metrics_mode"),
+    )
+    payload: dict[str, Any] = {
+        **judgement.to_dict(),
+        "claim_groups": [group.to_dict() for group in group_claims(claims)],
+    }
+    existing = critic_json_path(paper)
+    if existing.exists():
+        previous = json.loads(existing.read_text(encoding="utf-8"))
+        if "review" in previous:
+            payload["review"] = previous["review"]
+    logger.info("Critic verdict for {}: {}", paper, payload["verdict"])
+    write_critic_output(CRITIC_DIR, paper, payload)
+    st.rerun()
+
+
+def render_critic_button(
+    paper: str,
+    reader_data: dict[str, Any],
+    runner_data: dict[str, Any],
+    *,
+    key: str,
+    label: str,
+) -> None:
+    if st.button(label, key=key, help="Arithmetic only: no API key, no Docker, no cost."):
+        run_critic_verdict(paper, reader_data, runner_data)
+
+
+_VERDICT_BANNERS = {"pass": st.success, "fail": st.error, "inconclusive": st.warning}
+
+
+def _fmt(value: object, unit: str = "") -> str:
+    return "-" if not isinstance(value, int | float) else f"{value:.4g}{unit}"
+
+
+def render_critic_review(review: dict[str, Any]) -> None:
+    """The Critic v2 model review of the script against the paper. Display only: it costs
+    an API call, so it stays a CLI action (`critic.pipeline --review`)."""
+    st.markdown("#### Model review")
+    st.markdown(f"**Method fidelity:** {review.get('method_fidelity', '-')}")
+    if review.get("summary"):
+        st.markdown(review["summary"])
+    if review.get("curve_assessment"):
+        with st.expander("Learning-curve assessment"):
+            st.markdown(review["curve_assessment"])
+    findings = review.get("findings", [])
+    if findings:
+        st.markdown(f"**Findings** ({len(findings)})")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Kind": f.get("kind"),
+                        "Aspect": f.get("aspect"),
+                        "Severity": f.get("severity"),
+                        "Verified": f.get("verified"),
+                        "Explanation": f.get("explanation"),
+                    }
+                    for f in findings
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    hypotheses = review.get("hypotheses", [])
+    if hypotheses:
+        st.markdown("**Hypotheses for a gap**")
+        for h in hypotheses:
+            st.markdown(f"{h.get('rank')}. {h.get('hypothesis')}  \n*Change:* {h.get('change')}")
+    st.caption(f"Reviewed by `{review.get('model', '-')}`.")
+
+
+def render_critic(
+    critic_data: dict[str, Any],
+    paper: str,
+    reader_data: dict[str, Any] | None,
+    runner_data: dict[str, Any] | None,
+) -> None:
+    verdict = str(critic_data.get("verdict", "unknown"))
+    _VERDICT_BANNERS.get(verdict, st.info)(f"Verdict: **{verdict}** - {critic_data.get('reason')}")
+
+    unit = str(critic_data.get("unit") or "")
+    st.caption(
+        f"Claim `{critic_data.get('claim_id') or '-'}`: {critic_data.get('metric') or '-'} on "
+        f"{critic_data.get('dataset') or '-'}"
+    )
+    if critic_data.get("claimed") is not None:
+        first, second, third, fourth = st.columns(4)
+        first.metric("Reproduced", _fmt(critic_data.get("reproduced"), unit))
+        second.metric("Paper reports", _fmt(critic_data.get("claimed"), unit))
+        third.metric("Gap", _fmt(critic_data.get("gap"), unit))
+        fourth.metric("Tolerance (+/-)", _fmt(critic_data.get("tolerance"), unit))
+        if critic_data.get("exceeds_claim"):
+            st.info("The reproduced value is better than the paper's.")
+
+    if critic_data.get("tolerance") is not None:
+        st.markdown("**Where the tolerance comes from**")
+        sources = (
+            ("Reporting precision", _fmt(critic_data.get("reporting_precision"))),
+            ("Test-set (binomial) noise", _fmt(critic_data.get("test_noise"))),
+            ("Run-to-run spread", _fmt(critic_data.get("run_spread"))),
+            ("Used", str(critic_data.get("evidence") or "-")),
+        )
+        st.dataframe(
+            pd.DataFrame(sources, columns=["Source", "Value"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if len(critic_data.get("run_values", [])) <= 1:
+            st.warning(
+                "This is a single run, so run-to-run spread was not measured. The tolerance "
+                "comes from test-set noise alone."
+            )
+    if critic_data.get("recommendation") not in (None, "none"):
+        st.markdown(f"**Recommendation:** `{critic_data['recommendation']}`")
+    merged = critic_data.get("merged_claim_ids", [])
+    if len(merged) > 1:
+        st.caption(f"Duplicate claims merged into one: {', '.join(merged)}")
+
+    if reader_data is not None and runner_data is not None:
+        render_critic_button(
+            paper,
+            reader_data,
+            runner_data,
+            key="critic_rerun",
+            label="Re-run the Critic verdict",
+        )
+
+    groups = critic_data.get("claim_groups", [])
+    if groups:
+        with st.expander(f"All claim groups ({len(groups)})"):
+            st.dataframe(pd.DataFrame(groups), use_container_width=True, hide_index=True)
+
+    if critic_data.get("review"):
+        render_critic_review(critic_data["review"])
+    else:
+        st.caption(
+            "No model review yet. It costs one API call, so it is CLI-only: "
+            "`uv run python -m critic.pipeline --reader-json ... --metrics-json ... --review`."
+        )
+
+
 def render_paper(paper: str) -> None:
     reader_path = reader_json_path(paper)
     ocr_path = ocr_markdown_path(paper)
@@ -625,6 +805,13 @@ def render_paper(paper: str) -> None:
         else None
     )
 
+    critic_path = critic_json_path(paper)
+    critic_data = (
+        load_json_output(str(critic_path), critic_path.stat().st_mtime)
+        if critic_path.exists()
+        else None
+    )
+
     tab_names = ["Overview"]
     if data is not None:
         if data.get("method_summary"):
@@ -636,6 +823,8 @@ def render_paper(paper: str) -> None:
         tab_names.append("Code")
     if runner_data is not None:
         tab_names.append("Runner")
+    if critic_data is not None:
+        tab_names.append("Critic")
     if ocr_path.exists():
         tab_names.append("Raw OCR Markdown")
 
@@ -715,6 +904,19 @@ def render_paper(paper: str) -> None:
     if runner_data is not None:
         with tab_by_name["Runner"]:
             render_runner(runner_data, data)
+            if data is not None and runner_data.get("reproduced_metrics"):
+                st.divider()
+                render_critic_button(
+                    paper,
+                    data,
+                    runner_data,
+                    key="critic_from_runner",
+                    label="Judge this run with the Critic",
+                )
+
+    if critic_data is not None:
+        with tab_by_name["Critic"]:
+            render_critic(critic_data, paper, data, runner_data)
 
     if ocr_path.exists():
         with tab_by_name["Raw OCR Markdown"]:
