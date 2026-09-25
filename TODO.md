@@ -80,7 +80,7 @@ by-hand judgements.
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
 | `critic/` | ✅ v1 arithmetic verdicts + v2 Opus review (cited findings, guards, `fix` route) | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
-| **report generator** | ❌ not started | — |
+| `report/` | ✅ v1 built (deterministic Markdown, no model call) | reports for WRN, SVM guide (incl. a fail-then-fix run) and AutoReproduce (a run that never produced a result); 17 tests |
 | `viewer/` | ✅ merged on this branch (Mert's `runner-agent` + `critic-agent` work) | Runner tab (hardware, reproduced vs paper, curves), Critic tab, verdict and review buttons; checked with Streamlit AppTest, and one real review click |
 
 ---
@@ -181,7 +181,7 @@ approved plan and are done, except where marked. Results are in `critic/README.m
 - [ ] **Reader handles dataset/benchmark papers** — Fashion-MNIST's first pass kept 0 of 124 rows
       (no "own method"); only the validator's retry recovered 26 claims.
 - [x] **Secure GPU compute** for the CIFAR-10 set — done 2026-09-24: `runner --gpu` + `runner/Dockerfile.cuda`, verified on a Vast.ai VM (RTX 4090, x86_64, driver 575, cu124). Measured ~61 s/epoch for WRN-28-10, so a full run is ~3.4 h. Vast's CIFAR-10 mirror is throttled per connection (~68 kB/s); parallel range requests are ~8x faster.
-- [ ] **Report generator** — `orchestrator/state.py` already carries everything.
+- [x] **Report generator** — `report/` v1 built. Open: judge and show *every* claim a run can speak to; an optional Sonnet gap paragraph; a link from the viewer; regenerate on each run automatically.
 - [ ] **Single entry point** — PDF through all stages; blocked by the exit-code bug below.
 - [x] **Review and merge Mert's `viewer/`** — merged on `mert/critic-wired`, `pyproject.toml`/`uv.lock` reconciled.
 - [ ] **Extend `viewer/` to Orchestrator output** (attempts, `state.json`, Critic seeds/fix loop) — it shows Runner and Critic output only.
