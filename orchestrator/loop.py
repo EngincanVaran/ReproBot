@@ -73,6 +73,7 @@ from anthropic import Anthropic
 from loguru import logger
 
 from coder.pipeline import CoderPipeline, ScriptGateError
+from critic.checks import run_checks
 from critic.judge import Judgement, guided_retry_feedback, judge
 from critic.review import MODEL as REVIEW_MODEL
 from critic.review import Review, deviation_feedback, review_run, unstated_feedback
@@ -861,10 +862,14 @@ class Orchestrator:
             break
 
         previous = list((state.critic_output or {}).get("judgements", []))
+        checks = run_checks(runner_output.reproduced_metrics)
+        for check in checks:
+            logger.warning(f"  [critic] CHECK {check['kind']}: {check['message']}")
         entry = {
             **judgement.to_dict(),
             "script_version": version,
             "seed_run_values": seed_values,
+            "checks": checks,
             "review": review.to_dict() if review else None,
         }
         state.critic_output = {**entry, "judgements": [*previous, entry]}
