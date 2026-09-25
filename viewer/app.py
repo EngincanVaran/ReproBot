@@ -70,6 +70,11 @@ from critic.pipeline import run_review
 from critic.pipeline import write_output as write_critic_output
 from ocr.vlm_extract import run_vlm
 from reader.pipeline import run_pipeline as run_reader_pipeline
+from report.build import slug as report_slug
+from report.pipeline import write_reports
+from report.sources import Roots as ReportRoots
+from report.sources import list_papers as list_reportable_papers
+from report.sources import load_run as load_report_run
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = REPO_ROOT / "dataset"
@@ -80,6 +85,7 @@ READER_DIR = REPO_ROOT / "reader" / "output"
 CODER_DIR = REPO_ROOT / "coder" / "output"
 RUNNER_DIR = REPO_ROOT / "runner" / "output"
 CRITIC_DIR = REPO_ROOT / "critic" / "output"
+REPORT_DIR = REPO_ROOT / "report" / "output"
 ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator" / "output"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
@@ -140,6 +146,11 @@ def orchestrator_state_path(paper: str) -> Path:
     and Critic CLIs write their own files instead, so the viewer reads those first and
     falls back to this."""
     return ORCHESTRATOR_DIR / paper / "state.json"
+
+
+def report_path(paper: str) -> Path:
+    """`report.pipeline` writes `report/output/<slug>.md` (and a `.curve.svg` beside it)."""
+    return REPORT_DIR / f"{report_slug(paper)}.md"
 
 
 def critic_json_path(paper: str) -> Path:
@@ -336,6 +347,7 @@ def render_pipeline_status(papers: list[str]) -> None:
                 "Validation flags": flags if has_reader else "-",
                 "Runner": runner_status,
                 "Critic": critic_verdict,
+                "Report": "done" if report_path(paper).exists() else "-",
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -799,6 +811,48 @@ def render_critic_review_button(
         run_critic_review(paper, reader_data, runner_data, chance=chance)
 
 
+def generate_reports() -> None:
+    """Rebuild every paper's report with `report.pipeline.write_reports()`. Free: the
+    generator reads finished-run files and makes no model call."""
+    roots = ReportRoots(
+        reader=READER_DIR,
+        coder=CODER_DIR,
+        runner=RUNNER_DIR,
+        critic=CRITIC_DIR,
+        orchestrator=ORCHESTRATOR_DIR,
+    )
+    runs = [load_report_run(name, roots) for name in list_reportable_papers(roots)]
+    write_reports(runs, REPORT_DIR)
+    st.rerun()
+
+
+_REPORT_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+\.svg)\)")
+
+
+def render_report(paper: str) -> None:
+    """Show the paper's generated Markdown report, drawing its SVG curve with `st.image`
+    (a relative image link would not resolve inside `st.markdown`)."""
+    if st.button(
+        "Generate / refresh all reports", key="report_generate", help="Free: no API call."
+    ):
+        generate_reports()
+    path = report_path(paper)
+    if not path.exists():
+        st.info("No report yet - press the button to generate one for every finished run.")
+        return
+    text = path.read_text(encoding="utf-8")
+    st.download_button(
+        "Download the report (.md)", text, file_name=path.name, key="report_download"
+    )
+    match = _REPORT_IMAGE.search(text)
+    if match and (path.parent / match.group(1)).exists():
+        st.markdown(text[: match.start()], unsafe_allow_html=True)
+        st.image((path.parent / match.group(1)).read_text(encoding="utf-8"))
+        st.markdown(text[match.end() :], unsafe_allow_html=True)
+    else:
+        st.markdown(text, unsafe_allow_html=True)
+
+
 _VERDICT_BANNERS = {"pass": st.success, "fail": st.error, "inconclusive": st.warning}
 
 
@@ -952,6 +1006,8 @@ def render_paper(paper: str) -> None:
         tab_names.append("Runner")
     if critic_data is not None:
         tab_names.append("Critic")
+    if runner_data is not None:
+        tab_names.append("Report")
     if ocr_path.exists():
         tab_names.append("Raw OCR Markdown")
 
@@ -1044,6 +1100,10 @@ def render_paper(paper: str) -> None:
     if critic_data is not None:
         with tab_by_name["Critic"]:
             render_critic(critic_data, paper, data, runner_data)
+
+    if runner_data is not None:
+        with tab_by_name["Report"]:
+            render_report(paper)
 
     if ocr_path.exists():
         with tab_by_name["Raw OCR Markdown"]:
