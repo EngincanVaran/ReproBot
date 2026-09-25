@@ -42,6 +42,7 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -434,7 +435,102 @@ def render_code(coder_data: dict[str, Any]) -> None:
             st.markdown(f"- {assumption}")
 
 
-def render_runner(runner_data: dict[str, Any]) -> None:
+def parse_training_curves(log_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Recover per-epoch test error and the learning-rate trace from a stage's stdout.
+
+    The generated scripts use HF `Trainer`, which prints one Python-dict line per
+    evaluation (`eval_accuracy`, `epoch`) and per logging step (`learning_rate`,
+    `epoch`). Lines that do not parse are skipped: the log also carries progress
+    text, and the final `train_runtime` summary line is not a curve point.
+    """
+    evals: list[dict[str, float]] = []
+    rates: list[dict[str, float]] = []
+    for line in log_path.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = ast.literal_eval(line)
+        except (ValueError, SyntaxError):
+            continue
+        if not isinstance(row, dict) or "epoch" not in row or "train_runtime" in row:
+            continue
+        if "eval_accuracy" in row:
+            evals.append(
+                {"epoch": float(row["epoch"]), "Test error (%)": 100 - row["eval_accuracy"]}
+            )
+        elif "learning_rate" in row:
+            rates.append(
+                {"epoch": float(row["epoch"]), "Learning rate": float(row["learning_rate"])}
+            )
+    # The run ends with one extra evaluation at the final epoch; keep the last per epoch.
+    return pd.DataFrame(evals).drop_duplicates("epoch", keep="last"), pd.DataFrame(rates)
+
+
+def find_claim(reader_data: dict[str, Any] | None, claim_id: str | None) -> dict[str, Any] | None:
+    """The reader claim a run targeted, so the run can be shown next to the paper's number."""
+    if not reader_data or not claim_id:
+        return None
+    claims = reader_data.get("claims", [])
+    if isinstance(claims, dict):
+        claims = claims.get("claims", [])
+    return next((c for c in claims if c.get("claim_id") == claim_id), None)
+
+
+def render_runner_context(runner_data: dict[str, Any], reader_data: dict[str, Any] | None) -> None:
+    """Hardware, and reproduced-vs-reported. Informational only: no Critic exists yet,
+    so this shows the difference and deliberately gives no pass/fail verdict."""
+    image = str(runner_data.get("image", ""))
+    st.markdown(
+        f"**Hardware:** {'GPU (CUDA image)' if image.endswith(':cuda') else 'CPU'} - `{image}`"
+    )
+
+    metrics = runner_data.get("reproduced_metrics")
+    if not metrics:
+        return
+    mode = runner_data.get("metrics_mode")
+    claim = find_claim(reader_data, metrics.get("claim_id"))
+    if mode != "full":
+        st.warning(
+            f"These numbers come from the `{mode}` stage, a fraction of the paper's training "
+            "budget. They show the script runs and learns - they are **not** comparable to the "
+            "paper's reported value."
+        )
+        return
+    if claim is None:
+        return
+    reproduced, reported = float(metrics["value"]), float(claim["reported_value"])
+    left, middle, right = st.columns(3)
+    label = f"Reproduced ({metrics.get('metric')}, {metrics.get('unit')})"
+    left.metric(label, f"{reproduced:.2f}")
+    middle.metric("Paper reports", f"{reported:.2f}")
+    right.metric("Difference", f"{reproduced - reported:+.2f}")
+    st.caption(
+        f"Claim `{claim.get('claim_id')}`: {claim.get('model_variant') or '-'} on "
+        f"{claim.get('dataset')}, {claim.get('source')}. Metrics are from "
+        f"{metrics.get('num_eval_samples')} eval samples over "
+        f"{metrics.get('epochs_completed')} epochs."
+    )
+
+
+def render_training_curves(stages: list[dict[str, Any]]) -> None:
+    for stage in stages:
+        path_str = stage.get("stdout_path")
+        if not path_str:
+            continue
+        path = Path(path_str) if Path(path_str).is_absolute() else REPO_ROOT / path_str
+        if not path.exists():
+            continue
+        evals, rates = parse_training_curves(path)
+        if len(evals) < 3:
+            continue
+        st.markdown(f"**Training curves** (`{stage.get('mode')}` stage, {len(evals)} evaluations)")
+        st.line_chart(evals.set_index("epoch"))
+        if not rates.empty:
+            st.line_chart(rates.set_index("epoch"))
+
+
+def render_runner(runner_data: dict[str, Any], reader_data: dict[str, Any] | None = None) -> None:
     status = runner_data.get("status", "unknown")
     status_banner = {"success": st.success, "error": st.error, "timeout": st.warning}.get(
         status, st.info
@@ -448,6 +544,8 @@ def render_runner(runner_data: dict[str, Any]) -> None:
             f"(exit code {runner_data.get('exit_code')})"
         )
     st.markdown(f"**Total wall clock:** {runner_data.get('wall_clock_seconds', 0):.1f}s")
+
+    render_runner_context(runner_data, reader_data)
 
     metrics = runner_data.get("reproduced_metrics")
     if metrics:
@@ -471,6 +569,7 @@ def render_runner(runner_data: dict[str, Any]) -> None:
     stages = runner_data.get("stages", [])
     if not stages:
         return
+    render_training_curves(stages)
     st.markdown("**Stages**")
     st.dataframe(
         pd.DataFrame(
@@ -615,7 +714,7 @@ def render_paper(paper: str) -> None:
 
     if runner_data is not None:
         with tab_by_name["Runner"]:
-            render_runner(runner_data)
+            render_runner(runner_data, data)
 
     if ocr_path.exists():
         with tab_by_name["Raw OCR Markdown"]:
