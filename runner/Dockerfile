@@ -46,7 +46,8 @@ FROM python:3.11-slim
 # libgomp1: OpenMP runtime for torch's threaded CPU kernels. The manylinux torch
 #   wheel bundles its own copy, but having the system one present avoids the
 #   loader edge cases that show up with mixed OpenMP runtimes.
-# ca-certificates: torchvision downloads CIFAR-10 over HTTPS on the first run.
+# ca-certificates: every dataset download is HTTPS - torchvision's CIFAR-10/MNIST
+#   fetches and scikit-learn's `fetch_openml` alike.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         ca-certificates \
@@ -71,9 +72,32 @@ ENV HOME=/cache \
 
 # Versions are pinned so a rebuild months from now produces the same sandbox a
 # recorded run used - an unpinned image would silently change what "the script
-# failed" means. torch/torchvision must move together (2.5.1 <-> 0.20.1);
-# transformers/accelerate are the Trainer API the generated scripts target, and
-# accelerate is a hard requirement of transformers.Trainer, not an optional add.
+# failed" means. torch/torchvision must move together (2.5.1 <-> 0.20.1).
+#
+# transformers/accelerate are LEGACY here, and kept on purpose. coder/ no longer
+# generates HuggingFace `Trainer` scripts (it writes a plain PyTorch loop - see
+# coder/README.md for why), but the Network In Network and Wide Residual Networks
+# scripts already on disk, and every archived attempt under orchestrator/output/,
+# still import `transformers.Trainer`. Dropping the pair would turn every one of
+# those into an ImportError. accelerate is a hard requirement of Trainer.
+#
+# pandas/scikit-learn are here for GENERALIZATION beyond image classification.
+# A tabular paper (e.g. a regression on a UCI-style dataset) has no torchvision
+# loader: its script fetches the data from a stable, documented source - OpenML
+# through `sklearn.datasets.fetch_openml`, which returns a pandas DataFrame - and
+# fits its preprocessing (StandardScaler, PCA, train_test_split) with
+# scikit-learn. Neither library ever builds the model being reproduced; that is
+# always torch. scipy is a direct requirement of scikit-learn and is pinned
+# explicitly rather than left to the resolver, because it is numerical code a
+# run's results can depend on. All three were released Aug-Sep 2024, the same
+# window as the torch 2.5.1 / numpy 2.1.3 pins, and all three accept numpy 2.1.3:
+#   pandas 2.2.3        numpy>=1.23.2 on cp311      (cp311 x86_64 + aarch64 wheels)
+#   scikit-learn 1.5.2  numpy>=1.19.5, scipy>=1.6.0 (cp311 x86_64 + aarch64 wheels)
+#   scipy 1.14.1        numpy>=1.23.5,<2.3          (cp311 x86_64 + aarch64 wheels)
+# They go in the SAME pip command as `numpy==2.1.3`, not a later step, on
+# purpose: a separate `pip install scikit-learn` is free to upgrade an
+# already-installed numpy to satisfy itself, silently. One command makes the
+# resolver satisfy every pin jointly, or fail the build loudly.
 #
 # Two separate pip steps on purpose: --index-url (not --extra-index-url) pins
 # the torch step to the CPU-only index, so a CUDA build from PyPI can never be
@@ -97,12 +121,15 @@ RUN pip install --no-cache-dir \
         transformers==4.46.3 \
         accelerate==1.1.1 \
         numpy==2.1.3 \
-        pillow==11.0.0
+        pillow==11.0.0 \
+        pandas==2.2.3 \
+        scikit-learn==1.5.2 \
+        scipy==1.14.1
 
 # Mount points, created up front so their ownership/permissions are known rather
 # than being invented by the daemon at mount time.
 #   /workspace      <- coder/output/<paper>/   (rw; metrics.<mode>.json is written here)
-#   /workspace/data <- shared CIFAR-10 cache   (rw; nested inside /workspace on purpose)
+#   /workspace/data <- shared dataset cache    (rw; nested inside /workspace on purpose)
 #   /cache          <- shared HF/torch cache   (rw)
 RUN mkdir -p /workspace /workspace/data /cache
 

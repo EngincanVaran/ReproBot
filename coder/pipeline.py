@@ -10,7 +10,7 @@ Claude tool-use call, runs two deterministic zero-cost safety gates over the
 result, and writes `coder/output/<paper>/train.py` plus a `coder_output.json`
 of bookkeeping.
 
-The two gates are pure Python, cost nothing, and catch the failures that would
+The three gates are pure Python, cost nothing, and catch the failures that would
 otherwise only surface inside the Runner's Docker sandbox:
 
 1. `ast.parse` - the script must be syntactically valid Python before it is
@@ -23,6 +23,11 @@ otherwise only surface inside the Runner's Docker sandbox:
    Missing ones are warned about by name and recorded in `missing_cli_flags`;
    the model's own `cli_flags_included` self-report is cross-checked against
    the script text too, since a model can report a flag it did not write.
+3. Progress-contract check - the script must write the learning-curve history
+   `runner/`'s live check-ups read while it trains (the `REPROBOT_PROGRESS`
+   marker and a `.history.jsonl` file). Without it a broken run can only be
+   judged by its exit code, so a script missing it is rejected like a syntax
+   error: written to `train.py.invalid`, and fed back to the Coder on a retry.
 
 This stage never executes the generated script and never imports torch.
 
@@ -50,15 +55,31 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from coder.base import CodeWriter
-from coder.script_writer import REQUIRED_CLI_FLAGS, TrainingScript, TrainingScriptWriter
+from coder.script_writer import (
+    PROGRESS_MARKER,
+    REQUIRED_CLI_FLAGS,
+    TrainingScript,
+    TrainingScriptWriter,
+)
+
+# Literal strings a script must contain to satisfy the progress contract.
+PROGRESS_CONTRACT_TOKENS: tuple[str, ...] = (PROGRESS_MARKER, ".history.jsonl")
 
 
 class MissingPaperMarkdownError(FileNotFoundError):
     """The paper's VLM Markdown - a required second input - was not found."""
 
 
-class ScriptSyntaxError(RuntimeError):
+class ScriptGateError(RuntimeError):
+    """A generated script failed a deterministic gate and was not written as train.py."""
+
+
+class ScriptSyntaxError(ScriptGateError):
     """The generated script failed the `ast.parse` gate and was not written as .py."""
+
+
+class ScriptContractError(ScriptGateError):
+    """The generated script does not write the learning-curve history the Runner reads."""
 
 
 @dataclass
@@ -120,6 +141,23 @@ def check_required_flags(script_content: str, self_reported: list[str]) -> list[
         )
 
     return missing_from_script
+
+
+def check_progress_contract(script_content: str) -> list[str]:
+    """Deterministic, zero-LLM-cost gate: does the script write the progress history?
+
+    A literal check, like the flag gate: the marker and the history-file suffix must
+    both appear. It cannot prove the records are well formed - the Runner's parser
+    counts malformed lines - but it guarantees the Coder did not skip the contract.
+    """
+    missing = [token for token in PROGRESS_CONTRACT_TOKENS if token not in script_content]
+    if missing:
+        logger.warning(
+            f"  [gate:progress] script text is MISSING the progress contract: {', '.join(missing)}"
+        )
+    else:
+        logger.info("  [gate:progress] learning-curve history contract present")
+    return missing
 
 
 def resolve_paper_markdown(reader_json_path: Path, markdown_dir: Path) -> Path:
@@ -200,6 +238,7 @@ class CoderPipeline:
         logger.info(f"[gate:syntax] ast.parse over {len(result.script_content)} chars...")
         syntax_error = check_syntax(result.script_content)
         missing_cli_flags = check_required_flags(result.script_content, result.cli_flags_included)
+        missing_progress = check_progress_contract(result.script_content)
 
         if syntax_error is not None:
             invalid_path = paper_dir / "train.py.invalid"
@@ -223,6 +262,7 @@ class CoderPipeline:
                     f"{syntax_error.msg} (line {syntax_error.lineno}, offset {syntax_error.offset})"
                 ),
                 missing_cli_flags=missing_cli_flags,
+                missing_progress_contract=missing_progress,
             )
             raise ScriptSyntaxError(
                 f"generated script for '{paper}' is not valid Python: "
@@ -230,6 +270,32 @@ class CoderPipeline:
             )
 
         logger.info("  [gate:syntax] passed - script is valid Python")
+        if missing_progress:
+            invalid_path = paper_dir / "train.py.invalid"
+            invalid_path.write_text(result.script_content, encoding="utf-8")
+            logger.error(
+                f"  [gate:progress] FAILED - the script never writes the learning-curve "
+                f"history ({', '.join(missing_progress)} absent); wrote it to {invalid_path}"
+            )
+            _write_bookkeeping(
+                paper_dir / "coder_output.failed.json",
+                paper=paper,
+                reader_json_path=reader_json_path,
+                markdown_path=markdown_path,
+                script_path=invalid_path,
+                result=result,
+                syntax_ok=True,
+                syntax_error=None,
+                missing_cli_flags=missing_cli_flags,
+                missing_progress_contract=missing_progress,
+            )
+            raise ScriptContractError(
+                f"generated script for '{paper}' does not write the learning-curve history "
+                f"the Runner's live check-ups read (missing: {', '.join(missing_progress)}); "
+                f"it must append one JSON record per epoch or repetition to the "
+                f"`.history.jsonl` file derived from --metrics-output and print each record "
+                f"after the {PROGRESS_MARKER} marker"
+            )
         script_path = paper_dir / "train.py"
         script_path.write_text(result.script_content, encoding="utf-8")
         logger.info(f"  -> {script_path}")
@@ -243,6 +309,7 @@ class CoderPipeline:
             syntax_ok=True,
             syntax_error=None,
             missing_cli_flags=missing_cli_flags,
+            missing_progress_contract=missing_progress,
         )
         logger.info(f"  -> {paper_dir / 'coder_output.json'}")
         reproduce_path = paper_dir / "reproduce.sh"
@@ -285,7 +352,7 @@ def _write_reproduce_script(
     script path - rather than asked of the model. A shell wrapper is pure
     templating, so generating it in Python costs nothing, cannot hallucinate a
     flag the script does not define, and cannot be swallowed by the tool-field
-    leak `script_writer._recover_leaked_fields` exists to undo.
+    leak `reader/tooluse.py`'s `recover_leaked_fields` exists to undo.
 
     Two invocations are emitted, and the difference between them is the whole
     point: the full run carries no flags at all, because every default in the
@@ -300,6 +367,29 @@ def _write_reproduce_script(
         _wrap_comment(assumption, bullet="- ") for assumption in result.assumptions
     ) or ("#   (none recorded)")
     script_name = script_path.name
+    if result.model_family == "classical":
+        capped_block = f"""  capped)
+    # Stage 3 (classical estimator). Epochs mean nothing to an SVM or a forest, so
+    # this stage scales DATA instead of epochs: a slice ten times smoke's, so its
+    # result genuinely differs from smoke's and shows whether the estimator beats
+    # chance. eval_metric here is NOT comparable to the paper's claim.
+    python {script_name} \\
+      --max-train-samples 5000 \\
+      --max-eval-samples 2000 \\
+      --metrics-output metrics.capped.json
+    ;;"""
+    else:
+        capped_block = f"""  capped)
+    # Stage 3. The cheapest run that carries real signal: on a few hundred
+    # examples a net should overfit fast, so train_metric moving well past a
+    # trivial baseline (chance accuracy; predicting the mean) means learning is
+    # wired up correctly. eval_metric here is NOT comparable to the paper's claim.
+    python {script_name} \\
+      --epochs 5 \\
+      --max-train-samples 512 \\
+      --max-eval-samples 256 \\
+      --metrics-output metrics.capped.json
+    ;;"""
     sh_path.write_text(
         f"""#!/usr/bin/env bash
 # Reproduce: {paper}
@@ -317,12 +407,13 @@ def _write_reproduce_script(
 # Assumptions the Coder had to make (not stated in the paper):
 {assumptions}
 #
-# This script needs torch/torchvision/transformers, which are deliberately NOT
-# in this repo's uv lock (see CLAUDE.md's platform-trap note). Run it inside
-# runner/'s Docker image, or in a throwaway venv on a machine with wheels:
+# This script needs torch (plus torchvision for image datasets, pandas and
+# scikit-learn for tabular ones), which are deliberately NOT in this repo's uv
+# lock (see CLAUDE.md's platform-trap note). Run it inside runner/'s Docker
+# image, or in a throwaway venv on a machine with wheels:
 #   python3.11 -m venv .venv && . .venv/bin/activate
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-#   pip install transformers accelerate
+#   pip install numpy pandas scikit-learn
 # ---------------------------------------------------------------------------
 # This file is the ONLY interface runner/ uses. Runner picks a mode; it never
 # constructs a python command or passes a --flag. That keeps Runner paper-
@@ -333,6 +424,7 @@ def _write_reproduce_script(
 #   smoke   does a whole epoch reach eval and write metrics?
 #   capped  does training actually learn?    (CPU-sized, minutes)
 #   full    the paper's real setup            (needs a GPU; hours)
+#   seed2/3 full again with --seed 2/3        (asked for by the Critic)
 #
 # Each mode writes its own metrics file, so a cheap stage's numbers can never
 # be mistaken for a real run's. Modes are cumulative gates: run them in order
@@ -345,8 +437,8 @@ MODE="${{1:-full}}"
 
 case "$MODE" in
   probe)
-    # Stage 1. Two optimizer steps. Proves data -> model -> loss -> step works
-    # at all; catches shape/dtype errors in seconds. Accuracy is meaningless.
+    # Stage 1. A couple of optimizer steps. Proves data -> model -> loss -> step
+    # works at all; catches shape/dtype errors in seconds. Metrics are meaningless.
     python {script_name} \\
       --epochs 1 \\
       --max-train-samples 256 \\
@@ -362,25 +454,26 @@ case "$MODE" in
       --max-eval-samples 256 \\
       --metrics-output metrics.smoke.json
     ;;
-  capped)
-    # Stage 3. The cheapest run that carries real signal: on 512 examples a
-    # 36M-parameter net should overfit fast, so train accuracy climbing well
-    # above 10% (CIFAR-10 chance) means learning is wired up correctly.
-    # Eval accuracy here is NOT comparable to the paper's claim.
-    python {script_name} \\
-      --epochs 5 \\
-      --max-train-samples 512 \\
-      --max-eval-samples 256 \\
-      --metrics-output metrics.capped.json
-    ;;
+{capped_block}
   full)
-    # Stage 4. No flags at all - every default in {script_name} is already the
-    # paper's own value. This is the only mode whose numbers are comparable to
-    # the paper's claim, and the only one that needs a GPU.
-    python {script_name}
+    # Stage 4. No training flags at all - every default in {script_name} is
+    # already the paper's own value. This is the only mode whose numbers are
+    # comparable to the paper's claim, and the only one that needs a GPU. The
+    # metrics path is still set, like every other mode: the Runner reads
+    # metrics.full.json, and a bare run would write the script's default path.
+    python {script_name} \\
+      --metrics-output metrics.full.json
+    ;;
+  seed2|seed3)
+    # Extra seeds for the Critic: the full run again with --seed 2 or 3, so it can
+    # measure run-to-run spread before judging a result that one run cannot decide.
+    # No training flags, exactly like full; its own metrics and history files.
+    python {script_name} \\
+      --seed "${{MODE#seed}}" \\
+      --metrics-output "metrics.${{MODE}}.json"
     ;;
   *)
-    echo "usage: $0 [probe|smoke|capped|full]" >&2
+    echo "usage: $0 [probe|smoke|capped|full|seed2|seed3]" >&2
     exit 2
     ;;
 esac
@@ -401,6 +494,7 @@ def _write_bookkeeping(
     syntax_ok: bool,
     syntax_error: str | None,
     missing_cli_flags: list[str],
+    missing_progress_contract: list[str],
 ) -> None:
     """Write the run's bookkeeping JSON next to the script.
 
@@ -422,8 +516,11 @@ def _write_bookkeeping(
         "syntax_ok": syntax_ok,
         "syntax_error": syntax_error,
         "missing_cli_flags": missing_cli_flags,
+        "missing_progress_contract": missing_progress_contract,
         "claim_targeted": result.claim_targeted,
         "claim_selection_reasoning": result.claim_selection_reasoning,
+        "task_type": result.task_type,
+        "model_family": result.model_family,
         "architecture_used": result.architecture_used,
         "dataset_used": result.dataset_used,
         "hyperparameters_used": [

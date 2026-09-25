@@ -8,8 +8,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from critic.judge import judge
 from critic.review import (
     REVIEW_TOOL,
@@ -23,13 +21,8 @@ from critic.review import (
     unsupported_numbers,
     verify,
 )
+from orchestrator.loop import decide_after_critic
 from reader.tooluse import recover_leaked_fields
-
-try:
-    from orchestrator.loop import decide_after_critic
-except ImportError:
-    # The Critic was copied without main's orchestrator wiring (mert/critic-agent).
-    decide_after_critic = None
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wijaya_review_payload.json"
 
@@ -153,10 +146,6 @@ def test_only_verified_stated_problems_count() -> None:
     assert "fidelity retry:" in unstated_feedback(judgement, review, ["batch size 32"])
 
 
-@pytest.mark.skipif(
-    decide_after_critic is None,
-    reason="needs orchestrator.loop.decide_after_critic, which this branch does not have yet",
-)
 def test_a_fail_with_stated_problems_routes_to_a_correctness_fix() -> None:
     common: dict[str, Any] = {
         "verdict": "fail",

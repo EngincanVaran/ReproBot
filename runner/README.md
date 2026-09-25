@@ -17,7 +17,7 @@ This is the central design decision of the stage.
 The only command ever sent into a container is:
 
 ```bash
-bash reproduce.sh <mode>          # mode ∈ probe | smoke | capped | full
+bash reproduce.sh <mode>          # mode ∈ probe | smoke | capped | full | seed2 | seed3
 ```
 
 The Runner **never** constructs a `python` command, **never** passes a `--flag`,
@@ -33,11 +33,18 @@ Mode semantics come from the script's own header (see `coder/README.md`):
 |---|---|---|
 | `probe` | a couple of optimizer steps, seconds | data → model → loss → step works at all; catches shape/dtype errors |
 | `smoke` | one full epoch over a small slice | execution reaches the eval path and the metrics write |
-| `capped` | 5 epochs / 512 samples, minutes | training actually learns — train accuracy climbing above CIFAR-10's 10% chance |
+| `capped` | 5 epochs / 512 samples, minutes | training actually learns — `train_metric` moving well past a trivial baseline (CIFAR-10's 10% chance accuracy; predicting the mean for a regression) |
 | `full` | the paper's real setup, hours | the only numbers comparable to the paper's claim; needs a GPU |
+| `seed2`, `seed3` | `full` again with `--seed 2` / `--seed 3` | run-to-run spread, when the Critic cannot judge one run; the Orchestrator asks for them only when a full run took ≤ 30 min |
 
 Each mode writes its **own** `metrics.<mode>.json`, so a cheap stage's numbers
 can never be mistaken for a real run's.
+
+The seed modes (added 2026-09-14 for the Critic) are **not** in the escalation
+ladder. `STAGE_ORDER` is still the four stages, and `SEED_MODES` sits beside it
+(`ALL_MODES` is both). They take full's 24 h timeout and all six check-up rules, and
+`has_seed_modes(paper_dir)` tells a caller whether a script generated before them can
+run them at all.
 
 > One sharp edge worth knowing: `reproduce.sh` with **no** argument defaults to
 > `full`. The Runner always passes an explicit mode, and the image's default
@@ -56,6 +63,64 @@ can never be mistaken for a real run's.
 Stages run in order and stop at the **first** non-zero exit — a shape error
 costs seconds instead of hours. `full` is never reached by escalation; the
 default `--max-stage` is `capped`, and `full` has to be named explicitly.
+
+A stage also stops early when a **live check-up** halts it (next section). For a
+classical estimator (`model_family: "classical"` in `coder_output.json`), `capped`
+scales data instead of epochs — 5,000 training / 2,000 evaluation rows — because an
+SVM or a forest has no epochs, and the old epoch-based `capped` gave numbers
+identical to `smoke`.
+
+## Live check-ups — is it actually learning?
+
+An exit code says a script finished, never that it learned. Twice in phase 3 a
+`full` run exited normally with a broken model (Tang 2013's collapse; a soft decision
+tree whose sign-flipped loss drove accuracy to 0.15%), and both were caught by a
+person reading `docker logs`. `checkups.py` makes the Runner read the run itself.
+
+**The channel.** Every generated script appends one JSON record per epoch (or per
+repetition/fold/fit for a classical estimator) to `metrics.<mode>.history.jsonl` in
+the bind mount, and prints the same record after the `REPROBOT_PROGRESS` marker.
+The record carries the losses, the claim's metric on both splits, and three fields
+the rules need: `chance_metric` (a trivial predictor's score on the eval split,
+fitted on the training split), `target_value` (the claim) and `loss_lower_bound`.
+`coder/pipeline.py` rejects a script that does not write it.
+
+**The mechanism.** `run_stage` keeps its blocking `subprocess.run`; a watcher thread
+beside it reads new history lines every `--checkup-interval` seconds (default 5),
+logs them (at most ~20 lines per stage), and evaluates the rules. When one fires, the
+watcher kills the container by name — the timeout path's own `docker kill` — and the
+stage ends with status **`halted`** and the evidence. The rules run once more after
+exit, because a short stage can finish between two polls. No triage call is made: the
+rule's evidence is the diagnosis. A script that writes no history is judged on its
+exit code alone, with a warning. `--no-live-checkups` turns all of it off.
+
+**The rules** — pure functions, conservative, because a false halt kills a run that
+would have reproduced a paper:
+
+| Rule | Fires when | Stages |
+|---|---|---|
+| `non_finite` | a loss or metric is NaN/inf | all |
+| `loss_below_lower_bound` | a loss falls below its declared lower bound | all |
+| `worse_than_chance` | an accuracy-like metric is >3 binomial SEs below chance for 3 records running (from step 3) | capped, full |
+| `no_progress` | the loss is flat (<0.1% range) over the opening window **and** the metric is not meaningfully better than chance | full |
+| `stuck_at_chance` | after warmup (max(3, 10% of the run)), the metric is not meaningfully past chance for 3 records running — skipped when the claim itself sits near chance | full |
+| `diverged` | the loss is >1.5x its best **and** the metric has kept <50% of its best gain over chance, for 3 records running | full |
+
+"Meaningfully past chance" is max(3 SEs, 10% of the distance from chance to a perfect
+score). `no_progress` was first allowed in `capped` too, and end-to-end testing
+showed why it cannot be: a correctly generated soft tree, whose leaves start uniform,
+held its loss at ln 10 = 2.303 for all five capped epochs while accuracy was already
+30% — three times chance.
+
+**Verified** (`tests/test_checkups.py`, 22 replays of real curves; plus Docker):
+
+| Curve | Result |
+|---|---|
+| Tang ablation, as generated (mom 0.9, C=1.0) | halted at epoch 12, `diverged` |
+| Tang ablation, whitened PCA | halted at epoch 6, `diverged` |
+| Tang ablation, 4 stable configs; Tang C=0.1; Wijaya; soft tree (fixed, 40 epochs); random forest; SVM | never halted |
+| Soft tree, sign-flipped loss, **live `full` run in Docker** | halted at epoch 1 of 40, container killed 0.3 s after the record — ~70 min saved |
+| Same fault through the Orchestrator | halted in `probe` after 5 s → evidence fed to the Coder → regenerated script passed to `capped`, `success` |
 
 ## Class architecture
 
@@ -133,9 +198,14 @@ that is trying to report the timeout.
 
 ```
 coder/output/<paper>/  ──►  /workspace        (rw)   ← metrics.<mode>.json written here
-runner/cache/datasets  ──►  /workspace/data   (rw)   ← shared CIFAR-10, nested on purpose
+runner/cache/datasets  ──►  /workspace/data   (rw)   ← shared datasets, nested on purpose
 runner/cache/home      ──►  /cache            (rw)   ← HOME/HF_HOME/TORCH_HOME
 ```
+
+The dataset mount is not CIFAR-specific: `coder/`'s prompt requires *every*
+download — a `torchvision` dataset, an OpenML table fetched with
+`fetch_openml(data_home=args.data_dir)`, a file from a direct URL — to land under
+`--data-dir`, so each one is fetched once and shared from then on.
 
 **There is no `docker cp`.** The paper directory mount *is* the host directory,
 so when the script writes `metrics.<mode>.json` the file is already on the host.
@@ -183,9 +253,9 @@ The flags exist for the cases where the trade-off flips — a shared CI box, or
 several papers in parallel — and `triage.py`'s prompt names exit 137 explicitly
 as an `environment_error` so a deliberate cap is still classified correctly.
 
-`--network` stays on `bridge` by default because torchvision downloads CIFAR-10
-on the first run. Once the cache is warm, `--network none` makes the sandbox
-fully offline.
+`--network` stays on `bridge` by default because a script downloads its dataset
+(CIFAR-10 via torchvision, a table via OpenML) on the first run. Once the cache
+is warm, `--network none` makes the sandbox fully offline.
 
 **Known limitation:** the container runs as root, so on a **Linux** host the
 files it writes into the bind mounts (`metrics.*.json`, the CIFAR-10 cache) come
@@ -237,12 +307,28 @@ against the contract documented in `coder/README.md` — `claim_id`, `metric`,
 `unit`, `value` are copied verbatim by the generated script and are never
 normalized here either.
 
+**Two contract shapes exist on disk, and both are read.** The current one is
+task-agnostic (`task_type`, `higher_is_better`, `train_metric`, `eval_metric`);
+the legacy one, written by the `Trainer`-era Network In Network and Wide
+Residual Networks scripts, carries `train_accuracy`/`eval_accuracy` instead.
+Nothing here reads either set strictly. `summarize_split_metrics()` builds the
+per-stage log line from whichever keys are present — the current ones when
+either `train_metric` or `eval_metric` exists, the legacy accuracy pair
+otherwise, and a plain "no per-split metrics reported" when neither is. The
+first line below is from the real plain-loop NIN regression probe; the second is
+the helper's output for the `Trainer`-era NIN `metrics.probe.json` still on disk:
+
+```
+[probe] metrics (file): claim_id=c1 Test Error=89.84375 % (task_type=classification, higher_is_better=False, train_metric=90.625, eval_metric=89.84375, epochs_completed=1)
+[probe] metrics (file): claim_id=c1 Test Error=85.9375 % (train_accuracy=13.671875, eval_accuracy=14.0625, legacy accuracy-shaped metrics, epochs_completed=1)
+```
+
 If the file is missing, there is a fallback: the generated script also prints the
 identical object as its final line of stdout, so `parse_metrics_from_stdout()`
 scans upward for it. The scan requires a contract key (`claim_id` / `metric` /
-`value`) before accepting a line, so HuggingFace `Trainer`'s own
-`{'loss': 2.30, 'epoch': 1.0}` progress lines — Python reprs with single quotes,
-not valid JSON — cannot be mistaken for the metrics.
+`value`, shared by both shapes) before accepting a line, so a legacy script's
+HuggingFace `Trainer` progress lines (`{'loss': 2.30, 'epoch': 1.0}` — Python
+reprs with single quotes, not valid JSON) cannot be mistaken for the metrics.
 
 A stage that exits 0 without producing metrics is **not** an error: `probe` may
 exit before reaching the write. It is logged as a warning and recorded with
@@ -275,6 +361,33 @@ Orchestrator needs:
   `CodeWriter.write(feedback=...)`.
 - **`environment_error`** — the fault is in the container or its inputs;
   regenerating the script would change nothing.
+
+**A failed download is decided by whether a different script could succeed.** If
+the network works but one specific source refused — HTTP 403/404/410/5xx from a
+particular URL — that is `recoverable_error`, because a rewritten script can fetch
+the same data elsewhere. Only a container with no network at all is an
+`environment_error`. This rule exists because the old prompt listed "a
+network/download failure" under `environment_error` without qualification, and the
+first tabular run hit exactly that: a dead Boston Housing URL was triaged
+`environment_error`, so the Orchestrator stopped immediately with zero retries —
+on a failure one regeneration would have fixed. Re-triaging the same real log with
+the corrected prompt returns `recoverable_error`.
+
+**Four rules constrain `suggested_fix`**, since it is handed verbatim to the model
+that rewrites the script:
+
+1. **Never change what is being reproduced.** Same dataset, model, task and
+   metric. The first corrected triage run suggested, among its options, switching
+   to "a standard alternative regression dataset" — a fix that makes the run pass
+   while silently measuring a different experiment.
+2. **One fix, not a menu** — the rewriter may pick the wrong item.
+3. **No API or source it is unsure still exists** — the same run also suggested
+   `sklearn.datasets.load_boston()`, which was removed in scikit-learn 1.2.
+4. **No specific identifier** (dataset id, version, URL, checksum) unless it
+   appears in the log. Describe the mechanism and let the Coder choose the value.
+   Before this rule, triage recommended Boston Housing as OpenML `data_id=506`,
+   which is a different dataset entirely (`531` is Boston) — and a wrong `data_id`
+   does not fail, it quietly trains on the wrong data.
 
 The prompt calls out the genuinely ambiguous case explicitly: a missing import is
 an `environment_error` if the image lacks the package, but a `recoverable_error`
@@ -310,6 +423,29 @@ failed" means. `torch` is pinned as `2.5.1`, **not** `2.5.1+cpu`: the CPU index
 tags the x86_64 wheel with the `+cpu` local version but the aarch64 one without
 it, so the bare pin resolves on both the Intel dev machine and an Apple Silicon
 collaborator's.
+
+### What is in the image, and why each piece is there
+
+| Package | Pin | Why |
+|---|---|---|
+| `torch`, `torchvision` | `2.5.1`, `0.20.1` (CPU index) | Every generated script's model and training loop; torchvision for image datasets and transforms. |
+| `numpy` | `2.1.3` | Universal. |
+| `pandas`, `scikit-learn`, `scipy` | `2.2.3`, `1.5.2`, `1.14.1` | **Generalization beyond image classification.** A tabular paper has no torchvision loader: its script fetches data from OpenML via `sklearn.datasets.fetch_openml` (which returns a pandas frame) and fits its split/scaling/PCA with scikit-learn. Never the model — that is always torch. `scipy` is scikit-learn's own requirement, pinned explicitly because it is numerical code a result can depend on. |
+| `transformers`, `accelerate` | `4.46.3`, `1.1.1` | **Legacy.** `coder/` no longer generates `Trainer` scripts, but the NIN/WRN scripts already on disk and every archived attempt under `orchestrator/output/` still import it. Dropping the pair would turn those into `ImportError`s. |
+| `pillow` | `11.0.0` | torchvision's image backend. |
+
+**There is deliberately no TensorFlow/Keras.** `coder/` always reimplements in
+PyTorch, even for a paper written in Keras, and discloses the framework-default
+differences that implies (Adam epsilon, layer initialization, ...) instead — see
+`coder/README.md`. A second framework would add a second large dependency tree
+to the image and give every script two ways to be subtly wrong.
+
+The three new packages are all from the same release window as the torch/numpy
+pins, all accept `numpy==2.1.3`, and all ship cp311 wheels for both x86_64 and
+aarch64. They are installed **in the same `pip install` command as
+`numpy==2.1.3`**, not a later step: a separate `pip install scikit-learn` is
+free to upgrade an installed numpy to satisfy itself, silently. One command
+makes the resolver honour every pin jointly or fail the build.
 
 ## Logging
 
@@ -378,6 +514,39 @@ stay in the managed `uv.lock` on the Intel-macOS dev machine while being the
 thing that finally executes torch code.
 
 ## Status
+
+### Image rebuilt for generalization (pandas / scikit-learn / scipy)
+
+- `docker build -t reprobot-runner:latest runner/` succeeded in **3 min 52 s**
+  (Docker server 29.7.2, x86_64). **No layer came from cache**: the floating
+  `python:3.11-slim` tag resolved to a new base digest
+  (`sha256:9534e5a8…`), so apt and the torch step rebuilt too — and the torch
+  step's *unpinned* transitive dependencies (`sympy`, `networkx`, `jinja2`,
+  `fsspec`, …) resolved to whatever is current. The pins above are honoured,
+  but this image is not byte-identical to the one the earlier runs used. That
+  gap predates this change; pinning the base by digest and adding a constraints
+  file would close it.
+- Inside the built image, `import pandas, sklearn, torch, torchvision` (plus
+  `numpy`, `scipy`, `transformers`, `accelerate`, and
+  `from sklearn.datasets import fetch_openml`) all succeed, reporting
+  `torch 2.5.1+cpu`, `torchvision 0.20.1+cpu`, `numpy 2.1.3`, `pandas 2.2.3`,
+  `scikit-learn 1.5.2`, `scipy 1.14.1`, `transformers 4.46.3`,
+  `accelerate 1.1.1`. `pip check`: no broken requirements.
+- **numpy stays at 2.1.3.** The build log shows the torch step pulls numpy
+  2.4.6 from the CPU index as an unpinned dependency, and the joint pin step
+  then replaces it with 2.1.3. That happened before this change too; it is why
+  the pins share one `pip install`.
+- **Regression probe, new plain-PyTorch NIN script:** `runner.pipeline --mode
+  probe` → **PASSED, exit 0, 76.3 s**, `triage: null`, metrics read from the
+  file in the new task-agnostic shape (see `coder/README.md`'s Status for the
+  full run).
+- **Not verified:** `fetch_openml` against the live OpenML service from inside
+  the container. OpenML's API host now answers `api.openml.org` with a 301 to
+  `www.openml.org`, which urllib follows, and the `file_id` download route is
+  still listed in its metadata — so it is expected to work, but no dataset has
+  been fetched through it yet. The first tabular paper's `probe` is that test.
+
+### Earlier verification (HuggingFace `Trainer` era)
 
 **Verified end to end in Docker.** The image builds and a real container runs a
 real generated script to completion:
@@ -460,38 +629,40 @@ which every one of the 8 papers would otherwise repeat.
   counterparts (HTTP 200), and `transformers==4.46.3`, `accelerate==1.1.1`,
   `numpy==2.1.3`, `pillow==11.0.0` on PyPI (HTTP 200).
 
-### Written but never executed
+### Exercised for real since
 
-- `docker build` of this image has **never been run**. The pins are confirmed to
-  exist and the instructions parse, but no layer has actually been built, so
-  apt/pip resolution inside the image is exercised by the 224.2 s build above.
-- `docker run` has **never been run**, so nothing here has yet driven a real
-  container: the mounts (including the nested `/workspace/data`), the working
-  directory, and `bash reproduce.sh <mode>` reaching the generated script are all
-  argv-verified and design-verified, not execution-verified.
-- No real `metrics.<mode>.json` has been produced by a container. The parser is
-  verified against the documented contract shape, not against a file some
-  container actually wrote.
-- The real Haiku triage call has never been made — `triage.py`'s parsing is
-  verified against synthetic payloads, but no live API response has exercised it.
-- Consequently the stage budgets in the table above are **estimates**, not
-  measurements. The first real run should be `--mode probe` on a single paper,
-  with the wall-clock time it reports used to re-tune them.
+Everything this section once listed as written-but-unrun has now run:
 
-### Not built
+- **`docker build`** — many times, most recently with `pandas`/`scikit-learn`/`scipy`
+  added for tabular papers (3 min 52 s).
+- **`docker run`** — real training in real containers across four papers, through
+  every stage including the first `full` run (Tang 2013, MNIST).
+- **`metrics.<mode>.json`** — written by real containers in both the old
+  accuracy-keyed shape and the current `train_metric`/`eval_metric` shape, and
+  parsed back by `summarize_split_metrics()`.
+- **Live triage** — real Haiku calls on real failures, including a dead-URL download
+  that exposed a misclassification now fixed (see "Triage" above).
+- **Stage budgets** — calibrated against a measured run (see the timeout table).
+- **The Coder↔Runner retry loop** — built as `orchestrator/`, and proven to repair a
+  real runtime bug on its first retry.
 
-The Coder↔Runner retry loop. `triage.py` produces a `recoverable_error` category
-and a `suggested_fix` written specifically to be handed to
-`CodeWriter.write(feedback=...)`, and `coder/base.py` already accepts that
-parameter — but nothing wires the two together yet. That is the Orchestrator's
-job, and is the increment this stage was built to make possible.
+### Still open
 
-Worth knowing about the class of failure this stage exists to catch:
-`coder/README.md` documents a real `AttributeError` (`_NoOpScheduler.get_last_lr()`
-reading a `self.optimizer` the class never assigns) that `ast.parse` could not
-catch, because a script can be perfectly valid Python and still die on its first
-step. That bug came from a **discarded** generation and is *not* in the committed
-`coder/output/` script — checked directly, which is the only way to be sure of a
-claim like this — so it is not a prediction about the first `probe` run. It is
-the reason `probe` exists at all: a syntax gate proves a script parses, never
-that it runs.
+- **Check-ups judge health, not fidelity.** A run that learns healthily but lands far
+  from the paper's number (Wijaya: RMSE 4.48 vs 3.02) passes every check-up; comparing
+  a result with its claim is `critic/`'s job (added 2026-09-14), which runs after the
+  Runner inside the Orchestrator.
+- **Check-ups only see what the script records.** A script from before the progress
+  contract (NIN, WRN, Tang, Wijaya's current scripts) writes no history and is judged
+  on its exit code alone until regenerated.
+- **Thresholds are calibrated on nine papers' worth of curves.** Every halt logs its
+  evidence, so a false positive is visible; tune the constants in `checkups.py`.
+- **The image is not reproducible byte-for-byte.** `python:3.11-slim` is a moving tag
+  and torch's own transitive dependencies are unpinned, so a rebuild can differ from
+  the image an earlier run used. Pinning the base by digest would fix it.
+
+Worth knowing about the class of failure this stage exists to catch: a real
+`AttributeError` (`_NoOpScheduler.get_last_lr()` reading a `self.optimizer` the class
+never assigns) passed `ast.parse`, because a script can be perfectly valid Python and
+still die on its first step. That is the reason `probe` exists at all: a syntax gate
+proves a script parses, never that it runs.

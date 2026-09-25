@@ -44,6 +44,12 @@ and the fix costs no Docker run - so the syntax message is fed straight back as
 feedback and the loop continues. It still consumes one unit of retry budget,
 because a model that emits invalid Python three times running is not converging.
 
+A `halted` run is not a verdict either. `runner/`'s live check-up stopped a script
+that was executing but not learning (a loss below its lower bound, a model worse
+than chance, a collapse after learning, ...). Its evidence goes to the Coder
+verbatim as feedback, with no triage call, and the retry is charged to the budget
+like any other; the rule and its message are kept on the attempt's record.
+
 PURE TRANSITIONS
 ----------------
 Every decision above is made by one of three small pure functions
@@ -66,9 +72,13 @@ from typing import Literal
 from anthropic import Anthropic
 from loguru import logger
 
-from coder.pipeline import CoderPipeline, ScriptSyntaxError
+from coder.pipeline import CoderPipeline, ScriptGateError
+from critic.judge import Judgement, guided_retry_feedback, judge
+from critic.review import MODEL as REVIEW_MODEL
+from critic.review import Review, deviation_feedback, review_run, unstated_feedback
 from orchestrator.state import (
     STAGE_CODER,
+    STAGE_CRITIC,
     STAGE_ORCHESTRATOR,
     STAGE_RUNNER,
     AttemptRecord,
@@ -77,10 +87,21 @@ from orchestrator.state import (
     RunnerOutputState,
     Verdict,
 )
-from runner.docker_runner import DockerRunner, RunnerOutput, metrics_path_for
+from runner.docker_runner import (
+    SEED_MODES,
+    DockerRunner,
+    RunnerOutput,
+    has_seed_modes,
+    history_path_for,
+    metrics_path_for,
+)
 from runner.triage import TriageResult
 
 DEFAULT_RETRY_BUDGET = 3
+# Extra seeds are run automatically only when one full run took at most this long.
+DEFAULT_SEED_BUDGET_SECONDS = 1800.0
+# Guided retries after a Critic `fail`, across the whole paper.
+DEFAULT_FIDELITY_RETRY_BUDGET = 1
 
 # Two consecutive scripts at or above this line-level similarity count as a
 # plateau. 0.98 is a STARTING POINT, not a measurement: the honest calibration
@@ -213,6 +234,7 @@ def decide_after_run(
     triage: TriageResult | None,
     retry_count: int,
     retry_budget: int,
+    halt_feedback: str | None = None,
 ) -> LoopDecision:
     """Route one finished Docker run. The loop's central decision.
 
@@ -231,8 +253,30 @@ def decide_after_run(
             "timeout by design, so there is no specific fix to feed back - a slow but "
             "correct script must not be 'fixed' into a different one",
         )
+    if status == "halted":
+        # runner/'s live check-up stopped a run that was executing but not learning.
+        # Its evidence already is the diagnosis - which rule fired, at which epoch,
+        # with which numbers - so it goes to the Coder verbatim, with no triage call.
+        if retry_count >= retry_budget:
+            return LoopDecision(
+                "stop",
+                "retry_budget_exhausted",
+                f"a live check-up halted the run because training was not healthy, and the "
+                f"retry budget ({retry_budget}) is spent",
+            )
+        return LoopDecision(
+            "retry",
+            None,
+            "a live check-up halted the run: it executed but was not learning",
+            feedback=halt_feedback
+            or (
+                "The Runner's live check-up stopped the previous script because training was "
+                "not healthy. Re-check the objective, the optimisation settings the paper "
+                "leaves unstated, and that the model's parameters are actually updated."
+            ),
+        )
     if status != "error":
-        raise ValueError(f"unknown runner status {status!r}; expected success/error/timeout")
+        raise ValueError(f"unknown runner status {status!r}; expected success/error/timeout/halted")
 
     if triage is None:
         return LoopDecision(
@@ -286,11 +330,86 @@ def decide_after_syntax_error(
         "the generated script is not valid Python - caught by coder/'s ast.parse gate "
         "before any container started, so this retry costs no Docker run",
         feedback=(
-            f"The script you generated was not valid Python and was rejected before it "
+            f"The script you generated was rejected by a deterministic gate before it "
             f"could run: {message}. Emit a COMPLETE, syntactically valid script this time "
-            f"- no truncation, no placeholders, no unclosed brackets or strings."
+            f"that satisfies every contract in the instructions - no truncation, no "
+            f"placeholders, no unclosed brackets or strings, and the learning-curve history."
         ),
     )
+
+
+type CriticAction = Literal["accept", "run_seeds", "fix", "retry"]
+
+
+@dataclass(frozen=True)
+class CriticDecision:
+    """What the loop does with a Critic verdict."""
+
+    action: CriticAction
+    reason: str
+
+
+def decide_after_critic(
+    *,
+    verdict: str,
+    recommendation: str,
+    seeds_already_run: bool,
+    can_run_seeds: bool,
+    fidelity_retries_used: int,
+    fidelity_retry_budget: int,
+    retry_count: int,
+    retry_budget: int,
+    has_unstated_choices: bool,
+    has_stated_problems: bool = False,
+) -> CriticDecision:
+    """Route a Critic verdict. Pure, like every other routing decision here.
+
+    * `pass` and `not_evaluated` are final.
+    * `inconclusive` asks for extra seeds once per script, and only when they are
+      affordable (the full run was cheap enough) and this script's reproduce.sh can run
+      them; otherwise the verdict stands as inconclusive.
+    * `fail` with verified stated problems (the review found the script deviating from
+      what the paper states, or a plain bug) is a CORRECTNESS retry, `fix`: charged to the
+      normal retry budget, not the fidelity one, because making the script do what the
+      paper says is never tuning.
+    * `fail` otherwise earns ONE guided fidelity retry across the whole paper - never
+      more, so the loop cannot drift into tuning unstated settings until the test number
+      matches - and only when the Coder recorded unstated choices it could revisit and
+      the general retry budget still has room. Otherwise the fail is final.
+    """
+    if verdict == "inconclusive" and recommendation == "run_more_seeds":
+        if seeds_already_run:
+            return CriticDecision("accept", "extra seeds already ran; the verdict stands")
+        if not can_run_seeds:
+            return CriticDecision(
+                "accept",
+                "one run cannot decide this, but extra seeds are not affordable or not "
+                "available for this script, so the verdict stands as inconclusive",
+            )
+        return CriticDecision("run_seeds", "one run cannot decide this; running extra seeds")
+    if verdict == "fail" and recommendation == "guided_retry":
+        if has_stated_problems and retry_count < retry_budget:
+            return CriticDecision(
+                "fix", "the review found the script not doing what the paper states; fixing that"
+            )
+        if fidelity_retries_used >= fidelity_retry_budget:
+            return CriticDecision(
+                "accept",
+                f"the guided fidelity retry budget ({fidelity_retry_budget}) is spent; the "
+                f"fail is final",
+            )
+        if retry_count >= retry_budget:
+            return CriticDecision("accept", "the retry budget is spent; the fail is final")
+        if not has_unstated_choices:
+            return CriticDecision(
+                "accept",
+                "the Coder recorded no unstated choices to revisit, so a retry could only "
+                "tune toward the test number; the fail is final",
+            )
+        return CriticDecision(
+            "retry", "the result misses the claim; one guided retry on unstated choices"
+        )
+    return CriticDecision("accept", f"verdict {verdict!r} is final")
 
 
 def decide_after_regeneration(*, similarity: float, threshold: float) -> LoopDecision:
@@ -326,9 +445,11 @@ def build_attempt(
     plateau_ratio: float | None = None,
     runner_output: RunnerOutput | None = None,
     syntax_error: str | None = None,
+    critic_verdict: str | None = None,
 ) -> AttemptRecord:
     """Flatten one attempt's inputs, outcome and decision into a single record."""
     triage = runner_output.triage if runner_output else None
+    halt = runner_output.halt if runner_output else None
     return AttemptRecord(
         version=version,
         feedback_given=feedback,
@@ -348,6 +469,9 @@ def build_attempt(
         action=decision.action,
         verdict=decision.verdict,
         reason=decision.reason,
+        checkup_rule=str(halt.get("rule")) if halt else None,
+        checkup_message=str(halt.get("message")) if halt else None,
+        critic_verdict=critic_verdict,
     )
 
 
@@ -371,12 +495,22 @@ class Orchestrator:
         modes: tuple[str, ...] = ("probe",),
         retry_budget: int = DEFAULT_RETRY_BUDGET,
         plateau_threshold: float = DEFAULT_PLATEAU_THRESHOLD,
+        critic: bool = True,
+        review: bool = True,
+        review_model: str | None = None,
+        seed_budget_seconds: float = DEFAULT_SEED_BUDGET_SECONDS,
+        fidelity_retry_budget: int = DEFAULT_FIDELITY_RETRY_BUDGET,
     ) -> None:
         self.coder = coder
         self.runner = runner
         self.modes = modes
         self.retry_budget = retry_budget
         self.plateau_threshold = plateau_threshold
+        self.critic = critic
+        self.review = review
+        self.review_model = review_model
+        self.seed_budget_seconds = seed_budget_seconds
+        self.fidelity_retry_budget = fidelity_retry_budget
 
     # -- workspace hygiene -------------------------------------------------- #
 
@@ -390,10 +524,10 @@ class Orchestrator:
         run's. Removing them first makes "no metrics" mean no metrics.
         """
         for mode in self.modes:
-            stale = metrics_path_for(paper_dir, mode)
-            if stale.exists():
-                stale.unlink()
-                logger.info(f"  [workspace] removed stale {stale.name} from a previous attempt")
+            for stale in (metrics_path_for(paper_dir, mode), history_path_for(paper_dir, mode)):
+                if stale.exists():
+                    stale.unlink()
+                    logger.info(f"  [workspace] removed stale {stale.name} from a previous attempt")
 
     # -- the loop ----------------------------------------------------------- #
 
@@ -484,7 +618,7 @@ class Orchestrator:
                         f"{len(script_text.splitlines())} lines"
                         + (f", feedback applied: {feedback}" if feedback else ""),
                     )
-                except ScriptSyntaxError as exc:
+                except ScriptGateError as exc:
                     syntax_error = str(exc)
                     script_path = paper_dir / "train.py.invalid"
                     script_text = (
@@ -603,6 +737,12 @@ class Orchestrator:
                     f", triage={runner_output.triage.category}"
                     if runner_output.triage
                     else ", no triage"
+                )
+                + (
+                    f", halted by check-up '{runner_output.halt.get('rule')}' at "
+                    f"{runner_output.halt.get('kind')} {runner_output.halt.get('step')}"
+                    if runner_output.halt
+                    else ""
                 ),
             )
 
@@ -611,7 +751,23 @@ class Orchestrator:
                 triage=runner_output.triage,
                 retry_count=state.retry_count,
                 retry_budget=state.retry_budget,
+                halt_feedback=(
+                    str(runner_output.halt.get("feedback")) if runner_output.halt else None
+                ),
             )
+            critic_verdict: str | None = None
+            if decision.action == "done" and self.critic:
+                decision, judgement = self._critic_phase(
+                    state=state,
+                    runner_output=runner_output,
+                    paper_dir=paper_dir,
+                    output_dir=output_dir,
+                    version=version,
+                    client=client,
+                    decision=decision,
+                )
+                critic_verdict = judgement.verdict
+
             state.attempts.append(
                 build_attempt(
                     version=version,
@@ -621,6 +777,7 @@ class Orchestrator:
                     decision=decision,
                     plateau_ratio=plateau_ratio,
                     runner_output=runner_output,
+                    critic_verdict=critic_verdict,
                 )
             )
 
@@ -632,6 +789,215 @@ class Orchestrator:
             )
 
         return state
+
+    # -- the Critic ---------------------------------------------------------- #
+
+    def _critic_phase(
+        self,
+        *,
+        state: ReproState,
+        runner_output: RunnerOutput,
+        paper_dir: Path,
+        output_dir: Path,
+        version: int,
+        client: Anthropic,
+        decision: LoopDecision,
+    ) -> tuple[LoopDecision, Judgement]:
+        """Judge a successful run; run extra seeds or a guided retry when warranted.
+
+        Returns the loop decision (unchanged "done", or a fidelity "retry") and the
+        final judgement for this attempt. Execution verdicts and fidelity verdicts stay
+        separate: `state.verdict` still says how far execution got, `critic_output`
+        says whether the number matches.
+        """
+        claims = list(((state.reader_output or {}).get("claims") or {}).get("claims") or [])
+        metrics_mode = runner_output.metrics_mode
+        judgement = judge(
+            claims,
+            runner_output.reproduced_metrics,
+            runner_status=runner_output.status,
+            metrics_mode=metrics_mode,
+        )
+        self._log_judgement(judgement, f"v{version}")
+        seed_values: list[float] = []
+        seeds_run = False
+        review: Review | None = None
+        reviewed = False
+
+        while True:
+            choice = decide_after_critic(
+                verdict=judgement.verdict,
+                recommendation=judgement.recommendation,
+                seeds_already_run=seeds_run,
+                can_run_seeds=self._can_run_seeds(paper_dir, runner_output),
+                fidelity_retries_used=state.fidelity_retry_count,
+                fidelity_retry_budget=self.fidelity_retry_budget,
+                retry_count=state.retry_count,
+                retry_budget=state.retry_budget,
+                has_unstated_choices=bool(self._assumptions(paper_dir)),
+                has_stated_problems=bool(review and review.stated_problems()),
+            )
+            if choice.action == "run_seeds":
+                logger.info(f"  [critic] decide: {choice.action} - {choice.reason}")
+                seed_values = self._run_seeds(paper_dir, output_dir, version, client)
+                seeds_run = True
+                judgement = judge(
+                    claims,
+                    runner_output.reproduced_metrics,
+                    runner_status=runner_output.status,
+                    metrics_mode=metrics_mode,
+                    extra_run_values=seed_values,
+                )
+                self._log_judgement(judgement, f"v{version} with {len(seed_values)} extra seed(s)")
+                continue
+            # The verdict is final for this attempt: review the script and the run once,
+            # then decide again, because a verified stated problem changes a fail's route.
+            if not reviewed and self.review and judgement.verdict != "not_evaluated":
+                reviewed = True
+                review = self._review(state, judgement, runner_output, paper_dir, client)
+                if review is not None:
+                    continue
+            logger.info(f"  [critic] decide: {choice.action} - {choice.reason}")
+            break
+
+        previous = list((state.critic_output or {}).get("judgements", []))
+        entry = {
+            **judgement.to_dict(),
+            "script_version": version,
+            "seed_run_values": seed_values,
+            "review": review.to_dict() if review else None,
+        }
+        state.critic_output = {**entry, "judgements": [*previous, entry]}
+        state.record(
+            STAGE_CRITIC,
+            f"judged v{version}: {judgement.verdict}",
+            f"{judgement.summary()}; {choice.reason}",
+        )
+        if review is not None:
+            counts = review.counts()
+            state.record(
+                STAGE_CRITIC,
+                f"reviewed v{version}: {review.method_fidelity}",
+                f"{len(review.stated_problems())} verified stated problem(s); "
+                + ", ".join(f"{k} {v}" for k, v in counts.items()),
+            )
+            if judgement.verdict == "pass" and review.stated_problems():
+                logger.warning(
+                    f"  [critic] the result passes, but the review found "
+                    f"{len(review.stated_problems())} verified deviation(s) from the paper - "
+                    f"recorded for the report, not retried (a pass is final)"
+                )
+
+        if choice.action == "fix" and review is not None:
+            return (
+                LoopDecision(
+                    "retry",
+                    None,
+                    f"the Critic judged a fail and the review found stated deviations: "
+                    f"{judgement.reason}",
+                    deviation_feedback(judgement, review),
+                ),
+                judgement,
+            )
+        if choice.action == "retry":
+            state.fidelity_retry_count += 1
+            assumptions = self._assumptions(paper_dir)
+            feedback = (
+                unstated_feedback(judgement, review, assumptions)
+                if review is not None
+                else guided_retry_feedback(judgement, assumptions)
+            )
+            return (
+                LoopDecision(
+                    "retry", None, f"the Critic judged a fail: {judgement.reason}", feedback
+                ),
+                judgement,
+            )
+        return (
+            LoopDecision(
+                decision.action,
+                decision.verdict,
+                f"{decision.reason}; critic verdict: {judgement.verdict}",
+            ),
+            judgement,
+        )
+
+    def _review(
+        self,
+        state: ReproState,
+        judgement: Judgement,
+        runner_output: RunnerOutput,
+        paper_dir: Path,
+        client: Anthropic,
+    ) -> Review | None:
+        """Run the LLM review; a failed call degrades to v1 behaviour, never stops the loop."""
+        try:
+            coder_output = json.loads((paper_dir / "coder_output.json").read_text("utf-8"))
+            reader_output = state.reader_output or {}
+            markdown = Path(
+                str(coder_output.get("source_markdown") or reader_output.get("source_markdown"))
+            )
+            return review_run(
+                client,
+                judgement=judgement,
+                metrics=runner_output.reproduced_metrics,
+                reader_output=reader_output,
+                coder_output=coder_output,
+                script=(paper_dir / "train.py").read_text(encoding="utf-8"),
+                paper_markdown=markdown.read_text(encoding="utf-8") if markdown.is_file() else "",
+                history_path=history_path_for(paper_dir, "full"),
+                logs_dir=Path(runner_output.logs_path) if runner_output.logs_path else None,
+                model=self.review_model or REVIEW_MODEL,
+            )
+        except Exception as exc:  # noqa: BLE001 - the review is advisory
+            logger.error(f"  [critic] review failed, continuing without it: {exc}")
+            state.record(STAGE_CRITIC, "review failed", str(exc))
+            return None
+
+    def _log_judgement(self, judgement: Judgement, label: str) -> None:
+        level = "INFO" if judgement.verdict == "pass" else "WARNING"
+        logger.log(level, f"  [critic] {label}: {judgement.summary()}")
+        if judgement.claimed is not None:
+            logger.info(f"  [critic] reason: {judgement.reason}")
+        if judgement.tolerance is not None:
+            logger.info(f"  [critic] tolerance {judgement.tolerance:.4g} ({judgement.evidence})")
+        if len(judgement.merged_claim_ids) > 1:
+            logger.info(f"  [critic] merged duplicate claims: {judgement.merged_claim_ids}")
+
+    def _can_run_seeds(self, paper_dir: Path, runner_output: RunnerOutput) -> bool:
+        if runner_output.metrics_mode != "full" or not has_seed_modes(paper_dir):
+            return False
+        full = next((stage for stage in runner_output.stages if stage.mode == "full"), None)
+        return full is not None and full.wall_clock_seconds <= self.seed_budget_seconds
+
+    def _run_seeds(
+        self, paper_dir: Path, output_dir: Path, version: int, client: Anthropic
+    ) -> list[float]:
+        for mode in SEED_MODES:
+            for stale in (metrics_path_for(paper_dir, mode), history_path_for(paper_dir, mode)):
+                if stale.exists():
+                    stale.unlink()
+        logger.info(f"  [critic] running extra seeds: {', '.join(SEED_MODES)}")
+        seeds = self.runner.run_paper(
+            paper_dir, output_dir / "logs" / f"attempt-{version}-seeds", SEED_MODES, client
+        )
+        values = [
+            float(stage.metrics["value"])
+            for stage in seeds.stages
+            if stage.status == "success"
+            and stage.metrics
+            and isinstance(stage.metrics.get("value"), int | float)
+        ]
+        logger.info(f"  [critic] extra seed values: {values} (status {seeds.status})")
+        return values
+
+    @staticmethod
+    def _assumptions(paper_dir: Path) -> list[str]:
+        bookkeeping = paper_dir / "coder_output.json"
+        if not bookkeeping.exists():
+            return []
+        payload = json.loads(bookkeeping.read_text(encoding="utf-8"))
+        return [str(item) for item in payload.get("assumptions", [])]
 
     # -- transition bookkeeping --------------------------------------------- #
 
