@@ -43,9 +43,8 @@ Roughly in the order that unblocks the most.
       reproduced at **3.83%** vs the paper's 4.00% (200 epochs, 3.4 h, one seed). Compared by
       hand; no Critic yet.
 - [ ] **Regenerate the other papers' scripts** — the Coder prompt now converts epoch-based LR
-      milestones to optimizer steps; only WRN has been regenerated with it.
-- [ ] **Extend coverage** — 4 papers have Reader output, only 2 have been coded/run.
-      Costs API calls, not new code, and turns single demonstrations into distributions.
+      milestones to optimizer steps; only WRN has been regenerated with it. (The second paper
+      is being run in another session, so it is not tracked here.)
 - [ ] **Build the report generator** — the promised deliverable and the cheapest remaining
       piece: `orchestrator/state.py` already carries everything it needs, including
       `history`.
