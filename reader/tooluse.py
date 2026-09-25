@@ -37,6 +37,7 @@ misbehaved.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -55,6 +56,68 @@ def as_list(value: object) -> list[object]:
     the whole payload, not to a per-field coercion that cannot.
     """
     return value if isinstance(value, list) else []
+
+
+def recover_leaked_fields(
+    payload: dict[str, object], fields: Sequence[str], log_prefix: str
+) -> dict[str, object]:
+    """Split tool fields the model serialized INSIDE another string field back out.
+
+    The same shape `coder/script_writer.py` recovers for its own tool: a field ends
+    with its closing delimiter, and the missing fields follow it as text::
+
+        ...rather than falling short.</curve_assessment>
+        <parameter name="findings">[{"kind": "matches_paper", ...}]
+
+    Two real cases, both in this repo: the Coder's first two Wide Residual Networks
+    runs put `dataset_used` and `hyperparameters_used` inside `architecture_used`
+    (both leak spellings above are matched), and the Critic's first review
+    (2026-09-14) left `findings` absent with 9,000 characters of it at the end of
+    `curve_assessment`. Only keys absent or empty in the payload are filled, so a
+    properly emitted field is never overwritten by a leaked duplicate. Callers opt
+    in; nothing calls it implicitly.
+    """
+    names = "|".join(re.escape(name) for name in fields)
+    leaked = re.compile(r'<(?:parameter name=")?(' + names + r')"?>(.*?)(?:</\1>|\Z)', re.DOTALL)
+    recovered = dict(payload)
+    for key, value in payload.items():
+        if not isinstance(value, str):
+            continue
+        head, marker, tail = value.partition(f"</{key}>")
+        if not marker:
+            continue
+        recovered[key] = head.strip()
+        logger.warning(
+            f"  [{log_prefix}] field '{key}' contains a leaked '</{key}>' delimiter - "
+            f"splitting the tool fields serialized inside it back out"
+        )
+        found = 0
+        for match in leaked.finditer(tail):
+            name, raw = match.group(1), match.group(2).strip()
+            found += 1
+            if payload.get(name):
+                logger.warning(
+                    f"  [{log_prefix}] ignoring leaked duplicate of '{name}' - the model "
+                    f"also emitted it properly"
+                )
+                continue
+            if raw.startswith(("[", "{")):
+                try:
+                    recovered[name] = json.loads(raw)
+                except json.JSONDecodeError:
+                    recovered[name] = raw
+            else:
+                recovered[name] = raw
+            logger.warning(f"  [{log_prefix}] recovered leaked field '{name}'")
+        if not found:
+            # The delimiter leaked but nothing re-homeable followed it, so those fields
+            # were never emitted at all. Show the tail rather than failing blind: it is
+            # the only view of what actually came back.
+            logger.warning(
+                f"  [{log_prefix}] nothing recoverable after the leaked '</{key}>' "
+                f"({len(tail)} chars of tail): {tail[:500]!r}"
+            )
+    return recovered
 
 
 def as_int(value: object, log_prefix: str, field: str) -> int:
