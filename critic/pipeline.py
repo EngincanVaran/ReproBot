@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from critic.checks import run_checks
 from critic.claims import group_claims
 from critic.judge import Judgement, judge
 
@@ -78,6 +79,12 @@ def log_judgement(paper: str, judgement: Judgement) -> None:
         logger.info(f"  [critic] merged duplicate claims: {', '.join(judgement.merged_claim_ids)}")
     if judgement.recommendation != "none":
         logger.info(f"  [critic] recommendation: {judgement.recommendation}")
+
+
+def log_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for check in checks:
+        logger.warning(f"  [critic] CHECK {check['kind']}: {check['message']}")
+    return checks
 
 
 def run_review(
@@ -160,6 +167,12 @@ def main() -> None:
         default=Path("coder/output"),
         help="where <paper>/train.py, coder_output.json and the history files live",
     )
+    parser.add_argument(
+        "--runner-output",
+        type=Path,
+        default=Path("runner/output"),
+        help="where <paper>/logs/<mode>.stdout.log live (the review reads the run's log)",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--write", action="store_true", help="also store the verdict in the state's critic_output"
@@ -174,10 +187,11 @@ def main() -> None:
             state, judgement = judge_state_file(path)
             paper = str(state.get("paper_id") or path.parent.name)
             log_judgement(paper, judgement)
+            metrics = (state.get("runner_output") or {}).get("reproduced_metrics")
             payload = judgement.to_dict()
+            payload["checks"] = log_checks(run_checks(metrics))
             if args.review:
                 reader = state.get("reader_output") or {}
-                metrics = (state.get("runner_output") or {}).get("reproduced_metrics")
                 logs = (state.get("runner_output") or {}).get("logs_path")
                 payload["review"] = run_review(
                     judgement,
@@ -211,14 +225,20 @@ def main() -> None:
     paper = args.reader_json.stem
     log_judgement(paper, judgement)
     groups = [group.to_dict() for group in group_claims(claims)]
-    payload = {**judgement.to_dict(), "claim_groups": groups}
+    payload = {
+        **judgement.to_dict(),
+        "claim_groups": groups,
+        "checks": log_checks(run_checks(metrics)),
+    }
     if args.review:
+        # The training log lives with the Runner's output, not beside the metrics file.
+        runner_logs = args.runner_output / paper / "logs"
         payload["review"] = run_review(
             judgement,
             metrics,
             reader,
             args.metrics_json.parent,
-            args.metrics_json.parent,
+            runner_logs if runner_logs.is_dir() else args.metrics_json.parent,
             args.review_model,
         ).to_dict()
     logger.info(f"  -> {write_output(args.output, paper, payload)}")

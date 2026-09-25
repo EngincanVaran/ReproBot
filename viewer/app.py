@@ -62,6 +62,7 @@ from loguru import logger
 
 from coder.pipeline import MissingPaperMarkdownError, ScriptSyntaxError
 from coder.pipeline import run_pipeline as run_coder_pipeline
+from critic.checks import run_checks
 from critic.claims import group_claims
 from critic.history import write_history
 from critic.judge import judge
@@ -642,6 +643,7 @@ def run_critic_verdict(
     payload: dict[str, Any] = {
         **judgement.to_dict(),
         "claim_groups": [group.to_dict() for group in group_claims(claims)],
+        "checks": run_checks(runner_data.get("reproduced_metrics")),
     }
     existing = critic_json_path(paper)
     if existing.exists():
@@ -715,6 +717,7 @@ def run_critic_review(
         payload: dict[str, Any] = {
             **judgement.to_dict(),
             "claim_groups": [group.to_dict() for group in group_claims(claims)],
+            "checks": run_checks(metrics),
             "review": review.to_dict(),
         }
         write_critic_output(CRITIC_DIR, paper, payload)
@@ -842,6 +845,8 @@ def render_critic(
                 "This is a single run, so run-to-run spread was not measured. The tolerance "
                 "comes from test-set noise alone."
             )
+    for check in critic_data.get("checks", []):
+        st.warning(f"**Check `{check.get('kind')}`:** {check.get('message')}")
     if critic_data.get("recommendation") not in (None, "none"):
         st.markdown(f"**Recommendation:** `{critic_data['recommendation']}`")
     merged = critic_data.get("merged_claim_ids", [])
