@@ -73,12 +73,14 @@ from reader.pipeline import run_pipeline as run_reader_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = REPO_ROOT / "dataset"
+EXTRA_DIR = REPO_ROOT / "extra-papers"
 UPLOADS_DIR = REPO_ROOT / "viewer" / "uploads"
 OCR_DIR = REPO_ROOT / "ocr" / "output" / "vlm"
 READER_DIR = REPO_ROOT / "reader" / "output"
 CODER_DIR = REPO_ROOT / "coder" / "output"
 RUNNER_DIR = REPO_ROOT / "runner" / "output"
 CRITIC_DIR = REPO_ROOT / "critic" / "output"
+ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator" / "output"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
 
@@ -89,8 +91,9 @@ def list_papers() -> list[str]:
     app), so every paper any stage could act on shows up, even ones no stage
     has processed yet."""
     papers: list[str] = []
-    if DATASET_DIR.is_dir():
-        papers.extend(p.stem for p in DATASET_DIR.glob("*.pdf"))
+    for source in (DATASET_DIR, EXTRA_DIR):
+        if source.is_dir():
+            papers.extend(p.stem for p in source.glob("*.pdf") if p.stem not in papers)
     if UPLOADS_DIR.is_dir():
         papers.extend(p.stem for p in UPLOADS_DIR.glob("*.pdf") if p.stem not in papers)
     return sorted(papers)
@@ -131,6 +134,14 @@ def runner_json_path(paper: str) -> Path:
     return RUNNER_DIR / paper / "runner_output.json"
 
 
+def orchestrator_state_path(paper: str) -> Path:
+    """`orchestrator.pipeline` keeps a paper's whole run in one `state.json`: its Runner
+    result under `runner_output` and its Critic result under `critic_output`. The Runner
+    and Critic CLIs write their own files instead, so the viewer reads those first and
+    falls back to this."""
+    return ORCHESTRATOR_DIR / paper / "state.json"
+
+
 def critic_json_path(paper: str) -> Path:
     """`critic.pipeline` writes `critic/output/<paper>.json`: the verdict, the claim
     groups, and - only when it was run with `--review` - the model review."""
@@ -145,6 +156,40 @@ def load_json_output(path_str: str, mtime: float) -> dict[str, Any]:
     path = Path(path_str)
     logger.info("Loading JSON output: {}", path)
     return cast("dict[str, Any]", json.loads(path.read_text()))
+
+
+def load_run_outputs(paper: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """A paper's Runner and Critic results, from whichever pipeline produced them.
+
+    `runner.pipeline` and `critic.pipeline` write their own files. `orchestrator.pipeline`
+    keeps both inside `state.json`, where `runner_output` is only a summary (no image,
+    stages or metrics mode), so those come from the last attempt. Own files win."""
+    runner_path, critic_path = runner_json_path(paper), critic_json_path(paper)
+    runner = (
+        load_json_output(str(runner_path), runner_path.stat().st_mtime)
+        if runner_path.exists()
+        else None
+    )
+    critic = (
+        load_json_output(str(critic_path), critic_path.stat().st_mtime)
+        if critic_path.exists()
+        else None
+    )
+    state_path = orchestrator_state_path(paper)
+    if state_path.exists():
+        state = load_json_output(str(state_path), state_path.stat().st_mtime)
+        if runner is None and state.get("runner_output"):
+            attempt = (state.get("attempts") or [{}])[-1]
+            runner = {
+                **state["runner_output"],
+                "stage_reached": attempt.get("stage_reached"),
+                "metrics_mode": attempt.get("stage_reached"),
+                "wall_clock_seconds": attempt.get("wall_clock_seconds", 0),
+                "failed_stage": attempt.get("failed_stage"),
+                "exit_code": attempt.get("exit_code"),
+            }
+        critic = critic or state.get("critic_output")
+    return runner, critic
 
 
 @st.cache_data
@@ -279,17 +324,9 @@ def render_pipeline_status(papers: list[str]) -> None:
         if has_reader:
             data = load_json_output(str(reader_path), reader_path.stat().st_mtime)
             flags = len(data.get("validation", {}).get("flags", []))
-        runner_path = runner_json_path(paper)
-        runner_status = "-"
-        if runner_path.exists():
-            runner_data = load_json_output(str(runner_path), runner_path.stat().st_mtime)
-            runner_status = runner_data.get("status", "unknown")
-        critic_path = critic_json_path(paper)
-        critic_verdict = "-"
-        if critic_path.exists():
-            critic_verdict = load_json_output(str(critic_path), critic_path.stat().st_mtime).get(
-                "verdict", "unknown"
-            )
+        runner_data, critic_data = load_run_outputs(paper)
+        runner_status = runner_data.get("status", "unknown") if runner_data else "-"
+        critic_verdict = critic_data.get("verdict", "unknown") if critic_data else "-"
         rows.append(
             {
                 "Paper": paper,
@@ -510,10 +547,12 @@ def find_claim(reader_data: dict[str, Any] | None, claim_id: str | None) -> dict
 def render_runner_context(runner_data: dict[str, Any], reader_data: dict[str, Any] | None) -> None:
     """Hardware, and reproduced-vs-reported. Informational only: no Critic exists yet,
     so this shows the difference and deliberately gives no pass/fail verdict."""
-    image = str(runner_data.get("image", ""))
-    st.markdown(
-        f"**Hardware:** {'GPU (CUDA image)' if image.endswith(':cuda') else 'CPU'} - `{image}`"
-    )
+    image = str(runner_data.get("image") or "")
+    if not image:
+        st.markdown("**Hardware:** not recorded")
+    else:
+        kind = "GPU (CUDA image)" if image.endswith(":cuda") else "CPU"
+        st.markdown(f"**Hardware:** {kind} - `{image}`")
 
     metrics = runner_data.get("reproduced_metrics")
     if not metrics:
@@ -880,7 +919,6 @@ def render_paper(paper: str) -> None:
     reader_path = reader_json_path(paper)
     ocr_path = ocr_markdown_path(paper)
     coder_path = coder_json_path(paper)
-    runner_path = runner_json_path(paper)
 
     if not reader_path.exists() and not ocr_path.exists():
         st.warning(f"No pipeline output yet for '{paper}'.")
@@ -899,18 +937,7 @@ def render_paper(paper: str) -> None:
         coder_data = load_json_output(str(coder_failed_path), coder_failed_path.stat().st_mtime)
     else:
         coder_data = None
-    runner_data = (
-        load_json_output(str(runner_path), runner_path.stat().st_mtime)
-        if runner_path.exists()
-        else None
-    )
-
-    critic_path = critic_json_path(paper)
-    critic_data = (
-        load_json_output(str(critic_path), critic_path.stat().st_mtime)
-        if critic_path.exists()
-        else None
-    )
+    runner_data, critic_data = load_run_outputs(paper)
 
     tab_names = ["Overview"]
     if data is not None:
