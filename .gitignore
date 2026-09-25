@@ -249,3 +249,6 @@ critic/output/
 # macOS Finder metadata and the ruff cache
 .DS_Store
 .ruff_cache/
+
+# ReproBot: generated replication reports
+report/output*/
