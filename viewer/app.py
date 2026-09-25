@@ -28,8 +28,9 @@ timeouts) and needs a reachable Docker daemon, so it stays a CLI-only action
 
 `critic/` is the opposite case: its verdict is arithmetic (no API key, no Docker), so the
 Runner tab has a "Judge this run with the Critic" button that calls `critic.judge.judge()`
-directly. The model review costs an API call, so it stays CLI-only
-(`critic.pipeline --review`); the Critic tab displays it when present and never deletes it.
+directly. The model review (one paid Claude Opus call) has its own button on the Critic tab,
+which calls `critic.pipeline.run_review()`; re-judging keeps a stored review, and only the
+review button replaces it.
 
 Uploaded PDFs are saved to `viewer/uploads/`, not `dataset/` - `dataset/` is
 curated by someone else in parallel (see CLAUDE.md), so this app never
@@ -62,7 +63,9 @@ from loguru import logger
 from coder.pipeline import MissingPaperMarkdownError, ScriptSyntaxError
 from coder.pipeline import run_pipeline as run_coder_pipeline
 from critic.claims import group_claims
+from critic.history import write_history
 from critic.judge import judge
+from critic.pipeline import run_review
 from critic.pipeline import write_output as write_critic_output
 from ocr.vlm_extract import run_vlm
 from reader.pipeline import run_pipeline as run_reader_pipeline
@@ -662,6 +665,98 @@ def render_critic_button(
         run_critic_verdict(paper, reader_data, runner_data)
 
 
+def run_critic_review(
+    paper: str,
+    reader_data: dict[str, Any],
+    runner_data: dict[str, Any],
+    *,
+    chance: float | None,
+) -> None:
+    """Judge the run, then have the Critic's model review read the script against the paper.
+
+    Same steps as running it by hand: rebuild the learning-curve history from the run's log
+    if it is missing, judge, call `critic.pipeline.run_review()` unmodified with the RUNNER's
+    log directory (the CLI would point it at the paper folder, where there is no log), and
+    write the result. One paid Claude Opus call."""
+    load_dotenv(REPO_ROOT / ".env")
+    paper_dir = CODER_DIR / paper
+    metrics = runner_data.get("reproduced_metrics")
+    logs_path = runner_data.get("logs_path")
+    logs_dir = (REPO_ROOT / logs_path) if logs_path else None
+    claims = reader_claims(reader_data)
+
+    with st.status("Running the Critic model review...", expanded=True) as status:
+        try:
+            history = paper_dir / "metrics.full.history.jsonl"
+            if history.exists():
+                status.write(f"Learning-curve history already present ({history.name}).")
+            else:
+                status.write("Building the learning-curve history from the run's log...")
+                write_history(
+                    paper,
+                    chance=chance,
+                    coder_output=CODER_DIR,
+                    runner_output=RUNNER_DIR,
+                    reader_output=READER_DIR,
+                )
+            status.write("Judging the run...")
+            judgement = judge(
+                claims,
+                metrics,
+                runner_status=str(runner_data.get("status") or "missing"),
+                metrics_mode=runner_data.get("metrics_mode"),
+            )
+            status.write("Calling the model review (one Claude Opus call, usually 1-3 minutes)...")
+            review = run_review(judgement, metrics, reader_data, paper_dir, logs_dir)
+        except Exception as exc:  # noqa: BLE001 - surface any review error in the UI
+            status.update(label=f"Critic review failed: {exc}", state="error")
+            logger.error("Critic review failed for {}: {}", paper, exc)
+            return
+        payload: dict[str, Any] = {
+            **judgement.to_dict(),
+            "claim_groups": [group.to_dict() for group in group_claims(claims)],
+            "review": review.to_dict(),
+        }
+        write_critic_output(CRITIC_DIR, paper, payload)
+        status.update(
+            label=f"Review done - {review.method_fidelity}, {len(review.findings)} finding(s)",
+            state="complete",
+        )
+    logger.info("Critic review finished for {}: {}", paper, review.method_fidelity)
+    st.rerun()
+
+
+def render_critic_review_button(
+    paper: str,
+    reader_data: dict[str, Any],
+    runner_data: dict[str, Any],
+    *,
+    has_review: bool,
+) -> None:
+    """Only a full run is worth reviewing: the Critic itself refuses to judge a gate stage."""
+    if runner_data.get("metrics_mode") != "full":
+        return
+    chance = st.number_input(
+        "Chance level of the metric (optional)",
+        min_value=0.0,
+        value=None,
+        placeholder="e.g. 90 for 10-class error",
+        help="Lets the review judge how far above chance the learning curve starts.",
+        key="critic_chance",
+    )
+    label = (
+        "Re-run the model review (replaces the current one)"
+        if has_review
+        else ("Run the model review")
+    )
+    if st.button(
+        label,
+        key="critic_review",
+        help="One paid Claude Opus call, usually 1-3 minutes. Needs ANTHROPIC_API_KEY and credit.",
+    ):
+        run_critic_review(paper, reader_data, runner_data, chance=chance)
+
+
 _VERDICT_BANNERS = {"pass": st.success, "fail": st.error, "inconclusive": st.warning}
 
 
@@ -761,6 +856,9 @@ def render_critic(
             key="critic_rerun",
             label="Re-run the Critic verdict",
         )
+        render_critic_review_button(
+            paper, reader_data, runner_data, has_review=bool(critic_data.get("review"))
+        )
 
     groups = critic_data.get("claim_groups", [])
     if groups:
@@ -770,10 +868,7 @@ def render_critic(
     if critic_data.get("review"):
         render_critic_review(critic_data["review"])
     else:
-        st.caption(
-            "No model review yet. It costs one API call, so it is CLI-only: "
-            "`uv run python -m critic.pipeline --reader-json ... --metrics-json ... --review`."
-        )
+        st.caption("No model review yet - use the button above (one paid Claude Opus call).")
 
 
 def render_paper(paper: str) -> None:
