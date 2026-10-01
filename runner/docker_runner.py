@@ -46,8 +46,10 @@ one fires - a non-finite loss, a loss below its own lower bound, a model worse
 than chance, no progress, stuck at chance, a collapse after learning - the
 container is killed by name, exactly as on a timeout, and the stage ends with
 status `halted` plus the evidence. The rules run once more after the process
-exits, because a short stage can finish between two polls. A script that writes
-no history keeps the old exit-code-only behaviour, with a warning.
+exits, because a short stage can finish between two polls. A `full` run whose
+records stop arriving for far longer than they ever took is halted the same way
+(`check_hang`). A script that writes no history keeps the old exit-code-only
+behaviour, with a warning.
 
 Usage:
     from runner.docker_runner import DockerRunner
@@ -74,7 +76,15 @@ from typing import Any, Final, Literal
 from anthropic import Anthropic
 from loguru import logger
 
-from runner.checkups import HISTORY_SUFFIX, Halt, HistoryTail, ProgressRecord, evaluate
+from runner.checkups import (
+    HISTORY_SUFFIX,
+    ArrivalClock,
+    Halt,
+    HistoryTail,
+    ProgressRecord,
+    check_hang,
+    evaluate,
+)
 from runner.triage import TriageResult, triage_failure
 
 RUNNER_DIR: Final[Path] = Path(__file__).resolve().parent
@@ -771,13 +781,18 @@ class DockerRunner:
                 ):
                     logger.info(f"  [{mode}] progress: {record.describe()}")
 
+        clock = ArrivalClock(time.monotonic())
+
         def watch() -> None:
             while not stop_watching.wait(self.checkup_interval):
                 new = tail.read_new()
-                if not new:
-                    continue
-                absorb(new)
-                halt = evaluate(records, mode)
+                now = time.monotonic()
+                if new:
+                    clock.note(now)
+                    absorb(new)
+                    halt = evaluate(records, mode)
+                else:
+                    halt = check_hang(records, mode, clock, now)
                 if halt is not None:
                     halts.append(halt)
                     logger.error(

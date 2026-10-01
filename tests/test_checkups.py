@@ -11,10 +11,15 @@ from pathlib import Path
 import pytest
 
 from runner.checkups import (
+    HANG_FLOOR_SECONDS,
+    HANG_GAP_MULTIPLIER,
     PROGRESS_MARKER,
+    ArrivalClock,
     HistoryTail,
     ProgressRecord,
+    check_hang,
     evaluate,
+    hang_limit,
     history_path_from_metrics,
     parse_record,
 )
@@ -356,6 +361,134 @@ def test_svm_single_fit_never_halts() -> None:
         target=96.9,
     )
     assert first_halt([record]) is None
+
+
+# --------------------------------------------------------------------------- #
+# Hang - records stop arriving. Timings below are measured, not invented.
+# --------------------------------------------------------------------------- #
+
+# Seconds between consecutive records of the SVM guide's real `full` run (192
+# records: two cross-validation grids, then the final fit), from the history
+# file's `elapsed_seconds`. The script restarted that clock for the second grid,
+# which is why the rule runs on the watcher's clock instead.
+SVM_FULL_GAPS = [
+    *(0.44, 0.43, 0.44, 0.47, 0.44, 0.44, 0.38, 0.29, 0.25, 0.28, 0.42, 0.44, 0.44, 0.44, 0.45),
+    *(0.4, 0.29, 0.21, 0.16, 0.19, 0.5, 0.43, 0.44, 0.44, 0.41, 0.29, 0.2, 0.15, 0.12, 0.15, 0.44),
+    *(0.49, 0.43, 0.38, 0.29, 0.21, 0.14, 0.11, 0.11, 0.13, 0.43, 0.46, 0.39, 0.29, 0.2, 0.19),
+    *(0.11, 0.11, 0.13, 0.16, 0.45, 0.61, 0.34, 0.21, 0.15, 0.13, 0.12, 0.12, 0.12, 0.14, 0.39),
+    *(0.29, 0.2, 0.21, 0.13, 0.13, 0.12, 0.12, 0.15, 0.19, 0.29, 0.2, 0.16, 0.13, 0.15, 0.13, 0.14),
+    *(0.17, 0.27, 0.32, 0.21, 0.15, 0.13, 0.14, 0.13, 0.2, 0.2, 0.38, 0.63, 0.61, 0.15, 0.14, 0.14),
+    *(0.14, 0.16, 0.24, 0.42, 1.03, 1.7, 1.18, 0.14, 0.14, 0.15, 0.17, 0.32, 0.53, 1.06, 3.38),
+    *(5.33, 2.08, 0.1, 0.11, 0.12, 0.13, 0.13, 0.14, 0.17, 0.16, 0.17, 0.11, 0.12, 0.12, 0.12),
+    *(0.13, 0.14, 0.14, 0.15, 0.17, 0.11, 0.12, 0.12, 0.13, 0.13, 0.13, 0.15, 0.19, 0.16, 0.12),
+    *(0.11, 0.13, 0.12, 0.13, 0.14, 0.15, 0.15, 0.16, 0.12, 0.11, 0.13, 0.13, 0.14, 0.13, 0.15),
+    *(0.16, 0.17, 0.11, 0.12, 0.13, 0.13, 0.13, 0.13, 0.15, 0.16, 0.21, 0.12, 0.12, 0.13, 0.13),
+    *(0.13, 0.14, 0.14, 0.16, 0.18, 0.11, 0.12, 0.12, 0.13, 0.14, 0.14, 0.15, 0.16, 0.17, 0.12),
+    *(0.12, 0.12, 0.14, 0.13, 0.14, 0.16, 0.16, 0.17, 0.1),
+]
+
+# WRN-28-10's real `full` run: 200 epochs in 3.4 h on an RTX 4090. Its history has
+# no `elapsed_seconds`, so this is the run's mean epoch, not a per-epoch reading.
+WRN_GPU_EPOCH_SECONDS = 3.4 * 3600 / 200
+# The same network measured on the dev machine's CPU: ~22 days for 200 epochs.
+WRN_CPU_EPOCH_SECONDS = 22 * 86400 / 200
+
+
+def epoch_run(
+    epochs_done: int, total: int, seconds_per_epoch: float
+) -> tuple[list[ProgressRecord], ArrivalClock, float]:
+    """A healthy run that has reported `epochs_done` epochs; returns (records, clock, now)."""
+    clock = ArrivalClock(0.0)
+    records = []
+    now = 0.0
+    for epoch in range(1, epochs_done + 1):
+        now += seconds_per_epoch
+        clock.note(now)
+        records.append(rec(epoch, total, loss=1.0 / epoch, eval_metric=40.0 / epoch, chance=90.0))
+    return records, clock, now
+
+
+def test_svm_real_cadence_never_hangs() -> None:
+    assert len(SVM_FULL_GAPS) == 192
+    clock = ArrivalClock(0.0)
+    records: list[ProgressRecord] = []
+    now = 0.0
+    for i, gap in enumerate(SVM_FULL_GAPS):
+        # Asked just before each record lands: the longest silence that record allowed.
+        assert check_hang(records, "full", clock, now + gap) is None
+        now += gap
+        clock.note(now)
+        records.append(
+            rec(i + 1, 191, kind="fold", eval_metric=96.0, higher_is_better=True, chance=50.0)
+        )
+    assert clock.arrivals == 192
+    assert clock.longest_gap == pytest.approx(5.33)
+
+
+def test_svm_real_cadence_is_why_the_limit_uses_the_longest_gap_and_a_floor() -> None:
+    """The slowest real fold took 35x the median one, so a limit built on the typical
+    gap would have killed this run. Built on the longest gap alone it would have been
+    a few seconds wide; at that scale the floor is what governs."""
+    ordered = sorted(SVM_FULL_GAPS)
+    median = ordered[len(ordered) // 2]
+    assert max(SVM_FULL_GAPS) > HANG_GAP_MULTIPLIER * median
+    assert HANG_GAP_MULTIPLIER * max(SVM_FULL_GAPS) < HANG_FLOOR_SECONDS
+    assert hang_limit(max(SVM_FULL_GAPS)) == HANG_FLOOR_SECONDS
+
+
+def test_wrn_gpu_run_hangs_only_past_the_floor() -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert HANG_GAP_MULTIPLIER * WRN_GPU_EPOCH_SECONDS < HANG_FLOOR_SECONDS
+    assert check_hang(records, "full", clock, now + HANG_FLOOR_SECONDS) is None
+    halt = check_hang(records, "full", clock, now + HANG_FLOOR_SECONDS + 1)
+    assert halt is not None
+    assert (halt.rule, halt.step, halt.kind) == ("hang", 50, "epoch")
+    assert "1801 s" in halt.message and "hang" in halt.feedback()
+
+
+def test_wrn_cpu_slow_epochs_raise_the_limit_above_the_floor() -> None:
+    records, clock, now = epoch_run(3, 200, WRN_CPU_EPOCH_SECONDS)
+    limit = hang_limit(clock.longest_gap)
+    assert limit == pytest.approx(HANG_GAP_MULTIPLIER * WRN_CPU_EPOCH_SECONDS)
+    assert limit > 86400  # past the full stage's own timeout: such a run is never hang-halted
+    assert check_hang(records, "full", clock, now + 3 * WRN_CPU_EPOCH_SECONDS) is None
+
+
+def test_slow_start_counts_as_a_gap() -> None:
+    # The measured cold CIFAR-10 download: 1707 s before the script did anything.
+    clock = ArrivalClock(0.0)
+    clock.note(1707.0 + WRN_GPU_EPOCH_SECONDS)
+    clock.note(1707.0 + 2 * WRN_GPU_EPOCH_SECONDS)
+    assert hang_limit(clock.longest_gap) == pytest.approx(10 * (1707.0 + WRN_GPU_EPOCH_SECONDS))
+
+
+@pytest.mark.parametrize("mode", ["probe", "smoke", "capped"])
+def test_hang_is_left_to_the_timeout_in_cheap_stages(mode: str) -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, mode, clock, now + 10 * HANG_FLOOR_SECONDS) is None
+
+
+@pytest.mark.parametrize("mode", ["seed2", "seed3"])
+def test_hang_applies_to_extra_seed_runs(mode: str) -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, mode, clock, now + HANG_FLOOR_SECONDS + 1) is not None
+
+
+def test_hang_needs_two_arrivals() -> None:
+    records, clock, now = epoch_run(1, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, "full", clock, now + 10 * HANG_FLOOR_SECONDS) is None
+    assert check_hang([], "full", ArrivalClock(0.0), 10 * HANG_FLOOR_SECONDS) is None
+
+
+def test_silence_after_the_final_step_is_left_to_the_timeout() -> None:
+    records, clock, now = epoch_run(200, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, "full", clock, now + 10 * HANG_FLOOR_SECONDS) is None
+
+
+def test_hang_is_never_judged_after_exit() -> None:
+    """`evaluate` is what runs after the process exits, and it has no clock."""
+    records, _, _ = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert evaluate(records, "full") is None
 
 
 # --------------------------------------------------------------------------- #

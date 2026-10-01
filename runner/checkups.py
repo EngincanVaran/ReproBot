@@ -28,6 +28,10 @@ have reproduced a paper, which is worse than a late one, so:
   script computes from its own data;
 * no rule treats a late plateau as a problem - a run that is clearly better
   than chance and has stopped improving is simply converged.
+
+One check is not about the curve at all: `check_hang` fires when the records
+stop arriving. It is judged on the watcher's own clock, not on the script's
+`elapsed_seconds`, which real scripts leave out or restart between phases.
 """
 
 from __future__ import annotations
@@ -61,6 +65,14 @@ DIVERGE_LOSS_FACTOR: Final[float] = 1.5
 DIVERGE_ADVANTAGE_KEPT: Final[float] = 0.5
 # Slack before a loss counts as below its declared lower bound.
 LOWER_BOUND_TOLERANCE: Final[float] = 1e-3
+# Hung = no new record for this many times the longest wait seen so far, and never
+# less than the floor. The floor carries the rule for fast runs, whose cadence is
+# too uneven to multiply (an SVM grid search: median 0.15 s between folds, 5.33 s
+# for the slowest); the multiplier carries it for slow ones.
+HANG_GAP_MULTIPLIER: Final[float] = 10.0
+HANG_FLOOR_SECONDS: Final[float] = 1800.0
+# ...and only once the watcher has seen records arrive this many separate times.
+HANG_MIN_ARRIVALS: Final[int] = 2
 
 type RuleName = Literal[
     "non_finite",
@@ -69,6 +81,7 @@ type RuleName = Literal[
     "no_progress",
     "stuck_at_chance",
     "diverged",
+    "hang",
 ]
 
 ALL_RULES: Final[tuple[RuleName, ...]] = (
@@ -94,6 +107,10 @@ STAGE_RULES: Final[dict[str, tuple[RuleName, ...]]] = {
     "seed2": ALL_RULES,
     "seed3": ALL_RULES,
 }
+
+# Stages `check_hang` may halt. The cheaper stages' timeouts are no longer than the
+# hang floor, so there the timeout already does this job.
+HANG_STAGES: Final[tuple[str, ...]] = ("full", "seed2", "seed3")
 
 
 # --------------------------------------------------------------------------- #
@@ -577,3 +594,68 @@ def evaluate(records: list[ProgressRecord], mode: str) -> Halt | None:
         if halt is not None:
             return halt
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Hang
+# --------------------------------------------------------------------------- #
+
+
+class ArrivalClock:
+    """When the watcher saw records arrive, on the watcher's own clock.
+
+    The wait before the first record counts as a gap too: it holds the dataset
+    download and model setup, and counting it only ever raises the limit.
+    """
+
+    def __init__(self, started: float) -> None:
+        self._last = started
+        self.arrivals = 0
+        self.longest_gap = 0.0
+
+    def note(self, now: float) -> None:
+        """New records were read at `now` (one call per poll that found any)."""
+        self.longest_gap = max(self.longest_gap, now - self._last)
+        self._last = now
+        self.arrivals += 1
+
+    def silence(self, now: float) -> float:
+        return now - self._last
+
+
+def hang_limit(longest_gap: float) -> float:
+    """Seconds of silence after which a run counts as hung."""
+    return max(HANG_FLOOR_SECONDS, HANG_GAP_MULTIPLIER * longest_gap)
+
+
+def check_hang(
+    records: list[ProgressRecord], mode: str, clock: ArrivalClock, now: float
+) -> Halt | None:
+    """The script was reporting, then went silent for far longer than it ever had.
+
+    Not in `RULES`: it needs the time, so only the live watcher can ask it, and
+    it is never judged after exit. A run whose last record is its final step is
+    left to the stage timeout - what follows the last step (a final evaluation,
+    a refit on all the data) has no cadence to compare against.
+    """
+    if mode not in HANG_STAGES or not records or clock.arrivals < HANG_MIN_ARRIVALS:
+        return None
+    last = records[-1]
+    if last.steps_total is not None and last.step >= last.steps_total:
+        return None
+    silence = clock.silence(now)
+    limit = hang_limit(clock.longest_gap)
+    if silence <= limit:
+        return None
+    return Halt(
+        "hang",
+        mode,
+        last.step,
+        last.kind,
+        f"no progress record arrived for {silence:.0f} s after {last.kind} {last.step}; the "
+        f"longest wait before that was {_fmt(clock.longest_gap)} s, which sets a limit of "
+        f"{_fmt(limit)} s ({last.describe()}).",
+        "The script stopped reporting without exiting: look for a loop that cannot "
+        "terminate, data-loader worker processes that have deadlocked, or one step that "
+        "does far more work than the steps before it.",
+    )
