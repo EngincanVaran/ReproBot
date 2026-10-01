@@ -112,7 +112,26 @@ showed why it cannot be: a correctly generated soft tree, whose leaves start uni
 held its loss at ln 10 = 2.303 for all five capped epochs while accuracy was already
 30% — three times chance.
 
-**Verified** (`tests/test_checkups.py`, 22 replays of real curves; plus Docker):
+**The hang check** (`check_hang`) is the one check that is not about the curve: it
+fires when the records stop arriving. It halts a `full`/`seed2`/`seed3` stage when no
+new record has arrived for longer than `max(1800 s, 10 x the longest wait so far)`,
+and only after records have arrived at least twice. Three choices keep it
+conservative:
+
+- **The watcher's clock, not the script's.** `elapsed_seconds` is unusable: WRN's
+  history omits it, and the SVM guide's script restarted it for its second grid.
+- **The longest wait, not the typical one, plus a floor.** In the SVM guide's real
+  `full` run the slowest fold took 5.33 s against a median of 0.15 s - 35x. The wait
+  before the first record (dataset download, model setup) counts as a wait too.
+- **Silence after the final step is left to the stage timeout.** A final evaluation
+  or a refit on all the data has no cadence to compare against.
+
+It needs the time, so only the live watcher asks it; it is never judged after exit.
+The cheaper stages do not get it because their timeouts are no longer than its floor.
+A WRN-28-10 epoch on the dev machine's CPU (~2.6 h) puts the limit past the 24 h
+stage timeout, so a run that slow is never hang-halted.
+
+**Verified** (`tests/test_checkups.py`, replays of real curves and timings; plus Docker):
 
 | Curve | Result |
 |---|---|
@@ -121,6 +140,9 @@ held its loss at ln 10 = 2.303 for all five capped epochs while accuracy was alr
 | Tang ablation, 4 stable configs; Tang C=0.1; Wijaya; soft tree (fixed, 40 epochs); random forest; SVM | never halted |
 | Soft tree, sign-flipped loss, **live `full` run in Docker** | halted at epoch 1 of 40, container killed 0.3 s after the record — ~70 min saved |
 | Same fault through the Orchestrator | halted in `probe` after 5 s → evidence fed to the Coder → regenerated script passed to `capped`, `success` |
+| SVM guide's real `full` cadence (192 records) through `check_hang` | never halted |
+| WRN-28-10 at its real GPU pace (61 s/epoch), then silence | halted 1801 s after the last record, `hang` |
+| Stand-in process (no Docker) that writes 4 records and then sleeps, through `run_stage`'s real watcher, floor lowered to 3 s | `full`: halted, `hang`, process killed; `capped`: left to the timeout; a process that exits normally: `success` |
 
 ## Class architecture
 

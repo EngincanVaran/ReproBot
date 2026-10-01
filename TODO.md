@@ -4,7 +4,7 @@ Living tracker. Updated by hand as things land; the narrative history with full 
 lives in [`docs/agent-log.md`](docs/agent-log.md), and each stage's own README holds the
 deep version of its known issues.
 
-**Last updated:** 2026-09-25 · branch `mert/critic-wired` = `main` (2026-09-14) + Mert's GPU, viewer and Critic-UI work · **4th progress-report period**
+**Last updated:** 2026-10-01 · branch `mert/critic-wired` = `main` (2026-09-14) + Mert's GPU, viewer and Critic-UI work · **4th progress-report period**
 
 ---
 
@@ -97,9 +97,14 @@ by-hand judgements.
 - [x] **Ladder for models without epochs** — `model_family` → classical `capped` uses 5,000/2,000
       rows (RF capped 0.8435 vs smoke 0.776, previously identical).
 - [x] Coder: capped subsets seeded random + stratified (svmguide1 first-N-rows single-class crash).
+- [x] **Hang check** (2026-10-01) — `check_hang` halts a `full`/`seed2`/`seed3` stage whose records
+      stop arriving for longer than max(1800 s, 10 x the longest wait so far), on the watcher's
+      clock. 13 tests from real timings (SVM guide cadence, WRN GPU and CPU pace); the watcher
+      thread exercised with a stand-in process. **Not yet seen firing in Docker** (daemon was down).
 - [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history;
-      consider a "no record for too long" hang rule; keep calibrating thresholds from every halt's
-      logged evidence (one false positive already found and fixed end to end).
+      run one deliberately hung script in Docker to see `hang` kill a real container; keep
+      calibrating thresholds from every halt's logged evidence (one false positive already found
+      and fixed end to end).
 
 ### 2. The Critic agent (`critic/`) — v1 ✅, v2 ✅ 2026-09-14
 
