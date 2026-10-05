@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: Archivo; src: url(assets/fonts/archivo.woff2); font-weight: 100 900; font-stretch: 62% 125%; }
+      @font-face { font-family: "DM Mono"; src: url(assets/fonts/dmmono400.woff2); font-weight: 400; }
+      @font-face { font-family: "DM Mono"; src: url(assets/fonts/dmmono500.woff2); font-weight: 500; }
+      :root { --bg: #121211; --panel: #1a1a18; --line: #33332e; --ink: #f2f1ec; --mute: #8f8d86; --soft: #b4b2ab; --ok: #4fc79b; --bad: #ff5a6e; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #121211; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: Archivo, sans-serif; }
+      #grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(242, 241, 236, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(242, 241, 236, 0.035) 1px, transparent 1px); background-size: 120px 120px; }
+      #glow { position: absolute; width: 1400px; height: 1400px; left: 200px; top: -190px; border-radius: 50%; background: radial-gradient(closest-side, rgba(79, 199, 155, 0.1), transparent); }
+      .scene { position: absolute; inset: 0; }
+      .abs { position: absolute; }
+      .mono { font-family: "DM Mono", monospace; }
+      .label { font-family: "DM Mono", monospace; font-size: 26px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mute); }
+      .h { font-weight: 800; font-stretch: 112%; letter-spacing: -0.01em; }
+      .wide { font-weight: 900; font-stretch: 125%; letter-spacing: -0.02em; }
+      .ok { color: var(--ok); }
+      .bad { color: var(--bad); }
+      .badge { display: inline-block; font-family: "DM Mono", monospace; font-weight: 500; font-size: 28px; letter-spacing: 0.1em; padding: 8px 20px; border-radius: 8px; background: #17201c; }
+      .badge.ok { border: 2px solid var(--ok); }
+      .badge.bad { border: 2px solid var(--bad); background: #241a1b; }
+      .card { position: absolute; background: var(--panel); border: 1.5px solid var(--line); border-radius: 20px; }
+      .center { left: 0; width: 1920px; text-align: center; }
+
+      #paper { left: 170px; top: 150px; width: 800px; height: 780px; background: #f4f3ef; color: #1a1a18; border-radius: 6px; padding: 64px 70px; font-family: Georgia, "Times New Roman", serif; box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6); rotate: -2.2deg; }
+      #paper .ax { font-family: "DM Mono", monospace; font-size: 18px; color: #5a5955; }
+      #paper h1 { font-size: 52px; font-weight: 700; margin: 22px 0 12px; text-align: center; }
+      #paper .au { font-size: 24px; text-align: center; color: #4a4a48; }
+      .bar { height: 10px; background: #d3d1ca; border-radius: 5px; margin: 14px 0; }
+      #tblwrap { position: relative; margin-top: 34px; }
+      #paper table { position: relative; width: 100%; border-collapse: collapse; font-size: 30px; }
+      #paper th { font-weight: 400; font-style: italic; text-align: left; border-top: 2px solid #1a1a18; border-bottom: 1.5px solid #1a1a18; padding: 10px 12px; font-size: 24px; }
+      #paper td { padding: 11px 12px; }
+      #paper td:last-child, #paper th:last-child { text-align: right; }
+      #paper tr:last-child td { border-bottom: 2px solid #1a1a18; font-weight: 700; }
+      #mark { position: absolute; left: 0; bottom: 2px; width: 660px; height: 56px; background: #f7bcc2; transform-origin: left center; border-radius: 4px; }
+
+      .chip { position: absolute; top: 560px; width: 190px; height: 74px; border: 2px solid var(--line); border-radius: 14px; font-family: "DM Mono", monospace; font-size: 28px; display: flex; align-items: center; justify-content: center; color: var(--mute); background: #121211; }
+      .arrow { position: absolute; top: 596px; height: 2px; width: 50px; background: var(--line); }
+      .arrow i { position: absolute; inset: 0; background: var(--ok); transform-origin: left center; }
+      .tag { position: absolute; top: 760px; font-size: 58px; font-weight: 600; white-space: nowrap; }
+
+      #term { left: 120px; top: 300px; width: 560px; height: 640px; padding: 36px 40px; font-family: "DM Mono", monospace; font-size: 27px; line-height: 1.9; color: var(--soft); }
+      #term .dots { display: flex; gap: 10px; margin-bottom: 26px; }
+      #term .dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--line); }
+      #cur { background: var(--ink); display: inline-block; width: 15px; height: 30px; vertical-align: -5px; margin-left: 3px; }
+      #chart { left: 720px; top: 300px; width: 1080px; height: 640px; }
+      #stamp { position: absolute; left: 570px; top: 150px; border: 7px solid var(--ok); border-radius: 18px; padding: 0 44px 22px; color: var(--ok); text-align: center; background: #151615; }
+
+      .row { position: absolute; left: 120px; width: 1680px; height: 104px; border-bottom: 1.5px solid var(--line); }
+      .row > div { position: absolute; top: 0; height: 104px; display: flex; flex-direction: column; justify-content: center; }
+      .row .p { left: 0; font-size: 36px; font-weight: 700; }
+      .row .p small { font-family: "DM Mono", monospace; font-weight: 400; font-size: 21px; color: var(--mute); margin-top: 4px; }
+      .row .m { left: 560px; font-size: 32px; color: var(--soft); }
+      .row .a { left: 1010px; font-family: "DM Mono", monospace; font-size: 38px; color: var(--soft); }
+      .row .b { left: 1270px; font-family: "DM Mono", monospace; font-size: 38px; font-weight: 500; }
+      .row .c { left: 1540px; }
+      .row.hdr { top: 215px; height: 60px; }
+      .row.hdr > div { height: 60px; font-family: "DM Mono", monospace; font-size: 22px; letter-spacing: 0.12em; color: var(--mute); font-weight: 400; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="22" data-width="1920" data-height="1080">
+      <div id="grid"></div>
+      <div id="glow"></div>
+
+      <!-- 1 HOOK -->
+      <div id="s1" class="scene clip" data-start="0" data-duration="3" data-track-index="0">
+        <div id="paper" class="abs">
+          <div class="ax">arXiv:1605.07146</div>
+          <h1>Wide Residual Networks</h1>
+          <div class="au">Sergey Zagoruyko &nbsp;·&nbsp; Nikos Komodakis</div>
+          <div style="margin-top: 34px">
+            <div class="bar"></div><div class="bar"></div><div class="bar" style="width: 86%"></div><div class="bar" style="width: 93%"></div><div class="bar" style="width: 58%"></div>
+          </div>
+          <div id="tblwrap">
+            <div id="mark"></div>
+            <table>
+              <tr><th>CIFAR-10</th><th>test error (%)</th></tr>
+              <tr><td>WRN-40-4</td><td>4.97</td></tr>
+              <tr><td>WRN-16-8</td><td>4.81</td></tr>
+              <tr><td>WRN-40-8</td><td>4.66</td></tr>
+              <tr><td>WRN-28-10</td><td>4.00</td></tr>
+            </table>
+          </div>
+        </div>
+        <div id="h1a" class="abs label" style="left: 1090px; top: 300px">The paper says</div>
+        <div id="h1b" class="abs wide" style="left: 1080px; top: 330px; font-size: 205px">4.00%</div>
+        <div id="h1c" class="abs h" style="left: 1090px; top: 660px; font-size: 68px">Did anyone <span class="ok">rerun it?</span></div>
+      </div>
+
+      <!-- 2 REVEAL -->
+      <div id="s2" class="scene clip" data-start="3" data-duration="4" data-track-index="0">
+        <div id="wm" class="abs wide center" style="top: 200px; font-size: 230px">Repro<span class="ok">Bot</span></div>
+        <div id="chips"></div>
+        <div class="tag" id="tg0" style="left: 245px">Reads an ML paper.</div>
+        <div class="tag" id="tg1" style="left: 830px">Reruns it.</div>
+        <div class="tag ok" id="tg2" style="left: 1160px">Checks the number.</div>
+      </div>
+
+      <!-- 3 RUN -->
+      <div id="s3" class="scene clip" data-start="7" data-duration="5" data-track-index="0">
+        <div id="r1" class="abs label" style="left: 120px; top: 90px">Wide Residual Networks · WRN-28-10 · CIFAR-10</div>
+        <div id="r2" class="abs h" style="left: 120px; top: 140px; font-size: 64px">Writes the training script. Runs it in Docker.</div>
+        <div id="term" class="card">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div><span class="ok">$</span> <span id="typed" style="color: var(--ink)"></span><span id="cur"></span></div>
+          <div id="l1">runner&nbsp;&nbsp; stage=full</div>
+          <div id="l2">sandbox&nbsp; docker</div>
+          <div id="l3">epoch&nbsp;&nbsp;&nbsp; <span id="ep" style="color: var(--ink)">1</span>/200</div>
+          <div id="l4">check-ups <span class="ok">healthy</span></div>
+          <div id="l5">critic&nbsp;&nbsp; <span class="ok">PASS</span> ±0.39</div>
+        </div>
+        <div id="chart" class="card">
+          <div class="abs label" style="left: 50px; top: 40px; font-size: 22px">test error</div>
+          <div id="val" class="abs wide" style="left: 46px; top: 66px; font-size: 84px">43.89%</div>
+          <svg id="svg" class="abs" style="left: 0; top: 0" width="1080" height="640"></svg>
+          <div id="stamp">
+            <div class="wide" data-layout-allow-overlap style="font-size: 120px; line-height: 1.12">PASS</div>
+            <div class="mono" data-layout-allow-overlap style="font-size: 26px; color: var(--ink); margin-top: 4px">3.83% vs paper 4.00%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 LOOP -->
+      <div id="s4" class="scene clip" data-start="12" data-duration="3.5" data-track-index="0">
+        <div id="c0" class="abs label center" style="top: 110px">Wijaya 2023 · Boston Housing · paper says RMSE 3.02</div>
+        <div id="c1" class="abs h center" style="top: 165px; font-size: 80px">We planted a bug. <span class="ok">The Critic found it.</span></div>
+        <div id="a1" class="card" style="left: 120px; top: 380px; width: 430px; height: 420px; padding: 44px">
+          <div class="label">Attempt 1</div>
+          <div class="wide" style="font-size: 116px; margin-top: 26px">4.76</div>
+          <div class="mono" style="font-size: 26px; color: var(--mute); margin: 4px 0 26px">RMSE vs 3.02</div>
+          <span id="b1" class="badge bad">FAIL</span>
+        </div>
+        <div id="ar1" class="abs mono" style="left: 560px; top: 560px; font-size: 50px; color: var(--mute)">→</div>
+        <div id="a2" class="card" style="left: 620px; top: 380px; width: 680px; height: 420px; padding: 44px; border-color: var(--mute)">
+          <div class="label" style="display: flex; justify-content: space-between"><span>Critic review</span><span class="bad" style="letter-spacing: 0; text-transform: none">implementation_bug</span></div>
+          <div class="h" style="font-size: 44px; margin-top: 30px; line-height: 1.15">Train and validation<br />splits are swapped.</div>
+          <div class="mono" style="font-size: 26px; color: var(--soft); margin-top: 28px; line-height: 1.7">log: "81 train_fit, 324 val"<br />train.py · lines 178–180<br /><span class="ok">12/12 findings verified</span></div>
+        </div>
+        <div id="ar2" class="abs mono" style="left: 1310px; top: 560px; font-size: 50px; color: var(--mute)">→</div>
+        <div id="a3" class="card" style="left: 1370px; top: 380px; width: 430px; height: 420px; padding: 44px; border-color: var(--ok)">
+          <div class="label">Attempt 2</div>
+          <div class="wide ok" style="font-size: 116px; margin-top: 26px">3.40</div>
+          <div class="mono" style="font-size: 26px; color: var(--mute); margin: 4px 0 26px">RMSE vs 3.02</div>
+          <span id="b3" class="badge ok">PASS</span>
+        </div>
+        <div id="c2" class="abs label center" style="top: 870px">fail → diagnosis → fix → pass · 11 minutes</div>
+      </div>
+
+      <!-- 5 TABLE -->
+      <div id="s5" class="scene clip" data-start="15.5" data-duration="3.5" data-track-index="0">
+        <div id="t0" class="abs h" style="left: 120px; top: 80px; font-size: 84px">6 papers. 6 model families. <span class="ok">All pass.</span></div>
+        <div id="rows"></div>
+      </div>
+
+      <!-- 6 OUTRO -->
+      <div id="s6" class="scene clip" data-start="19" data-duration="3" data-track-index="0">
+        <div id="o1" class="abs h center" style="top: 210px; font-size: 120px">Don't trust the number.</div>
+        <div id="o2" class="abs wide ok center" style="top: 350px; font-size: 220px">Rerun it.</div>
+        <div id="o3" class="abs wide center" style="top: 720px; font-size: 72px">Repro<span class="ok">Bot</span></div>
+        <div id="o4" class="abs mono center" style="top: 830px; font-size: 30px; color: var(--soft)">github.com/EngincanVaran/ReproBot &nbsp;·&nbsp; inzva AI Projects #10</div>
+      </div>
+    </div>
+
+    <script src="assets/curve.js"></script>
+    <script>
+      const $ = (s) => document.querySelector(s);
+
+      // ---- static markup built from data -------------------------------------------------
+      const CH = ["PDF", "OCR", "Reader", "Coder", "Runner", "Critic", "Report"];
+      CH.forEach((c, i) => {
+        const x = 145 + i * 240;
+        $("#chips").insertAdjacentHTML(
+          "beforeend",
+          `<div class="chip" id="chip${i}" style="left:${x}px">${c}</div>` +
+            (i < 6 ? `<div class="arrow" id="arr${i}" style="left:${x + 190}px"><i></i></div>` : ""),
+        );
+      });
+
+      // README results table: paper, metric, model family, claimed, reproduced
+      const R = [
+        ["Tang 2013", "MNIST test error", "MLP + L2-SVM loss", "0.87%", "0.82%"],
+        ["Hsu, Chang &amp; Lin", "svmguide1 accuracy", "RBF SVM", "96.9%", "96.925%"],
+        ["Xiao 2017", "Fashion-MNIST accuracy", "Random forest", "0.873", "0.8773"],
+        ["Frosst &amp; Hinton 2017", "MNIST accuracy", "Soft decision tree", "94.45%", "95.11%"],
+        ["Wijaya 2023", "Boston Housing RMSE", "Dense regression net", "3.02", "3.33"],
+        ["Zagoruyko &amp; Komodakis", "CIFAR-10 test error", "WRN-28-10", "4.00%", "3.83%"],
+      ];
+      let rh = `<div class="row hdr" id="hdr"><div class="p">PAPER</div><div class="m">MODEL</div><div class="a">PAPER SAYS</div><div class="b">REPROBOT</div><div class="c">CRITIC</div></div>`;
+      R.forEach((r, i) => {
+        rh += `<div class="row" id="row${i}" style="top:${275 + i * 104}px"><div class="p">${r[0]}<small>${r[1]}</small></div><div class="m">${r[2]}</div><div class="a">${r[3]}</div><div class="b">${r[4]}</div><div class="c"><span class="badge ok" id="rb${i}">PASS</span></div></div>`;
+      });
+      $("#rows").innerHTML = rh;
+
+      // real WRN-28-10 test-error curve (report/output), log y axis
+      const C = window.CURVE, PX0 = 90, PX1 = 1030, PY0 = 200, PY1 = 560, LO = Math.log(3), HI = Math.log(50);
+      const X = (e) => PX0 + ((e - 1) / 199) * (PX1 - PX0);
+      const Y = (v) => PY1 - ((Math.log(v) - LO) / (HI - LO)) * (PY1 - PY0);
+      let sv = "";
+      [5, 10, 20, 40].forEach((v) => {
+        sv += `<line x1="${PX0}" x2="${PX1}" y1="${Y(v)}" y2="${Y(v)}" stroke="#33332E"/><text x="${PX0 - 14}" y="${Y(v) + 8}" text-anchor="end" fill="#8F8D86" font-family="DM Mono" font-size="22">${v}</text>`;
+      });
+      [1, 50, 100, 150, 200].forEach((e) => {
+        sv += `<text x="${X(e)}" y="${PY1 + 38}" text-anchor="middle" fill="#8F8D86" font-family="DM Mono" font-size="22">${e}</text>`;
+      });
+      sv += `<text x="${PX1 - 60}" y="${PY1 + 38}" text-anchor="end" fill="#8F8D86" font-family="DM Mono" font-size="22">epoch</text>`;
+      sv += `<line x1="${PX0}" x2="${PX1}" y1="${Y(4)}" y2="${Y(4)}" stroke="#4FC79B" stroke-width="3" stroke-dasharray="12 9"/><text x="${PX0 + 14}" y="${Y(4) + 34}" fill="#4FC79B" font-family="DM Mono" font-size="24">paper 4.00%</text>`;
+      sv += `<polyline id="pl" fill="none" stroke="#F2F1EC" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/><circle id="dot" r="9" fill="#F2F1EC"/>`;
+      $("#svg").innerHTML = sv;
+
+      // ---- timeline ----------------------------------------------------------------------
+      const tl = gsap.timeline({ paused: true });
+      const rise = (sel, t, dy = 28, d = 0.45) => tl.from(sel, { opacity: 0, y: dy, duration: d, ease: "power3.out" }, t);
+      const pop = (sel, t) => tl.from(sel, { opacity: 0, scale: 0.5, duration: 0.32, ease: "back.out(2.2)" }, t);
+      const leave = (sel, end) => tl.to(sel, { opacity: 0, y: -24, duration: 0.26, ease: "power2.inOut" }, end - 0.28);
+
+      tl.to("#glow", { x: 160, y: 70, duration: 22, ease: "sine.inOut" }, 0);
+
+      // 1 hook
+      rise("#paper", 0.05, 60, 0.55);
+      tl.from("#mark", { scaleX: 0, duration: 0.4, ease: "power2.inOut" }, 0.6);
+      rise("#h1a", 0.75);
+      rise("#h1b", 0.85, 50);
+      rise("#h1c", 1.65, 30);
+      leave("#s1", 3);
+
+      // 2 reveal
+      rise("#wm", 3.05, 60);
+      CH.forEach((_, i) => {
+        const a = 3.6 + i * 0.25;
+        tl.from(`#chip${i}`, { opacity: 0, duration: 0.4, ease: "power3.out" }, 3.3 + i * 0.04);
+        tl.to(`#chip${i}`, { borderColor: "#4FC79B", color: "#F2F1EC", backgroundColor: "#17231E", duration: 0.3, ease: "power3.out" }, a);
+        tl.to(`#chip${i}`, { scale: 1.08, duration: 0.17, ease: "sine.out", yoyo: true, repeat: 1 }, a);
+        if (i < 6) {
+          tl.from(`#arr${i}`, { opacity: 0, duration: 0.4 }, 3.3);
+          tl.from(`#arr${i} i`, { scaleX: 0, duration: 0.17, ease: "none" }, a + 0.08);
+        }
+      });
+      rise("#tg0", 3.6);
+      rise("#tg1", 4.35);
+      rise("#tg2", 5.1);
+      leave("#s2", 7);
+
+      // 3 run
+      rise("#r1", 7.05);
+      rise("#r2", 7.15);
+      rise("#term", 7.2, 40);
+      rise("#chart", 7.3, 40);
+      const CMD = "./reproduce.sh full";
+      const typing = { n: 0 };
+      tl.to(typing, { n: CMD.length, duration: 0.75, ease: "none", onUpdate: () => ($("#typed").textContent = CMD.slice(0, Math.round(typing.n))) }, 7.5);
+      tl.set("#cur", { opacity: 0 }, 8.3);
+      [["#l1", 8.3], ["#l2", 8.42], ["#l3", 8.54], ["#l4", 9.3], ["#l5", 10.6]].forEach(([id, a]) => tl.from(id, { opacity: 0, duration: 0.2 }, a));
+      const run = { f: 1 };
+      const draw = () => {
+        const f = run.f, k = Math.floor(f), fr = f - k;
+        let pts = "";
+        for (let e = 1; e <= k; e++) pts += `${X(e).toFixed(1)},${Y(C[e - 1]).toFixed(1)} `;
+        let v = C[k - 1], hx = X(k), hy = Y(v);
+        if (k < 200) {
+          v = C[k - 1] + (C[k] - C[k - 1]) * fr;
+          hx = X(f);
+          hy = Y(v);
+          pts += `${hx.toFixed(1)},${hy.toFixed(1)}`;
+        }
+        $("#pl").setAttribute("points", pts);
+        $("#dot").setAttribute("cx", hx);
+        $("#dot").setAttribute("cy", hy);
+        $("#ep").textContent = Math.round(f);
+        $("#val").textContent = v.toFixed(2) + "%";
+      };
+      draw();
+      tl.to(run, { f: 200, duration: 2.0, ease: "sine.inOut", onUpdate: draw }, 8.5);
+      tl.to("#val", { color: "#4FC79B", duration: 0.15 }, 10.5);
+      tl.fromTo("#stamp", { opacity: 0, scale: 2, rotation: -5 }, { opacity: 1, scale: 1, rotation: -5, duration: 0.3, ease: "power3.out" }, 10.55);
+      leave("#s3", 12);
+
+      // 4 loop
+      rise("#c0", 12.05);
+      rise("#c1", 12.1);
+      rise("#a1", 12.45, 40);
+      pop("#b1", 12.7);
+      tl.from("#ar1", { opacity: 0, duration: 0.3 }, 12.95);
+      rise("#a2", 13.0, 40);
+      tl.from("#ar2", { opacity: 0, duration: 0.3 }, 13.75);
+      rise("#a3", 13.8, 40);
+      pop("#b3", 14.05);
+      rise("#c2", 14.1);
+      leave("#s4", 15.5);
+
+      // 5 table
+      rise("#t0", 15.55);
+      rise("#hdr", 15.75);
+      R.forEach((_, i) => {
+        rise(`#row${i}`, 15.9 + i * 0.22, 24, 0.35);
+        pop(`#rb${i}`, 16.1 + i * 0.22);
+      });
+      leave("#s5", 19);
+
+      // 6 outro
+      rise("#o1", 19.1, 40);
+      rise("#o2", 19.9, 50);
+      rise("#o3", 20.45);
+      rise("#o4", 20.6);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
