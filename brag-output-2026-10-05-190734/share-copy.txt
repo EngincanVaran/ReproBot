@@ -1,0 +1,4 @@
+The paper says 4.00%. ReproBot read the PDF, wrote the training script, ran it in Docker and got 3.83%. Six papers across six model families so far, every one within tolerance of its claim, and when we planted a bug the Critic found it in the code and fixed it in 11 minutes.
+
+Don't trust the number. Rerun it.
+github.com/EngincanVaran/ReproBot

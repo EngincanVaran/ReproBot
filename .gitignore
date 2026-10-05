@@ -252,3 +252,7 @@ critic/output/
 
 # ReproBot: generated replication reports
 report/output*/
+
+# brag videos: keep the deliverables, not the render scratch
+brag-output*/work/
+brag-output*/composition/snapshots/
