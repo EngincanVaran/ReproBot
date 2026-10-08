@@ -1,0 +1,648 @@
+{
+  "paper_id": "2013-06 - Deep Learning using Linear Support Vector Machines",
+  "source_pdf": null,
+  "reader_output": {
+    "paper": "2013-06 - Deep Learning using Linear Support Vector Machines",
+    "source_markdown": "ocr/output/vlm/2013-06 - Deep Learning using Linear Support Vector Machines.md",
+    "method_summary": {
+      "problem": "The paper targets the standard practice in deep learning classification models (fully-connected and convolutional neural nets) of using a softmax (multinomial logistic regression) output layer trained by minimizing cross-entropy loss. It notes that prior attempts to combine SVMs with deep nets typically used a multistage pipeline: a deep net (trained with supervised/unsupervised objectives) first learns invariant hidden representations, and only afterward are these fixed hidden features fed into a separately trained linear or kernel SVM. The paper identifies the drawback of this approach: because the SVM is trained after the fact on frozen features, the lower-level feature-extracting layers are never tuned with respect to the SVM's own margin-based objective, so the representation and classifier objectives are decoupled.",
+      "core_idea": "The paper replaces the top softmax layer of a deep (convolutional or fully-connected) neural network with a linear multiclass SVM, specifically using the L2-SVM (squared hinge loss) objective, and trains the entire network end-to-end by backpropagating gradients of this margin-based loss through the penultimate layer and all the way down to the lower-level weights via stochastic gradient descent. Because the squared hinge loss of the L2-SVM is differentiable (unlike the standard L1-SVM hinge loss) and penalizes margin violations quadratically, it can be optimized jointly with the rest of the network using the exact same backpropagation machinery used for softmax networks, with only the top-layer loss and its gradient (derived explicitly by the paper) changing.",
+      "novelty": "The paper is explicit that this is not a new SVM-plus-neural-net architecture per se: it describes its models as \"essentially the same\" as those already proposed by Zhong & Ghosh (2000) and Nagi et al. (2012), which also jointly trained lower-layer weights of standard/convolutional nets with an SVM-style top layer, and it also contrasts with Weston et al. (2008), who combined hinge loss with a contrastive siamese loss, and Vinyals et al. (2012), who used per-layer linear SVMs without joint fine-tuning of representations. The genuine novelty the paper claims is narrow and explicit: substituting the differentiable, quadratically-penalized L2-SVM loss in place of the non-differentiable standard hinge loss (L1-SVM) used in most such joint SVM+network combinations, enabling straightforward gradient-based joint optimization, and then demonstrating empirically that this simple substitution for softmax yields consistent gains across multiple standard deep learning benchmarks - a substitution/combination of known components (differentiable L2-SVM primal objective, dating back to Hinton 1989, plus standard backprop-trained deep nets) rather than an entirely new learning mechanism.",
+      "summary": "This paper addresses the near-universal design choice in deep classification models of pairing the final hidden representation with a softmax layer trained via cross-entropy loss, and critiques the alternative line of work that instead attaches an SVM to a deep net only after the net's features have already been learned (with supervised or unsupervised objectives), leaving the lower-level features unadapted to the SVM's margin-based criterion. Its central proposal is to keep the standard deep network architecture but swap out the softmax output layer for a linear multiclass SVM trained with the L2-SVM (squared hinge) loss, and to train the whole system end-to-end with backpropagation and stochastic gradient descent, since the L2-SVM loss is differentiable and thus its gradient can flow through the penultimate activations down into the convolutional/fully-connected layers exactly as with softmax. This is essentially the same joint-training idea already present in earlier work (Zhong & Ghosh, 2000; Nagi et al., 2012), and the paper is candid that its contribution is the comparatively minor but consequential move of using the differentiable squared-hinge L2-SVM objective, rather than the traditional non-differentiable hinge loss, so that the substitution of SVM for softmax can be made as simple as changing the top-layer loss function while reusing all standard deep learning training machinery. The paper argues this small architectural swap matters because it consistently improves classification performance over softmax-based counterparts across several benchmark tasks and appears to act primarily through the SVM loss providing better regularization of the learned features rather than through any advantage in optimization dynamics.</summary>\n<parameter name=\"sources_examined\">[\"Abstract (transcribed page 1)\", \"Section 1 Introduction (transcribed page 1)\", \"Section 1 Introduction continued (transcribed page 2)\", \"Section 2 The model / 2.4 Deep Learning with Support Vector Machines (transcribed page 2)\", \"Section 2.4 Deep Learning with Support Vector Machines continued (transcribed page 3)\", \"Section 3.4 Regularization or Optimization (transcribed page 5)\", \"Section 4 Conclusions (transcribed page 5)\"]",
+      "sources_examined": []
+    },
+    "architecture_notes": {
+      "model_name": "DLSVM (Deep Learning using Linear Support Vector Machines) \u2014 a standard deep neural network / convolutional neural network with its top softmax layer replaced by a linear (multiclass, one-vs-rest) L2-SVM output layer",
+      "overall_structure": "The paper's core architectural proposal is not a new backbone network but a new top/output layer: take a standard deep neural network (fully-connected or convolutional, with ReLU hidden units) and replace its final softmax classification layer with a linear multiclass SVM (trained with the L2-SVM squared-hinge loss, one-vs-rest for K classes). Data flows through the same lower layers (convolutional/pooling stages or fully-connected hidden layers with ReLU activations) as a conventional softmax-based network; only the final layer's output nonlinearity/objective changes from softmax+cross-entropy to a set of K linear SVM decision functions a_k(x) = w_k^T h trained with squared-hinge loss, with gradients from this loss backpropagated into the penultimate activation h and thence into all lower layers exactly as in standard backprop. Three separate concrete networks are described per experiment (facial expression, MNIST, CIFAR-10), each following this same lower-layers-plus-SVM-top pattern but differing in their specific backbone composition.",
+      "components": [
+        {
+          "name": "Linear multiclass SVM output layer (DLSVM top layer)",
+          "role": "Replaces the conventional softmax layer at the top of a deep network; produces per-class scores a_k(x)=w_k^T h from penultimate-layer activations h, trained with the L2-SVM (squared hinge) objective via one-vs-rest multiclass extension; prediction is argmax over a_k(x).",
+          "specification": "One linear SVM per class k (K classes total) applied to the penultimate hidden activation h, each computing a_k(x) = w^T x (Eq. 8); class predicted via arg max_k a_k(x) (Eq. 9); trained by minimizing the L2-SVM primal objective (squared hinge loss, Eq. 6) with weight-decay term (1/2) w^T w and misclassification penalty C * sum(max(1 - w^T x_n t_n, 0)^2); gradient of this loss w.r.t. penultimate activation h given by Eq. 11 for backpropagation into lower layers.",
+          "source": "Section 2.2/2.3/2.4, transcribed pages 2-3"
+        },
+        {
+          "name": "Softmax output layer (baseline, for contrast)",
+          "role": "The conventional top layer being replaced/compared against; computes class probabilities via normalized exponential of linear activations from the penultimate layer.",
+          "specification": "a_i = sum_k h_k W_ki (Eq.1); p_i = exp(a_i)/sum_j exp(a_j) (Eq.2); predicted class = arg max_i a_i (Eq.3). Not the paper's own proposed layer (used only as baseline for comparison).",
+          "source": "Section 2.1, transcribed page 2"
+        },
+        {
+          "name": "Facial expression recognition network: input transformation layers",
+          "role": "Preprocessing/augmentation layers preceding the convolutional feature extraction, applied identically to both softmax and DLSVM variants for the Kaggle facial expression task.",
+          "specification": "\"an image mirroring layer, similarity transformation layer\" precede \"two convolutional filtering+pooling stages\" \u2014 exact parameters (mirroring probability, similarity transform parameters) not given.",
+          "source": "Section 3.1.1, transcribed page 3"
+        },
+        {
+          "name": "Facial expression recognition network: convolutional filtering+pooling stages",
+          "role": "Two convolution+pooling stages extracting features from the 48x48 facial expression images.",
+          "specification": "\"two convolutional filtering+pooling stages\" \u2014 number of filters, filter sizes, pooling window sizes/strides not stated in the paper.",
+          "source": "Section 3.1.1, transcribed page 3"
+        },
+        {
+          "name": "Facial expression recognition network: fully connected penultimate layer",
+          "role": "Fully connected layer following the convolutional stages, feeding into the softmax or SVM top layer.",
+          "specification": "\"a fully connected layer with 3072 hidden penultimate hidden units. The hidden layers are all of the rectified linear type.\"",
+          "source": "Section 3.1.1, transcribed page 3"
+        },
+        {
+          "name": "MNIST network: PCA dimensionality reduction",
+          "role": "Preprocessing step reducing raw pixel input dimensionality before the fully connected network.",
+          "specification": "PCA from 784 dimensions down to 70 dimensions.",
+          "source": "Section 3.2, transcribed page 4"
+        },
+        {
+          "name": "MNIST network: fully connected hidden layers",
+          "role": "Two hidden layers processing the 70-dim PCA input, feeding into softmax or L2-SVM top layer.",
+          "specification": "\"Two hidden layers of 512 units each is followed by a softmax or a L2-SVM.\" Activation function of these hidden layers not explicitly stated (unlike the CIFAR/expression nets, ReLU is not mentioned here).",
+          "source": "Section 3.2, transcribed page 4"
+        },
+        {
+          "name": "CIFAR-10 network: first convolutional layer (C1)",
+          "role": "First convolution+pooling stage processing the 32x32 color input images.",
+          "specification": "\"the first C layer had 32 5\u00d75 filters with Relu hidden units\"; followed by max pooling downsampling by a factor of 2.",
+          "source": "Section 3.3, transcribed page 4-5"
+        },
+        {
+          "name": "CIFAR-10 network: second convolutional layer (C2)",
+          "role": "Second convolution+pooling stage.",
+          "specification": "\"the second C layer has 64 5 \u00d7 5 filters\"; Relu hidden units (per general statement \"Relu\" convnet); followed by max pooling downsampling by a factor of 2. Both pooling layers used max pooling and downsampled by a factor of 2.",
+          "source": "Section 3.3, transcribed page 4-5"
+        },
+        {
+          "name": "CIFAR-10 network: penultimate fully connected layer",
+          "role": "Fully connected layer following the two conv/pool stages, feeding into softmax or L2-SVM top layer; includes dropout regularization as part of model definition.",
+          "specification": "\"The penultimate layer has 3072 hidden nodes and uses Relu activation with a dropout rate of 0.2.\"",
+          "source": "Section 3.3 / continued top of page 5, transcribed pages 4-5"
+        }
+      ],
+      "key_equations": [
+        {
+          "latex": "a_i = \\sum_k h_k W_{ki}, \\tag{1}",
+          "label": "1",
+          "defines": "total input into softmax layer node i from penultimate layer activations",
+          "is_own_method": false
+        },
+        {
+          "latex": "p_i = \\frac{\\exp(a_i)}{\\sum_j^{10} \\exp(a_j)} \\tag{2}",
+          "label": "2",
+          "defines": "softmax probability output, standard baseline formulation",
+          "is_own_method": false
+        },
+        {
+          "latex": "\\hat{i} = \\arg\\max_i p_i \\\\ = \\arg\\max_i a_i \\tag{3}",
+          "label": "3",
+          "defines": "softmax-based predicted class, standard baseline",
+          "is_own_method": false
+        },
+        {
+          "latex": "\\min_{\\mathbf{w}, \\xi_n} \\quad \\frac{1}{2}\\mathbf{w}^\\mathsf{T}\\mathbf{w} + C\\sum_{n=1}^N \\xi_n \\tag{4} \\\\ s.t. \\quad \\mathbf{w}^\\mathsf{T}\\mathbf{x}_n t_n \\geq 1 - \\xi_n \\quad \\forall n \\\\ \\xi_n \\geq 0 \\quad \\forall n",
+          "label": "4",
+          "defines": "standard binary SVM constrained optimization (primal form with slack variables), general/prior SVM theory",
+          "is_own_method": false
+        },
+        {
+          "latex": "\\min_{\\mathbf{w}} \\quad \\frac{1}{2}\\mathbf{w}^\\mathsf{T}\\mathbf{w} + C\\sum_{n=1}^N \\max(1 - \\mathbf{w}^\\mathsf{T}\\mathbf{x}_n t_n, 0) \\tag{5}",
+          "label": "5",
+          "defines": "unconstrained primal L1-SVM objective with standard hinge loss, general/prior SVM theory (not the paper's proposed loss)",
+          "is_own_method": false
+        },
+        {
+          "latex": "\\min_{\\mathbf{w}} \\quad \\frac{1}{2}\\mathbf{w}^\\mathsf{T}\\mathbf{w} + C\\sum_{n=1}^N \\max(1 - \\mathbf{w}^\\mathsf{T}\\mathbf{x}_n t_n, 0)^2 \\tag{6}",
+          "label": "6",
+          "defines": "L2-SVM primal objective with squared hinge loss \u2014 the loss function the paper's own model uses at its output layer",
+          "is_own_method": true
+        },
+        {
+          "latex": "\\arg\\max_t (\\mathbf{w}^\\mathsf{T}\\mathbf{x})t \\tag{7}",
+          "label": "7",
+          "defines": "standard binary SVM prediction rule, presented as general SVM background before the paper's multiclass extension (analogous status to Eq. 4-5)",
+          "is_own_method": false
+        },
+        {
+          "latex": "a_k(\\mathbf{x}) = \\mathbf{w}^\\mathsf{T}\\mathbf{x} \\tag{8}",
+          "label": "8",
+          "defines": "the paper's multiclass (one-vs-rest) SVM output score for class k, used as the model's top-layer computation",
+          "is_own_method": true
+        },
+        {
+          "latex": "\\arg\\max_k a_k(\\mathbf{x}) \\tag{9}",
+          "label": "9",
+          "defines": "the paper's multiclass SVM prediction rule (argmax over per-class linear SVM scores)",
+          "is_own_method": true
+        },
+        {
+          "latex": "\\frac{\\partial l(\\mathbf{w})}{\\partial \\mathbf{h}_n} = -Ct_n\\mathbf{w}(\\mathbb{I}\\{1 > \\mathbf{w}^\\mathsf{T}\\mathbf{h}_n t_n\\}) \\tag{10}",
+          "label": "10",
+          "defines": "gradient of L1-SVM (hinge loss) objective w.r.t. penultimate layer activation, for backpropagation (shown for contrast with L2-SVM gradient used in paper's own model)",
+          "is_own_method": false
+        },
+        {
+          "latex": "\\frac{\\partial l(\\mathbf{w})}{\\partial \\mathbf{h}_n} = -2Ct_n\\mathbf{w}\\big(\\max(1 - \\mathbf{w}^\\mathsf{T}\\mathbf{h}_n t_n, 0)\\big) \\tag{11}",
+          "label": "11",
+          "defines": "gradient of the paper's own L2-SVM squared-hinge loss w.r.t. penultimate layer activation h, used to backpropagate error into lower layers of the deep network",
+          "is_own_method": true
+        }
+      ],
+      "depth_or_scale": "The paper gives no general depth/width scaling formula or naming convention for a single unified architecture; instead it describes three separate, independently specified networks (one each for the facial expression task, MNIST, and CIFAR-10), each with its own fixed, explicitly enumerated stage list (see components). There is no formula relating depth or width to a hyperparameter like N or k.",
+      "unstated_details": [
+        "Facial expression network: exact parameters of the 'image mirroring layer' and 'similarity transformation layer' (not specified beyond naming them)",
+        "Facial expression network: filter counts, filter sizes, strides, and pooling window sizes/strides for the 'two convolutional filtering+pooling stages' are not given ('The exact model parameters and code is provided on by the author at https://code.google.com/p/deep-learning-faces' \u2014 deferred to external code repository, not stated in the paper text)",
+        "MNIST network: activation function of the two 512-unit hidden layers is not explicitly stated (ReLU is mentioned for other networks but not explicitly for this one)",
+        "MNIST network: whether any convolutional structure is used (paper says 'simple fully connected model', but does not state layer connectivity details beyond width)",
+        "General: weight initialization scheme is not stated for any of the three networks",
+        "General: whether batch normalization or any other normalization layer is used is not stated",
+        "CIFAR-10 network: padding used in the two convolutional layers (5x5 filters) is not stated",
+        "CIFAR-10 network: exact pooling operation parameters (pooling window size, e.g. 2x2 or 3x3) beyond 'downsampled by a factor of 2' are not stated",
+        "CIFAR-10 network: whether dropout is applied anywhere besides the penultimate 3072-unit layer is not stated",
+        "CIFAR-10 network: number of output classes' connectivity from penultimate layer beyond stating it feeds into softmax/L2-SVM is assumed 10-way but not explicitly re-stated in this section",
+        "General: exact multiclass SVM formulation used beyond stating one-vs-rest \u2014 the paper explicitly says 'Hsu & Lin (2002) discusses other alternative multiclass SVM approaches, but we leave those to future work', confirming only one-vs-rest was implemented, but no further hyperparameter (e.g., how ties are broken) is given",
+        "General: the input mirroring/similarity-transformation layers' role as regular architecture layers vs. data augmentation is ambiguous; the paper does not clarify whether these are learned/parametrized layers or fixed preprocessing operations"
+      ],
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1-2)",
+        "Section 2.1 Softmax (transcribed page 2)",
+        "Section 2.2 Support Vector Machines (transcribed page 2)",
+        "Section 2.3 Multiclass SVMs (transcribed page 2)",
+        "Section 2.4 Deep Learning with Support Vector Machines (transcribed page 2-3)",
+        "Section 3.1 Facial Expression Recognition (transcribed page 3)",
+        "Section 3.1.1 Softmax vs. DLSVM (transcribed page 3-4)",
+        "Figure 1 description block (transcribed page 3)",
+        "Figure 2 description block (transcribed page 4)",
+        "Table 1 (transcribed page 4)",
+        "Figure 3 and Figure 4 description blocks (transcribed page 4)",
+        "Section 3.2 MNIST (transcribed page 4)",
+        "Section 3.3 CIFAR-10 (transcribed page 4-5)",
+        "Table 2 (transcribed page 5)",
+        "Section 3.4 Regularization or Optimization (transcribed page 5)",
+        "Table 3 (transcribed page 5)"
+      ]
+    },
+    "claims": {
+      "claims": [
+        {
+          "claim_id": "c1",
+          "metric": "Training cross validation accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 68.9,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "DLSVM L2"
+        },
+        {
+          "claim_id": "c2",
+          "metric": "Public leaderboard accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 69.4,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "DLSVM L2"
+        },
+        {
+          "claim_id": "c3",
+          "metric": "Private leaderboard accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 71.2,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "DLSVM L2"
+        },
+        {
+          "claim_id": "c1b",
+          "metric": "Training cross validation accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 67.6,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "Softmax"
+        },
+        {
+          "claim_id": "c2b",
+          "metric": "Public leaderboard accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 69.3,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "Softmax"
+        },
+        {
+          "claim_id": "c3b",
+          "metric": "Private leaderboard accuracy",
+          "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+          "reported_value": 70.1,
+          "unit": "%",
+          "source": "Table 1, transcribed page 4",
+          "model_variant": "Softmax"
+        },
+        {
+          "claim_id": "c4",
+          "metric": "test error",
+          "dataset": "MNIST",
+          "reported_value": 0.99,
+          "unit": "%",
+          "source": "Page 4 text (Section 3.2)",
+          "model_variant": "Softmax"
+        },
+        {
+          "claim_id": "c5",
+          "metric": "test error",
+          "dataset": "MNIST",
+          "reported_value": 0.87,
+          "unit": "%",
+          "source": "Page 4 text (Section 3.2)",
+          "model_variant": "DLSVM"
+        },
+        {
+          "claim_id": "c6",
+          "metric": "Test error",
+          "dataset": "CIFAR-10",
+          "reported_value": 11.9,
+          "unit": "%",
+          "source": "Table 2, transcribed page 5",
+          "model_variant": "ConvNet+SVM"
+        },
+        {
+          "claim_id": "c6b",
+          "metric": "Test error",
+          "dataset": "CIFAR-10",
+          "reported_value": 14.0,
+          "unit": "%",
+          "source": "Table 2, transcribed page 5",
+          "model_variant": "ConvNet+Softmax"
+        },
+        {
+          "claim_id": "c7",
+          "metric": "Avg. cross entropy",
+          "dataset": "CIFAR-10",
+          "reported_value": 0.353,
+          "unit": "nats",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "ConvNet+SVM"
+        },
+        {
+          "claim_id": "c8",
+          "metric": "Hinge loss squared",
+          "dataset": "CIFAR-10",
+          "reported_value": 0.313,
+          "unit": "unitless",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "ConvNet+SVM"
+        },
+        {
+          "claim_id": "c9",
+          "metric": "Avg. cross entropy",
+          "dataset": "CIFAR-10",
+          "reported_value": 0.072,
+          "unit": "nats",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "ConvNet+Softmax"
+        },
+        {
+          "claim_id": "c10",
+          "metric": "Hinge loss squared",
+          "dataset": "CIFAR-10",
+          "reported_value": 213.2,
+          "unit": "unitless",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "ConvNet+Softmax"
+        },
+        {
+          "claim_id": "c11",
+          "metric": "Test error after initializing ConvNet+Softmax with DLSVM weights (11.9% error) and further training",
+          "dataset": "CIFAR-10",
+          "reported_value": 14.0,
+          "unit": "%",
+          "source": "Page 5 text (Section 3.4)",
+          "model_variant": "ConvNet+Softmax initialized from DLSVM weights"
+        }
+      ],
+      "tables_examined": [
+        "Table 1: Comparisons of the models in terms of % accuracy (transcribed page 4)",
+        "Table 2: Comparisons of the models in terms of % error on the test set (transcribed page 5)",
+        "Table 3: Training objective including the weight costs (transcribed page 5)"
+      ],
+      "candidates_considered": 14
+    },
+    "hyperparameters": {
+      "hyperparameters": [
+        {
+          "name": "optimizer",
+          "value": "Stochastic gradient descent with momentum",
+          "source": "Section 3.1 Winning Solution prose, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "penultimate hidden layer size",
+          "value": "3072 hidden units",
+          "source": "Section 3.1.1, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "hidden unit activation",
+          "value": "rectified linear (ReLU)",
+          "source": "Section 3.1.1, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "cross validation folds",
+          "value": "8 split/fold cross validation",
+          "source": "Section 3.1.1, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "weight decay",
+          "value": "selected using cross validation (specific value not given)",
+          "source": "Section 3.1.1, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "data preprocessing",
+          "value": "Subtract mean value of each image, set image norm to 100, then standardize each pixel by removing its mean and dividing by the standard deviation of that pixel across all training images",
+          "source": "Section 3.1 Winning Solution prose, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "model averaging",
+          "value": "Several models are averaged to improve generalization",
+          "source": "Section 3.1 Winning Solution prose, transcribed page 3",
+          "unit": null,
+          "model_variant": "Facial Expression Net"
+        },
+        {
+          "name": "dimensionality reduction",
+          "value": "PCA from 784 dimensions down to 70 dimensions",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "hidden layers",
+          "value": "Two hidden layers of 512 units each",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "batch size",
+          "value": "200 samples per minibatch, 300 minibatches",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "optimizer",
+          "value": "Stochastic gradient descent with momentum",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "number of epochs",
+          "value": "over 400 epochs, totaling 120K weight updates",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": "epochs",
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "learning rate schedule",
+          "value": "linearly decayed from 0.1 to 0.0",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "L2 weight cost (softmax layer)",
+          "value": "0.001",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "input noise",
+          "value": "Gaussian noise with standard deviation of 1.0 added to input, linearly decayed to 0",
+          "source": "Section 3.2, transcribed page 4",
+          "unit": null,
+          "model_variant": "MNIST"
+        },
+        {
+          "name": "batch size",
+          "value": "128",
+          "source": "Section 3.3, transcribed page 4",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        },
+        {
+          "name": "data augmentation",
+          "value": "Horizontal reflection and jitter applied randomly to the data before weight update",
+          "source": "Section 3.3, transcribed page 4",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        },
+        {
+          "name": "penultimate hidden layer size",
+          "value": "3072 hidden nodes",
+          "source": "Section 3.3-3.4, transcribed pages 4-5",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        },
+        {
+          "name": "penultimate layer activation",
+          "value": "ReLU activation",
+          "source": "Section 3.3-3.4, transcribed pages 4-5",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        },
+        {
+          "name": "dropout rate",
+          "value": "0.2",
+          "source": "Section 3.3-3.4 prose (penultimate layer description), transcribed page 5",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        },
+        {
+          "name": "weight decay constant",
+          "value": "selected via validation separately for this model (specific value not given)",
+          "source": "Section 3.3, transcribed page 5",
+          "unit": null,
+          "model_variant": "CIFAR-10 ConvNet+Softmax"
+        },
+        {
+          "name": "SVM C constant",
+          "value": "selected via validation separately for this model (specific value not given)",
+          "source": "Section 3.3, transcribed page 5",
+          "unit": null,
+          "model_variant": "CIFAR-10 ConvNet+SVM"
+        },
+        {
+          "name": "learning rate",
+          "value": "selected via validation separately for each model (specific value not given)",
+          "source": "Section 3.3, transcribed page 5",
+          "unit": null,
+          "model_variant": "CIFAR-10"
+        }
+      ],
+      "sources_examined": [
+        "Section 3.1 Winning Solution prose, transcribed page 3",
+        "Section 3.1.1, transcribed page 3",
+        "Section 3.2, transcribed page 4",
+        "Section 3.3, transcribed page 4",
+        "Section 3.3-3.4, transcribed pages 4-5",
+        "Section 3.3-3.4 prose (penultimate layer description), transcribed page 5",
+        "Section 3.3, transcribed page 5"
+      ]
+    },
+    "data_pipeline": {
+      "reference_urls": [
+        "https://code.google.com/p/deep-learning-faces",
+        "http://code.google.com/p/cuda-convnet",
+        "http://bit.ly/13Zr6Gs"
+      ],
+      "datasets": [
+        {
+          "dataset": "Facial Expression Recognition (ICML 2013 Workshop / Kaggle challenge)",
+          "dataset_source": "28,709 48x48 grayscale images of faces under 7 expression categories, from ICML 2013 Representation Learning Workshop Kaggle challenge; validation and test sets consist of 3,589 images",
+          "normalization": "Preprocessing: first subtract the mean value of each image and set the image norm to 100; then each pixel is standardized by removing its mean and dividing by the standard deviation of that pixel, computed across all training images",
+          "augmentation": "not stated for this dataset (paper mentions an 'image mirroring layer' and 'similarity transformation layer' as part of model architecture, not explicitly described as data augmentation applied to inputs)",
+          "split_convention": "28,709 training images; validation and test sets of 3,589 images each (per Kaggle public/private leaderboard); 8 split/fold cross validation used for softmax vs DLSVM comparison",
+          "source": "Section 3.1 Facial Expression Recognition and 3.1.1 Softmax vs. DLSVM, transcribed pages 3-4"
+        },
+        {
+          "dataset": "MNIST",
+          "dataset_source": "standard MNIST handwritten digit dataset, 10 class classification problem with 60,000 training examples and 10,000 test cases",
+          "normalization": "PCA performed on the raw pixel data, reducing dimensionality from 784 down to 70 dimensions; no other stated normalization",
+          "augmentation": "Gaussian noise added to the input to prevent overfitting: noise of standard deviation 1.0, linearly decayed to 0 over training (not a geometric augmentation such as crop/flip)",
+          "split_convention": "standard 60,000 training / 10,000 test split (no separate validation split mentioned)",
+          "source": "Section 3.2 MNIST, transcribed page 4"
+        },
+        {
+          "dataset": "CIFAR-10",
+          "dataset_source": "standard CIFAR-10 dataset, 10 class object dataset with 50,000 images for training and 10,000 for testing, colored images 32x32 resolution",
+          "normalization": "not stated - paper does not mention any pixel/mean normalization or whitening for CIFAR-10",
+          "augmentation": "Horizontal reflection and jitter applied to the data randomly before each minibatch weight update",
+          "split_convention": "standard 50,000 train / 10,000 test split",
+          "source": "Section 3.3 CIFAR-10, transcribed pages 4-5"
+        }
+      ]
+    },
+    "validation": {
+      "flags": [
+        {
+          "relates_to": "data_pipeline: Facial Expression Recognition split_convention",
+          "description": "Extraction states 'validation and test sets of 3,589 images each' implying two separate sets of 3,589, but the paper text says 'The validation and test sets consist of 3,589 images' which reads as the validation and test sets together totaling 3,589 images (i.e., one combined pool of 3,589), not 3,589 each. This is a potential misreading."
+        },
+        {
+          "relates_to": "claims: c11",
+          "description": "Claim c11 reports 'reported_value: 14.0' for the ConvNet+Softmax initialized from DLSVM weights experiment, but the paper only says the error 'gradually increased towards 14%' as further training was performed \u2014 it does not state that the model reached exactly 14.0% or that this matches Table 2's ConvNet+Softmax value. Presenting 14.0 as a precise reported value for this specific experiment overstates precision not given in the text."
+        },
+        {
+          "relates_to": "claims: c7 and c8 units",
+          "description": "Table 3 values for 'Avg. cross entropy' and 'Hinge loss squared' are extracted with units 'nats' and 'unitless' respectively, but the paper does not specify units for these quantities; labeling cross entropy as 'nats' is an assumption not explicitly stated in the text."
+        },
+        {
+          "relates_to": "architecture_notes: MNIST network activation function",
+          "description": "The unstated_details list notes ReLU is not explicitly stated for the MNIST hidden layers, which is correct per the text, but this is inconsistent with hyperparameters extraction which does not list an activation function for MNIST either \u2014 no issue itself, just confirming both correctly omit it. However worth flagging that this is consistent across extractions (not a flag, skip)."
+        },
+        {
+          "relates_to": "cross-check: architecture_notes vs. claims/hyperparameters (CIFAR-10 output layer)",
+          "description": "architecture_notes unstated_details says CIFAR-10 output classes count 'is assumed 10-way but not explicitly re-stated in this section' \u2014 this is fine, but the architecture_notes components list for CIFAR-10 does not mention an explicit final SVM/softmax output layer component analogous to how MNIST and facial expression networks list it, which is a minor incompleteness rather than a hard error."
+        }
+      ],
+      "attempts": 3,
+      "retried_stages": [
+        "claims",
+        "architecture_notes",
+        "data_pipeline",
+        "hyperparameters"
+      ]
+    }
+  },
+  "coder_output": {
+    "script_path": "coder/output-ablation/2013-06 - Deep Learning using Linear Support Vector Machines/train.py",
+    "script_version": 1,
+    "diff_from_previous": null
+  },
+  "runner_output": {
+    "status": "success",
+    "reproduced_metrics": {
+      "claim_id": "c5",
+      "metric": "test error",
+      "unit": "%",
+      "value": 0.8499999999999952,
+      "higher_is_better": false,
+      "task_type": "classification",
+      "train_loss": 0.0012377409156480704,
+      "eval_loss": 0.006724578026629615,
+      "train_metric": 0.06333333333333746,
+      "eval_metric": 0.8499999999999952,
+      "epochs_completed": 400,
+      "num_train_samples": 60000,
+      "num_eval_samples": 10000,
+      "wall_clock_seconds": 1094.2780537605286
+    },
+    "logs_path": "orchestrator/output-ablation/2013-06 - Deep Learning using Linear Support Vector Machines/logs/attempt-1",
+    "error_trace": null
+  },
+  "critic_output": null,
+  "retry_count": 0,
+  "retry_budget": 0,
+  "fidelity_retry_count": 0,
+  "history": [
+    {
+      "timestamp": "2026-10-08T19:24:05+00:00",
+      "stage": "orchestrator",
+      "event": "loop started",
+      "detail": "retry_budget=0, plateau_threshold=0.98, modes=probe/smoke/capped/full"
+    },
+    {
+      "timestamp": "2026-10-08T19:25:22+00:00",
+      "stage": "coder",
+      "event": "generated script v1",
+      "detail": "claim=c5, 400 lines"
+    },
+    {
+      "timestamp": "2026-10-08T19:44:22+00:00",
+      "stage": "runner",
+      "event": "ran v1: success",
+      "detail": "stage_reached=full, failed_stage=None, exit_code=0, 1139.99s, no triage"
+    },
+    {
+      "timestamp": "2026-10-08T19:44:22+00:00",
+      "stage": "orchestrator",
+      "event": "loop finished: success",
+      "detail": "a stage passed; nothing to retry"
+    }
+  ],
+  "verdict": "success",
+  "attempts": [
+    {
+      "version": 1,
+      "feedback_given": null,
+      "script_path": "orchestrator/output-ablation/2013-06 - Deep Learning using Linear Support Vector Machines/attempts/v1_train.py",
+      "script_chars": 16432,
+      "plateau_ratio": null,
+      "runner_status": "success",
+      "stage_reached": "full",
+      "failed_stage": null,
+      "exit_code": 0,
+      "wall_clock_seconds": 1139.99,
+      "triage_category": null,
+      "triage_reasoning": null,
+      "suggested_fix": null,
+      "syntax_error": null,
+      "logs_path": "orchestrator/output-ablation/2013-06 - Deep Learning using Linear Support Vector Machines/logs/attempt-1",
+      "action": "done",
+      "verdict": "success",
+      "reason": "a stage passed; nothing to retry",
+      "checkup_rule": null,
+      "checkup_message": null,
+      "critic_verdict": null
+    }
+  ]
+}

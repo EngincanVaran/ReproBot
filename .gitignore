@@ -249,3 +249,12 @@ report/output/
 # macOS Finder metadata and the ruff cache
 .DS_Store
 .ruff_cache/
+
+# ReproBot: single-shot vs. loop ablation artefacts (docs/notes/ablation/).
+# Same contents as the stage output dirs above, written to separate paths so the
+# loop-ON evidence is never overwritten. The numbers the note quotes are copied
+# into docs/notes/ablation/data/ as committed evidence.
+coder/output-ablation/
+orchestrator/output-ablation/
+critic/output-ablation/
+critic/output-ablation-loopon/

@@ -1,0 +1,27 @@
+{
+  "verdict": "fail",
+  "reason": "the reproduced value is worse than the claim beyond tolerance (binomial noise of the evaluation set)",
+  "recommendation": "guided_retry",
+  "claim_id": "c5",
+  "metric": "test error",
+  "dataset": "MNIST",
+  "unit": "%",
+  "claimed": 0.87,
+  "reproduced": 1.1700000000000044,
+  "run_values": [
+    1.1700000000000044
+  ],
+  "higher_is_better": false,
+  "gap": 0.3000000000000044,
+  "relative_gap": 0.34482758620690157,
+  "tolerance": 0.18573432639121937,
+  "reporting_precision": 0.005,
+  "test_noise": 0.09286716319560968,
+  "run_spread": null,
+  "evidence": "binomial noise of the evaluation set",
+  "exceeds_claim": false,
+  "merged_claim_ids": [
+    "c5"
+  ],
+  "metrics_mode": "full"
+}

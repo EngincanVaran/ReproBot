@@ -1,0 +1,411 @@
+{
+  "paper_id": "2017-11 - Distilling a Neural Network Into a Soft Decision Tree",
+  "source_pdf": null,
+  "reader_output": {
+    "paper": "2017-11 - Distilling a Neural Network Into a Soft Decision Tree",
+    "source_markdown": "ocr/output/vlm/2017-11 - Distilling a Neural Network Into a Soft Decision Tree.md",
+    "method_summary": {
+      "problem": "Deep neural networks classify very effectively but their decisions are hard to explain because they rely on distributed, hierarchical representations: intermediate hidden units cannot be understood in terms of meaningful input/output variables, the marginal effect of any single unit's activation depends on the joint configuration of all other units in its layer, and the network cannot distinguish true regularities from spurious ones fit to sampling peculiarities of the training set. Decision trees, in contrast, are easy to explain since a classification depends on a short, directly input-grounded sequence of decisions, but they generalize poorly because nodes deep in the tree are trained on only a small fraction of the data and therefore overfit unless training data is exponentially large relative to tree depth. Existing post-hoc explanation techniques for neural nets (e.g., gradient-based visualization of an exciting input, or fitting a local explainable model around a region of interest) are also criticized: the former shows only a single point on a manifold of inputs that could produce the same activation pattern, and the latter requires fitting a new explainable model for every region of interest and explains behavior only via first-order changes in a discretized input representation.",
+      "core_idea": "The paper trains a soft binary decision tree (\"hierarchical mixture of bigots\") by mini-batch gradient descent, where every inner node has a learned linear filter and bias defining a soft (sigmoid, temperature-scaled) probabilistic branching decision, and every leaf is a \"bigot\" holding a fixed, learned static distribution over output classes that does not depend on the input. Rather than training this tree directly on the hard training labels, the tree is trained via distillation: a separately trained, high-accuracy deep neural network provides soft target distributions (composite of true labels and the network's predictions) that serve as the training signal for the tree's cross-entropy loss, weighted by each leaf's path probability. At test time the tree itself (using the single most-probable-path leaf's distribution) is used as the deployed, interpretable model, so a classification is explained simply by listing the sequence of learned filters and binary decisions along the root-to-leaf path.",
+      "novelty": "Relative to standard decision tree construction (e.g., greedy, axis-aligned splitting one node at a time as in classical decision tree learning), this method learns all nodes' non-axis-aligned linear filters jointly via gradient descent over a pre-fixed tree shape, and uses soft (probabilistic) rather than hard branching. Relative to prior hierarchical mixture-of-experts models, the leaf \"experts\" are simplified to static, input-independent distributions (\"bigots\"). Relative to prior explanation methods for neural nets (gradient-ascent visualization of neuron-exciting inputs, and local surrogate-model explanations like LIME), the paper's approach avoids visualizing a single unrepresentative input point or needing a bespoke local model per input region, instead offering one global, directly inspectable hierarchical-decision model whose explanation is a fixed, short sequence of learned filters. The overarching innovation is combining this soft decision tree structure with knowledge distillation (using a trained neural network's soft predictions, rather than raw labels or unlabelled/generated data alone) as the training signal, so that the tree inherits some of the neural net's superior generalization while remaining a directly interpretable hierarchical-decision model, rather than requiring an exponentially large labelled dataset.",
+      "summary": "The paper addresses the tension between the strong generalization of deep neural networks and their poor interpretability, contrasting this with decision trees, which are easy to explain via a short sequence of input-grounded decisions but tend to overfit because their lower nodes see only a small fraction of training data; it also critiques existing neural-net explanation techniques (gradient-based saliency visualization and local surrogate models like LIME) as either showing an unrepresentative single input or requiring a new explainable model per query region. To resolve this, the authors propose training a \"soft decision tree\" whose inner nodes make soft, learned linear (non-axis-aligned) branching decisions via a sigmoid function and whose leaves hold fixed learned class distributions (\"bigots\"), all trained jointly by mini-batch gradient descent rather than the standard greedy node-by-node tree construction. Crucially, instead of training this tree on hard labels alone, the paper distills the knowledge of an already-trained, more accurate deep neural network into the tree by using the network's (soft) predictions as training targets, transferring some of the network's generalization ability into a model that remains directly explainable as a fixed-length path of filters from root to leaf. At test time, the soft decision tree\u2014not the original network\u2014is used as the deployed classifier, trading a modest amount of accuracy for a model whose every decision can be traced and understood, and the paper introduces regularization terms to prevent training from collapsing into unbalanced, poorly generalizing trees. This offers a concrete route to interpretable classification that leverages, rather than tries to directly interpret, a neural network's superior representational capacity.",
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1)",
+        "Section 1 Introduction continued (transcribed page 2)",
+        "Section 2 The Hierarchical Mixture of Bigots (transcribed page 2)",
+        "Section 2 continued (transcribed page 3)",
+        "Section 3 Regularizers (transcribed page 4)",
+        "Section 5 Explaining how a soft decision tree makes a classification (transcribed page 5-6)",
+        "Section 7 Conclusion (transcribed page 7)"
+      ]
+    },
+    "architecture_notes": {
+      "model_name": "Soft Decision Tree (Hierarchical Mixture of Bigots)",
+      "overall_structure": "The model is a binary tree of fixed, pre-chosen size (depth is chosen before training). Each inner node i takes the input vector x (the same raw input is given to every inner node in the tree, not a transformed/pooled version) and computes a scalar via a learned linear filter w_i and bias b_i, passed through a (temperature-scaled) sigmoid to give the probability of routing to the right child (Eq. 1, with inverse temperature beta). The path probability of reaching any node is the product of the branching probabilities (or their complements) along the path from the root. Each leaf node has its own learned, static (input-independent) categorical distribution over the K output classes, parameterized by learned logits phi and turned into a probability distribution via a softmax-like normalization (Eq. 2). At inference, the model's output is defined as the distribution Q at the leaf with the greatest path probability (the paper also mentions an alternative of path-probability-weighted averaging over all leaves' distributions, but states this is not used for the rest of the paper because it is harder to explain). Training is done with mini-batch gradient descent jointly over all inner-node filters/biases and all leaf distributions simultaneously (not the standard greedy per-node tree-building approach), minimizing a path-probability-weighted cross-entropy loss (Eq. 3) between each leaf's distribution and a target distribution T (which may be the true one-hot label, or, for distillation, soft targets produced by a separately trained neural network). Additional regularization terms (Eqs. 4-5) that encourage inner nodes to route roughly half their probability mass to each sub-tree are added to the training objective, with a strength that decays exponentially with node depth and using a depth-scaled exponentially-decaying running average of actual routing probabilities.",
+      "components": [
+        {
+          "name": "Inner node (routing/decision unit)",
+          "role": "Located at every non-leaf position of the binary tree; computes the probability of routing input x to its right child, based directly on the raw input vector.",
+          "specification": "Each inner node i has a learned filter w_i (a weight vector matching the input dimensionality) and a learned scalar bias b_i. The right-branch probability is p_i(x) = sigma(x w_i + b_i) (Eq. 1), modified to include a learned or fixed inverse temperature beta: p_i(x) = sigma(beta(x w_i + b_i)). The left-branch probability is 1 - p_i(x).",
+          "source": "Section 2, Eq. 1 and following paragraph (transcribed page 2-3); Figure 1 description block (transcribed page 3)"
+        },
+        {
+          "name": "Leaf node (bigot / static output distribution)",
+          "role": "Located at every leaf of the tree; produces a fixed categorical distribution over the K classes regardless of the specific input, used as the model's output distribution when that leaf has the maximum path probability for a given input.",
+          "specification": "Each leaf l has a set of learned parameters phi^l_k (one per class k). The leaf's output distribution is computed as Q^l_k = exp(phi^l_k) / sum_{k'} exp(phi^l_{k'}) (Eq. 2), i.e. a softmax over the leaf's learned logits, independent of the input x.",
+          "source": "Section 2, Eq. 2 (transcribed page 2); Figure 1 description block (transcribed page 3)"
+        },
+        {
+          "name": "Path-probability computation / routing structure",
+          "role": "Combines the per-node branching probabilities along the root-to-node path to determine, for a given input, the probability of arriving at each node/leaf, and to determine which leaf is 'selected' (the one with maximum path probability) for prediction and explanation.",
+          "specification": "P^i(x) for a node i is the product of the branch probabilities (p or 1-p as appropriate) of all ancestor decisions from the root to node i (used in Eq. 3, 4, 5). At test/explanation time, the model's chosen output is the distribution Q at the leaf with the greatest path probability, per Figure 1's decision box ('Q_l if sigma(xw+b) < 0.5, Q_r otherwise' for the single-node example).",
+          "source": "Section 2 (transcribed page 2-3); Figure 1 description block (transcribed page 3); Eq. 3-5 (transcribed page 4)"
+        },
+        {
+          "name": "Inner-node usage regularizer (penalty term)",
+          "role": "An additional term added to the training loss (not part of the forward computation used for prediction) that pushes each inner node toward routing roughly equal probability mass to its left and right sub-trees during training, to avoid poor plateau solutions.",
+          "specification": "For node i, alpha_i = (sum_x P^i(x) p_i(x)) / (sum_x P^i(x)) (Eq. 4). The penalty is C = -lambda * sum_{i in InnerNodes} [0.5 log(alpha_i) + 0.5 log(1-alpha_i)] (Eq. 5), where lambda is a hyper-parameter set prior to training. The penalty strength is scaled to decay exponentially with node depth d, proportional to 2^{-d}, and the actual probabilities used to compute alpha_i are tracked via an exponentially decaying running average whose time window scale grows exponentially with node depth.",
+          "source": "Section 3 'Regularizers', Eq. 4-5 and surrounding paragraphs (transcribed page 4)"
+        }
+      ],
+      "key_equations": [
+        {
+          "latex": "p_i(\\mathbf{x}) = \\sigma(\\mathbf{x}\\mathbf{w}_i + b_i) \\tag{1}",
+          "label": "1",
+          "defines": "the probability of taking the rightmost branch at inner node i, as a function of the raw input x",
+          "is_own_method": true
+        },
+        {
+          "latex": "Q_k^\\ell = \\frac{\\exp(\\phi_k^\\ell)}{\\sum_{k'} \\exp(\\phi_{k'}^\\ell)},",
+          "label": "2",
+          "defines": "the static categorical output distribution learned at leaf node l",
+          "is_own_method": true
+        },
+        {
+          "latex": "\\text{L}(\\mathbf{x}) = -\\log \\left( \\sum_{\\ell \\in LeafNodes} P^\\ell(\\mathbf{x}) \\sum_k T_k \\log Q_k^\\ell \\right) \\tag{3}",
+          "label": "3",
+          "defines": "the training loss: path-probability-weighted cross entropy between each leaf's distribution and the target distribution T for a training case x",
+          "is_own_method": true
+        },
+        {
+          "latex": "\\alpha_i = \\frac{\\sum_{\\mathbf{x}} P^i(\\mathbf{x}) p_i(\\mathbf{x})}{\\sum_{\\mathbf{x}} P^i(\\mathbf{x})} \\tag{4}",
+          "label": "4",
+          "defines": "the average fraction of path-probability-weighted mass routed to the right sub-tree at inner node i, used in the regularization penalty",
+          "is_own_method": true
+        },
+        {
+          "latex": "C = -\\lambda \\sum_{i \\in InnerNodes} 0.5\\log(\\alpha_i) + 0.5\\log(1-\\alpha_i) \\tag{5}",
+          "label": "5",
+          "defines": "the auxiliary regularization penalty term added to training that encourages balanced left/right sub-tree usage at each inner node",
+          "is_own_method": true
+        }
+      ],
+      "depth_or_scale": "The paper does not give a closed-form depth/width scaling formula; it only reports specific fixed depths chosen per experiment (e.g. 'a soft decision tree of depth 8' for MNIST and Connect4, 'a tree of depth 9' for the Letter dataset, and 'a soft decision tree of depth 4' for the visualization in Figure 2), with depth apparently treated as a hyper-parameter picked before training rather than derived from a formula.",
+      "unstated_details": [
+        "The dimensionality/shape of the per-node filter w_i is not stated beyond 'matching the input' - i.e. whether inputs are flattened raw pixels, and the exact input vector size for each dataset (MNIST, Connect4, Letter), is not spelled out in the architecture section.",
+        "The value or parameterization of the inverse temperature beta (e.g. whether it is learned per-node, learned globally, or a fixed constant, and its numeric value) is not stated.",
+        "The initialization scheme for the inner-node weights w_i, biases b_i, and leaf logits phi is not stated.",
+        "Whether/where any explicit tree-depth-dependent architectural change (other than the regularizer's exponential decay) occurs is not stated (e.g. no confirmation of whether every inner node uses the same filter form, or the total number of leaves precisely as a function of depth d, since depth is only given as a hyperparameter with no explicit relation like 'number of leaves = 2^d' stated in the paper).",
+        "The architecture of the neural network used to produce soft targets for the MNIST distillation experiment is described only partially: 'A neural net with two convolutional hidden layers and a penultimate fully connected layer' \u2014 the paper does not give kernel sizes, number of filters/channels, strides, pooling, fully-connected layer width, or activation functions for this teacher network.",
+        "The architecture of the neural net(s) used to generate soft targets for the Connect4 dataset is entirely unspecified \u2014 the paper only says a neural net was 'first training' and then used to provide soft targets, with no description whatsoever of its layers, depth, width, or input encoding of the Connect4 board.",
+        "The architecture of the 'ensemble of neural nets' used to generate soft targets for the Letter dataset is entirely unspecified \u2014 the paper gives only the ensemble's reported test accuracy (95.9%) with no description of how many networks comprise the ensemble, each network's layer structure/depth/width, how their outputs are combined into soft targets, or input encoding.",
+        "The precise mechanism for combining true labels and neural net predictions into the 'composite' soft target used for the MNIST distilled tree (mentioned as 'a composite of the true labels and the predictions of the neural network') is not specified quantitatively (e.g. no mixing weight/formula given).",
+        "Whether/how the same raw input x is preprocessed before being fed into inner-node filters (e.g. normalization, flattening of 2D board/image data) is not stated.",
+        "No specification is given of how ties or numerical edge cases (e.g. p_i(x) exactly 0.5) in the 'greatest path probability' leaf-selection rule are handled beyond the depth-4 example figure."
+      ],
+      "sources_examined": [
+        "Section 2 'The Hierarchical Mixture of Bigots' (transcribed page 2-3)",
+        "Figure 1 description block (transcribed page 3)",
+        "Section 3 'Regularizers' (transcribed page 4)",
+        "Figure 2 description block (transcribed page 5)",
+        "Section 4 'MNIST Results' (transcribed page 5)",
+        "Section 6 'Other Data Sets and Results' (transcribed page 6)",
+        "Figure 3 description block (transcribed page 7)"
+      ]
+    },
+    "claims": {
+      "claims": [
+        {
+          "claim_id": "c1",
+          "metric": "test accuracy",
+          "dataset": "MNIST",
+          "reported_value": 94.45,
+          "unit": "%",
+          "source": "Section 4 (MNIST Results), transcribed page 5",
+          "model_variant": "soft decision tree depth 8, trained on true targets"
+        },
+        {
+          "claim_id": "c2",
+          "metric": "test accuracy",
+          "dataset": "MNIST",
+          "reported_value": 99.21,
+          "unit": "%",
+          "source": "Section 4 (MNIST Results), transcribed page 5",
+          "model_variant": "neural net (2 conv layers + fully connected)"
+        },
+        {
+          "claim_id": "c3",
+          "metric": "test accuracy",
+          "dataset": "MNIST",
+          "reported_value": 96.76,
+          "unit": "%",
+          "source": "Section 4 (MNIST Results), transcribed page 5",
+          "model_variant": "soft decision tree distilled from neural net (soft targets)"
+        },
+        {
+          "claim_id": "c4",
+          "metric": "test accuracy",
+          "dataset": "Connect4",
+          "reported_value": 80.6,
+          "unit": "%",
+          "source": "Section 6 (Other Data Sets and Results), transcribed page 6",
+          "model_variant": "soft decision tree depth 8, distilled from neural net"
+        },
+        {
+          "claim_id": "c5",
+          "metric": "test accuracy",
+          "dataset": "Connect4",
+          "reported_value": 78.63,
+          "unit": "%",
+          "source": "Section 6 (Other Data Sets and Results), transcribed page 6. Note: this own-method result of 78.63% is compared in the text against a baseline from Norouzi et al. 2015, which reported 76.50% at depth 8 and 77.45% at depth 20 on the same dataset; these baseline figures are prior work and are excluded from this claims list, but are noted here as the comparison context the paper's own 78.63%/80.60% figures are meant to beat.",
+          "model_variant": "soft decision tree depth 8, trained without distillation (raw data)"
+        },
+        {
+          "claim_id": "c6",
+          "metric": "test accuracy",
+          "dataset": "Letter",
+          "reported_value": 78.0,
+          "unit": "%",
+          "source": "Section 6 (Other Data Sets and Results), transcribed page 6",
+          "model_variant": "soft decision tree depth 9, trained on raw training data (not distilled)"
+        },
+        {
+          "claim_id": "c7",
+          "metric": "test accuracy",
+          "dataset": "Letter",
+          "reported_value": 81.0,
+          "unit": "%",
+          "source": "Section 6 (Other Data Sets and Results), transcribed page 6",
+          "model_variant": "soft decision tree distilled from ensemble of neural nets (depth not explicitly stated by paper; presumed same depth-9 architecture as the non-distilled Letter result, but this is an assumption not confirmed in the text)"
+        },
+        {
+          "claim_id": "c8",
+          "metric": "test accuracy",
+          "dataset": "Letter",
+          "reported_value": 95.9,
+          "unit": "%",
+          "source": "Section 6 (Other Data Sets and Results), transcribed page 6",
+          "model_variant": "ensemble of neural nets (source of soft targets for distillation)"
+        }
+      ],
+      "tables_examined": [],
+      "candidates_considered": 9
+    },
+    "hyperparameters": {
+      "hyperparameters": [
+        {
+          "name": "training algorithm",
+          "value": "mini-batch gradient descent",
+          "source": "Section 2, transcribed page 2",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "inverse temperature beta",
+          "value": "An inverse temperature beta is applied to the filter activations prior to the sigmoid (p_i(x) = sigma(beta(x*w_i + b_i))) to avoid overly soft decisions; the paper describes this as a hyperparameter but never states its numeric value for any experiment",
+          "source": "Section 2, transcribed page 3",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "regularization penalty strength lambda",
+          "value": "lambda is described as 'a hyper-parameter that determines the strength of the penalty and is set prior to training'; the paper does not report the numeric value used for lambda in any experiment, only that its effective strength is decayed exponentially with node depth d proportional to 2^-d",
+          "source": "Section 3, transcribed page 4",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "penalty depth decay",
+          "value": "penalty strength decays exponentially with depth d, proportional to 2^-d",
+          "source": "Section 3, transcribed page 4",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "running average time window for sub-tree usage probabilities",
+          "value": "an exponentially decaying running average of the actual probabilities is maintained with a time window that is exponentially proportional to the depth of the node (no specific numeric decay rate or window size given)",
+          "source": "Section 3, transcribed page 4",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "tree depth",
+          "value": "8",
+          "source": "Section 4, transcribed page 5",
+          "unit": null,
+          "model_variant": "MNIST soft decision tree"
+        },
+        {
+          "name": "training targets",
+          "value": "soft targets that were a composite of the true labels and the predictions of the neural network",
+          "source": "Section 4, transcribed page 5",
+          "unit": null,
+          "model_variant": "MNIST soft decision tree distilled from neural net"
+        },
+        {
+          "name": "tree depth",
+          "value": "8",
+          "source": "Section 6, transcribed page 6",
+          "unit": null,
+          "model_variant": "Connect4 soft decision tree distilled from neural net"
+        },
+        {
+          "name": "tree depth",
+          "value": "9",
+          "source": "Section 6, transcribed page 6",
+          "unit": null,
+          "model_variant": "Letter dataset soft decision tree trained on raw data"
+        },
+        {
+          "name": "training targets",
+          "value": "distilled from an ensemble of neural nets with 95.9% test accuracy",
+          "source": "Section 6, transcribed page 6",
+          "unit": null,
+          "model_variant": "Letter dataset soft decision tree distilled from ensemble"
+        },
+        {
+          "name": "neural net architecture (teacher for MNIST)",
+          "value": "two convolutional hidden layers and a penultimate fully connected layer",
+          "source": "Section 4, transcribed page 5",
+          "unit": null,
+          "model_variant": "MNIST teacher neural net"
+        }
+      ],
+      "sources_examined": [
+        "Section 2 (The Hierarchical Mixture of Bigots) prose, transcribed page 2-4, describing training procedure, loss function, and inverse temperature beta",
+        "Section 3 (Regularizers) prose, transcribed page 4, describing penalty term, lambda hyperparameter, and depth-based decay",
+        "Section 4 (MNIST Results) prose, transcribed page 5, describing tree depth and soft target training",
+        "Section 6 (Other Data Sets and Results) prose, transcribed page 6, describing Connect4 and Letter dataset tree depths and distillation setups",
+        "No dedicated hyperparameter table was found anywhere in the document; all training configuration details appear only in prose sections"
+      ]
+    },
+    "data_pipeline": {
+      "reference_urls": [],
+      "datasets": [
+        {
+          "dataset": "MNIST",
+          "dataset_source": "not stated - paper does not name a specific loader or library, only refers to it as 'MNIST'",
+          "normalization": "not stated",
+          "augmentation": "not stated",
+          "split_convention": "not stated - paper only reports 'test accuracy' figures, implying a standard train/test split but does not specify numbers",
+          "source": "Section 4 MNIST Results, transcribed page 5"
+        },
+        {
+          "dataset": "Connect4",
+          "dataset_source": "Connect4 dataset [Lichman, 2013] (UCI machine learning repository), comprised of board states of the game connect 4 as input and the final outcome (player 1 win, player 2 win, or tie) as target",
+          "normalization": "not stated",
+          "augmentation": "not stated",
+          "split_convention": "not stated - paper reports 'test accuracy' but does not specify how train/test split was made",
+          "source": "Section 6 Other Data Sets and Results, transcribed page 6"
+        },
+        {
+          "dataset": "Letter",
+          "dataset_source": "Letter dataset [Lichman, 2013] (UCI machine learning repository), comprised of primitive numerical attributes of capital English characters",
+          "normalization": "not stated",
+          "augmentation": "not stated",
+          "split_convention": "not stated - paper reports 'raw training data' and 'test accuracy' but does not specify split sizes",
+          "source": "Section 6 Other Data Sets and Results, transcribed page 6"
+        }
+      ]
+    },
+    "validation": {
+      "flags": [
+        {
+          "relates_to": "claims: c5",
+          "description": "The 78.63% Connect4 result is described in the paper as achieved 'Without distilling from a neural net' (i.e., trained directly on raw data), but the claims entry's note conflates comparison context with baseline framing; more importantly the model_variant label '(trained without distillation (raw data))' is correct, but the entry's lengthy note misstates emphasis - it should be verified that 78.63% is indeed the paper's own non-distilled result, not a value attributable to Norouzi et al. The paper text confirms 78.63% is the paper's own value, so this is consistent; no actual error, but the note is unusually verbose and mixes commentary that could be split more cleanly. Flagging for review only."
+        },
+        {
+          "relates_to": "cross-check: claims vs. hyperparameters",
+          "description": "For c7 (Letter, distilled, 81.0%), the claims entry explicitly states the tree depth is 'not explicitly stated by paper; presumed same depth-9' as an assumption, but the hyperparameters extraction does not list a corresponding depth entry for the distilled Letter tree at all, and does not flag this same uncertainty - inconsistent level of caveat between the two extractions for the same fact."
+        },
+        {
+          "relates_to": "architecture_notes: depth_or_scale",
+          "description": "The depth_or_scale field says Figure 2 shows 'a soft decision tree of depth 4' but the figure caption/description in the paper states 'a soft decision tree of depth 4 trained on MNIST' with root + 3 levels of internal nodes + leaf layer (4 levels of nodes total, 8 leaves) - this matches, but worth confirming depth counting convention (depth 4 meaning 4 levels of decisions vs 3) is used consistently with the depth-8 MNIST result tree elsewhere, since the paper never clarifies whether 'depth' counts the root as level 0 or 1. This ambiguity is already partially captured in unstated_details but not explicitly cross-checked against Figure 2's depth-4 tree structure which only shows 3 internal decision levels (root, then 2 more levels) not 4."
+        },
+        {
+          "relates_to": "hyperparameters: neural net architecture (teacher for MNIST)",
+          "description": "This entry is duplicated content from architecture_notes' unstated_details (teacher architecture description), but hyperparameters lists it as a known/stated value while architecture_notes' unstated_details also lists the teacher architecture as an unstated detail (missing kernel sizes, filters, etc.) - the two extractions are not contradictory but slightly overlapping; flagging to ensure the partial info given (2 conv layers + FC layer) is consistently treated as 'stated but incomplete' rather than 'fully unstated' in both places, which it is, so no real conflict - only surface overlap noted."
+        }
+      ],
+      "attempts": 3,
+      "retried_stages": [
+        "claims",
+        "hyperparameters",
+        "architecture_notes"
+      ]
+    }
+  },
+  "coder_output": {
+    "script_path": "coder/output-ablation/2017-11 - Distilling a Neural Network Into a Soft Decision Tree/train.py",
+    "script_version": 1,
+    "diff_from_previous": null
+  },
+  "runner_output": {
+    "status": "halted",
+    "reproduced_metrics": {
+      "claim_id": "c1",
+      "metric": "test accuracy",
+      "unit": "%",
+      "value": 7.8125,
+      "higher_is_better": true,
+      "task_type": "classification",
+      "train_loss": -0.8360863626003265,
+      "eval_loss": -0.8360986709594727,
+      "train_metric": 9.411764705882353,
+      "eval_metric": 7.8125,
+      "epochs_completed": 1,
+      "num_train_samples": 255,
+      "num_eval_samples": 128,
+      "wall_clock_seconds": 0.6283695697784424
+    },
+    "logs_path": "orchestrator/output-ablation/2017-11 - Distilling a Neural Network Into a Soft Decision Tree/logs/attempt-1",
+    "error_trace": null
+  },
+  "critic_output": null,
+  "retry_count": 0,
+  "retry_budget": 0,
+  "fidelity_retry_count": 0,
+  "history": [
+    {
+      "timestamp": "2026-10-08T19:21:45+00:00",
+      "stage": "orchestrator",
+      "event": "loop started",
+      "detail": "retry_budget=0, plateau_threshold=0.98, modes=probe/smoke/capped/full"
+    },
+    {
+      "timestamp": "2026-10-08T19:23:21+00:00",
+      "stage": "coder",
+      "event": "generated script v1",
+      "detail": "claim=c1, 429 lines"
+    },
+    {
+      "timestamp": "2026-10-08T19:23:27+00:00",
+      "stage": "runner",
+      "event": "ran v1: halted",
+      "detail": "stage_reached=probe, failed_stage=probe, exit_code=0, 6.18s, no triage, halted by check-up 'loss_below_lower_bound' at epoch 1"
+    },
+    {
+      "timestamp": "2026-10-08T19:23:27+00:00",
+      "stage": "orchestrator",
+      "event": "loop finished: retry_budget_exhausted",
+      "detail": "a live check-up halted the run because training was not healthy, and the retry budget (0) is spent"
+    }
+  ],
+  "verdict": "retry_budget_exhausted",
+  "attempts": [
+    {
+      "version": 1,
+      "feedback_given": null,
+      "script_path": "orchestrator/output-ablation/2017-11 - Distilling a Neural Network Into a Soft Decision Tree/attempts/v1_train.py",
+      "script_chars": 19254,
+      "plateau_ratio": null,
+      "runner_status": "halted",
+      "stage_reached": "probe",
+      "failed_stage": "probe",
+      "exit_code": 0,
+      "wall_clock_seconds": 6.18,
+      "triage_category": null,
+      "triage_reasoning": null,
+      "suggested_fix": null,
+      "syntax_error": null,
+      "logs_path": "orchestrator/output-ablation/2017-11 - Distilling a Neural Network Into a Soft Decision Tree/logs/attempt-1",
+      "action": "stop",
+      "verdict": "retry_budget_exhausted",
+      "reason": "a live check-up halted the run because training was not healthy, and the retry budget (0) is spent",
+      "checkup_rule": "loss_below_lower_bound",
+      "checkup_message": "train_loss reached -0.8361, below the loss's own lower bound of 0 (epoch 1/1 train_loss=-0.8361 eval_loss=-0.8361 test accuracy(eval)=7.812% chance=11.37%).",
+      "critic_verdict": null
+    }
+  ]
+}

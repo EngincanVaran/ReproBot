@@ -1,0 +1,465 @@
+{
+  "paper_id": "2003 - A Practical Guide to Support Vector Classification",
+  "source_pdf": null,
+  "reader_output": {
+    "paper": "2003 - A Practical Guide to Support Vector Classification",
+    "source_markdown": "ocr/output/vlm/2003 - A Practical Guide to Support Vector Classification.md",
+    "method_summary": {
+      "problem": "The paper addresses the common experience of SVM beginners who, despite SVM being considered easier to use than neural networks, obtain unsatisfactory classification results because they skip several easy but important steps. As the paper frames it, typical newcomers simply convert their data into the SVM package's format, randomly try a few kernels and parameters, and test\u2014without any principled data preparation or systematic parameter search\u2014leading to poor accuracy even on data where much better performance is achievable.",
+      "core_idea": "The paper's central contribution is a simple, ordered \"cookbook\" procedure for applying SVM classification: transform the data into the proper format, perform simple linear scaling of features (typically to [-1,1] or [0,1], applying identical scaling factors to training and test data), default to the RBF kernel as a first choice, and then perform a systematic grid-search over the RBF hyperparameters C and gamma using v-fold cross-validation (trying exponentially spaced grid values, first coarse then refined in the promising region) to select parameters before training the final model on the whole training set and testing.",
+      "novelty": "Relative to the ad hoc practice of beginners\u2014arbitrarily trying kernels/parameters without scaling or validation\u2014the paper's novelty is not a new SVM algorithm or kernel but a codified, justified sequence combining known but under-used elements: mandatory feature scaling (as emphasized generally for neural nets by Sarle's FAQ, here argued to matter equally for SVM because of inner-product-based kernel values), a principled default choice of the RBF kernel (justified via the fact, drawn from Keerthi and Lin's analysis, that RBF generalizes the linear kernel and behaves like the sigmoid kernel under certain parameters, while avoiding the numerical pitfalls of polynomial/sigmoid kernels), and deliberate preference for exhaustive but parallelizable grid-search with cross-validation over more \"advanced\" approximate or heuristic parameter-search methods that the paper explicitly declines to adopt because of trust and parallelization concerns. The paper also draws a contrast with when this recipe is inappropriate\u2014citing LIBLINEAR as the preferred alternative to plain LIBSVM/RBF when the number of features or instances is very large\u2014rather than proposing any new solver.",
+      "summary": "This paper targets the practical gap between SVM's theoretical ease of use and the poor results beginners typically get when they skip simple preprocessing and tuning steps, instead just formatting their data, guessing a kernel/parameters, and testing directly. Its central idea is a concrete, sequential recipe\u2014not a new algorithm\u2014consisting of scaling all features consistently across training and test sets, defaulting to the RBF kernel as a sensible general-purpose nonlinear kernel, and performing a two-stage (coarse-to-fine) grid-search over the penalty parameter C and kernel parameter gamma guided by cross-validation accuracy, after which the chosen parameters are used to retrain on the full training set before final testing. The novelty lies in packaging and justifying this specific combination of steps rather than inventing new machinery: the paper argues scaling matters for SVM much as it does for neural networks, that RBF is preferable to polynomial or sigmoid kernels because it generalizes the linear kernel, has fewer hyperparameters, and avoids numerical extremes, and that despite existing \"advanced\" heuristic parameter-search methods, exhaustive grid-search is preferred for its trustworthiness and easy parallelizability given only two parameters to tune. The paper further delineates when this recipe should be abandoned\u2014recommending the linear-kernel-oriented LIBLINEAR software instead of RBF/LIBSVM when feature or instance counts are very large\u2014situating its guidance as practical advice rather than a claim of universal optimality. The significance is pedagogical and practical: by following this simple procedure, users with real, previously poorly-performing datasets can obtain markedly improved classification accuracy without needing to understand SVM theory deeply.",
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1)",
+        "Section 1.1 Real-World Examples (transcribed page 2)",
+        "Section 1.2 Proposed Procedure (transcribed page 3)",
+        "Section 2 Data Preprocessing (transcribed page 3)",
+        "Section 2.2 Scaling (transcribed page 4)",
+        "Section 3 Model Selection (transcribed page 4)",
+        "Section 3.1 RBF Kernel (transcribed page 4)",
+        "Section 3.2 Cross-validation and Grid-search (transcribed page 5)",
+        "Section 4 Discussion (transcribed page 8)",
+        "Appendix C When to Use Linear but not RBF Kernel (transcribed page 17)"
+      ]
+    },
+    "architecture_notes": {
+      "model_name": "not applicable - this paper does not propose a novel model architecture",
+      "overall_structure": "This paper is a practical/tutorial guide to using standard, pre-existing Support Vector Machine (SVM) classifiers (as implemented in the LIBSVM and LIBLINEAR software packages) rather than a paper that proposes a new model architecture. The 'procedure' it describes is a data-processing and hyperparameter-selection workflow, not a network/layer architecture: (1) transform data into the SVM package's input format, (2) linearly scale each feature to a fixed range such as [-1,1] or [0,1], (3) choose the standard RBF kernel K(x,y) = exp(-gamma||x-y||^2) as the SVM kernel, (4) perform grid-search combined with v-fold cross-validation over the penalty parameter C and kernel parameter gamma to select hyperparameters, (5) retrain the standard SVM optimization problem (Eq. 1) with the chosen (C, gamma) on the full training set, and (6) predict on test data using the resulting SVM decision function. The four kernel forms (linear, polynomial, RBF, sigmoid) and the SVM primal optimization problem are all cited as standard prior formulations (Boser et al. 1992; Cortes and Vapnik 1995), not new architectural contributions of this paper. There is no neural network, no layer-by-layer architecture, no novel computational block introduced here; the SVM 'model' itself is the classical margin-maximizing hyperplane-in-kernel-space classifier with no modification described.",
+      "components": [
+        {
+          "name": "Standard SVM classifier (soft-margin, kernelized)",
+          "role": "The classification model used throughout the guide; not a novel architecture proposed by this paper but the standard SVM formulation of Boser et al. (1992) and Cortes and Vapnik (1995), applied via the RBF kernel as recommended default choice.",
+          "specification": "As given in Eq. (1): min_{w,b,xi} (1/2) w^T w + C * sum_i xi_i subject to y_i(w^T phi(x_i)+b) >= 1 - xi_i, xi_i >= 0. The paper explicitly attributes this formulation to Boser et al. (1992) and Cortes and Vapnik (1995); it is not proposed as new by this paper.",
+          "source": "Section 1 Introduction, Eq. (1) (transcribed page 1)"
+        },
+        {
+          "name": "RBF kernel function",
+          "role": "Recommended default kernel mapping used inside the SVM decision function; the paper recommends this as a practical first choice, not as an architectural innovation.",
+          "specification": "K(x_i, x_j) = exp(-gamma * ||x_i - x_j||^2), gamma > 0. Two free hyperparameters C (penalty) and gamma (kernel width) are selected via grid-search and cross-validation; no additional architectural structure (e.g., number of support vectors, feature space dimensionality) is specified since these are outputs of the standard SVM solver, not design choices of a novel architecture.",
+          "source": "Section 1 Introduction and Section 3.1 RBF Kernel (transcribed pages 2, 4)"
+        }
+      ],
+      "key_equations": [
+        {
+          "latex": "\\min_{\\mathbf{w},b,\\boldsymbol{\\xi}} \\quad \\frac{1}{2}\\mathbf{w}^T\\mathbf{w} + C\\sum_{i=1}^{l}\\xi_i \\\\ \\text{subject to} \\quad y_i(\\mathbf{w}^T\\phi(\\mathbf{x}_i) + b) \\geq 1 - \\xi_i, \\\\ \\xi_i \\geq 0.",
+          "label": "1",
+          "defines": "The standard soft-margin SVM primal optimization problem (from prior work: Boser et al. 1992; Cortes and Vapnik 1995), used as-is by this guide.",
+          "is_own_method": false
+        },
+        {
+          "latex": "K(\\mathbf{x}_i, \\mathbf{x}_j) = \\mathbf{x}_i^T\\mathbf{x}_j",
+          "label": "not numbered",
+          "defines": "Linear kernel, one of four standard kernels listed (prior work / textbook standard), presented for completeness, not a novel contribution.",
+          "is_own_method": false
+        },
+        {
+          "latex": "K(\\mathbf{x}_i, \\mathbf{x}_j) = (\\gamma \\mathbf{x}_i^T\\mathbf{x}_j + r)^d, \\gamma > 0",
+          "label": "not numbered",
+          "defines": "Polynomial kernel, standard kernel form listed among the four basic kernels.",
+          "is_own_method": false
+        },
+        {
+          "latex": "K(\\mathbf{x}_i, \\mathbf{x}_j) = \\exp(-\\gamma\\|\\mathbf{x}_i - \\mathbf{x}_j\\|^2), \\gamma > 0",
+          "label": "not numbered",
+          "defines": "Radial basis function (RBF) kernel, the kernel the paper recommends as a practical default choice; standard textbook form, not newly proposed.",
+          "is_own_method": false
+        },
+        {
+          "latex": "K(\\mathbf{x}_i, \\mathbf{x}_j) = \\tanh(\\gamma \\mathbf{x}_i^T\\mathbf{x}_j + r)",
+          "label": "not numbered",
+          "defines": "Sigmoid kernel, standard kernel form listed among the four basic kernels.",
+          "is_own_method": false
+        },
+        {
+          "latex": "K(\\mathbf{x}, \\mathbf{y}) = e^{-\\gamma\\|\\mathbf{x}-\\mathbf{y}\\|^2}",
+          "label": "not numbered",
+          "defines": "Restatement of the RBF kernel within the paper's recommended step-by-step procedure (Section 1.2); same standard kernel, recommended for practical use but not an original architectural contribution.",
+          "is_own_method": false
+        }
+      ],
+      "depth_or_scale": "Not applicable. The paper defines no network depth, width, layer count, or architectural scaling rule of any kind. Its only 'scaling' discussion concerns data preprocessing (linearly scaling feature values to [-1,1] or [0,1]), which is a preprocessing step, not a model depth/width/capacity scaling rule.",
+      "unstated_details": [
+        "This paper does not propose any novel model architecture at all - it is a practical usage guide for applying standard, off-the-shelf SVM software (LIBSVM/LIBLINEAR) with recommended preprocessing and hyperparameter search steps; there is therefore no per-layer, per-block, or per-unit architecture to specify beyond the classical SVM formulation and standard kernel functions already given verbatim in the equations.",
+        "No information is given about the internal implementation details of the SVM solver (e.g., the specific quadratic programming / SMO-type optimization algorithm used to solve Eq. 1); the paper only references the optimization problem abstractly.",
+        "No architectural detail is given regarding how many support vectors, feature-space dimensionality, or decision function form (e.g., explicit bias handling, multi-class extension scheme such as one-vs-one or one-vs-rest) is used when applying SVM to the multi-class datasets mentioned in Table 1 (e.g., Bioinformatics data set with 3 classes) - the paper does not state the multi-class strategy.",
+        "No specification is provided for the exact numeric bounds/step sizes of the grid-search other than the illustrative examples (e.g., 'C = 2^-5, 2^-3, ..., 2^15, gamma = 2^-15, 2^-13, ..., 2^3'); these are examples in the guide, not fixed architectural or algorithmic parameters, and the paper explicitly treats them as illustrative rather than prescriptive.",
+        "No weight initialization, regularization structure beyond the standard soft-margin penalty term C, or any additional architectural component (e.g., feature transformation networks, ensembling, or stacking) is described, since the model is a plain single SVM classifier as defined in Eq. (1)."
+      ],
+      "sources_examined": [
+        "Section 1 Introduction (transcribed page 1-2)",
+        "Section 1.2 Proposed Procedure (transcribed page 3)",
+        "Section 2 Data Preprocessing (transcribed page 3-4)",
+        "Section 3 Model Selection (transcribed page 4-5)",
+        "Section 3.1 RBF Kernel (transcribed page 4-5)",
+        "Section 3.2 Cross-validation and Grid-search (transcribed page 5-8)",
+        "Figure 1 description block (transcribed page 6)",
+        "Figure 2 description block (transcribed page 7)",
+        "Figure 3 description block (transcribed page 7)",
+        "Section 4 Discussion (transcribed page 8)",
+        "Appendix A-C (transcribed pages 8-19)"
+      ]
+    },
+    "claims": {
+      "claims": [
+        {
+          "claim_id": "c1",
+          "metric": "Accuracy by our procedure",
+          "dataset": "Astroparticle",
+          "reported_value": 96.9,
+          "unit": "%",
+          "source": "Table 1, transcribed page 2 (note: Appendix A.1, transcribed page 9, reports the detailed underlying result as grid.py five-fold cross-validation rate 96.8922% and test set accuracy 96.875%, which Table 1 rounds to 96.9%; these are the same experiment, just rounded differently)",
+          "model_variant": null
+        },
+        {
+          "claim_id": "c2",
+          "metric": "Accuracy by our procedure",
+          "dataset": "Bioinformatics",
+          "reported_value": 85.2,
+          "unit": "%",
+          "source": "Table 1, transcribed page 2 (cross-validation accuracy, since no test set is available; matches Appendix A.2, transcribed page 10, grid.py five-fold cross-validation rate 85.1662%, rounded to 85.2%)",
+          "model_variant": null
+        },
+        {
+          "claim_id": "c3",
+          "metric": "Accuracy by our procedure",
+          "dataset": "Vehicle",
+          "reported_value": 87.8,
+          "unit": "%",
+          "source": "Table 1, transcribed page 2 (matches Appendix A.3, transcribed page 11, test set accuracy 87.8049%, rounded to 87.8%)",
+          "model_variant": null
+        }
+      ],
+      "tables_examined": [
+        "Table 1: Problem characteristics and performance comparisons (transcribed page 2)"
+      ],
+      "candidates_considered": 6
+    },
+    "hyperparameters": {
+      "hyperparameters": [
+        {
+          "name": "Kernel type",
+          "value": "RBF (Radial Basis Function) kernel: K(x_i, x_j) = exp(-gamma * ||x_i - x_j||^2), gamma > 0",
+          "source": "Section 3.1 RBF Kernel, transcribed page 4-5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Data scaling range",
+          "value": "Linearly scale each attribute to the range [-1, +1] or [0, 1]",
+          "source": "Section 2.2 Scaling, transcribed page 4",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Model selection method",
+          "value": "grid-search using v-fold (five-fold) cross-validation on (C, gamma) pairs, picking the pair with best cross-validation accuracy",
+          "source": "Section 3.2 Cross-validation and Grid-search, transcribed page 5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Grid search range for C and gamma (coarse grid)",
+          "value": "C = 2^-5, 2^-3, ..., 2^15; gamma = 2^-15, 2^-13, ..., 2^3",
+          "source": "Section 3.2 Cross-validation and Grid-search, transcribed page 5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Cross-validation folds",
+          "value": "5 (five-fold cross-validation)",
+          "source": "Appendix A.1-A.3 examples (grid.py usage), transcribed page 9-11",
+          "unit": "folds",
+          "model_variant": null
+        },
+        {
+          "name": "Best (C, gamma) found - Astroparticle Physics example",
+          "value": "C=2.0, gamma=2.0 with five-fold cross-validation rate=96.8922%",
+          "source": "Appendix A.1 Astroparticle Physics, transcribed page 9",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Best (C, gamma) found - Bioinformatics example",
+          "value": "C=2.0, gamma=0.5 with five-fold cross-validation rate=85.1662%",
+          "source": "Appendix A.2 Bioinformatics, transcribed page 10",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Best (C, gamma) found - Vehicle example",
+          "value": "C=128.0, gamma=0.125 with five-fold cross-validation rate=84.8753%",
+          "source": "Appendix A.3 Vehicle, transcribed page 11",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Fine grid search range (german dataset example)",
+          "value": "C = 2^1, 2^1.25, ..., 2^5; gamma = 2^-7, 2^-6.75, ..., 2^-3",
+          "source": "Section 3.2 / Figure 3 caption, transcribed page 7-8",
+          "unit": null,
+          "model_variant": "Fine grid-search on german dataset"
+        },
+        {
+          "name": "Best (C, gamma) found - german dataset (coarse grid)",
+          "value": "(2^3, 2^-5) with cross-validation rate 77.5%",
+          "source": "Section 3.2 Cross-validation and Grid-search, transcribed page 8",
+          "unit": null,
+          "model_variant": "Coarse grid-search on german dataset"
+        },
+        {
+          "name": "Best (C, gamma) found - german dataset (fine grid)",
+          "value": "(2^3.25, 2^-5.25) with cross-validation rate 77.6%",
+          "source": "Section 3.2 Cross-validation and Grid-search, transcribed page 8",
+          "unit": null,
+          "model_variant": "Fine grid-search on german dataset"
+        },
+        {
+          "name": "Final training procedure",
+          "value": "After best (C, gamma) is found via cross-validation on grid-search, the whole training set is trained again using these parameters to generate the final classifier",
+          "source": "Section 1.2 Proposed Procedure and Section 3.2, transcribed page 3 and 8",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "Best (C, gamma) - Leukemia RBF kernel example",
+          "value": "C=8.0, gamma=0.000030518 (3.0517578125e-05) with five-fold cross-validation rate=97.2222%",
+          "source": "Appendix C.1 Number of instances << number of features, transcribed page 17",
+          "unit": null,
+          "model_variant": "RBF kernel, Leukemia dataset (Appendix C.1)"
+        },
+        {
+          "name": "Best C - Leukemia linear kernel example",
+          "value": "C=0.5 with five-fold cross-validation rate=98.61111% (gamma fixed as dummy value since linear kernel used, -log2g 1,1,1)",
+          "source": "Appendix C.1 Number of instances << number of features, transcribed page 17",
+          "unit": null,
+          "model_variant": "Linear kernel, Leukemia dataset (Appendix C.1)"
+        },
+        {
+          "name": "LIBSVM training parameters - rcv1_train.binary example",
+          "value": "-c 4 -t 0 -e 0.1 -m 800 -v 5 (C=4, linear kernel t=0, tolerance epsilon=0.1, cache size m=800MB, 5-fold cross-validation)",
+          "source": "Appendix C.2 Both numbers of instances and features are large, transcribed page 18",
+          "unit": null,
+          "model_variant": "LIBSVM, rcv1_train.binary (Appendix C.2)"
+        },
+        {
+          "name": "LIBLINEAR training parameters - rcv1_train.binary example",
+          "value": "-c 4 -e 0.1 -v 5 (C=4, tolerance epsilon=0.1, 5-fold cross-validation)",
+          "source": "Appendix C.2 Both numbers of instances and features are large, transcribed page 18",
+          "unit": null,
+          "model_variant": "LIBLINEAR, rcv1_train.binary (Appendix C.2)"
+        },
+        {
+          "name": "LIBLINEAR training parameters - rcv1_test.binary example",
+          "value": "-c 0.25 -v 5 (C=0.25, 5-fold cross-validation)",
+          "source": "Appendix C.2 Both numbers of instances and features are large, transcribed page 18",
+          "unit": null,
+          "model_variant": "LIBLINEAR, rcv1_test.binary (Appendix C.2)"
+        },
+        {
+          "name": "LIBLINEAR training parameters - covtype dataset (solver -s 2)",
+          "value": "-c 4 -v 5 -s 2 (C=4, 5-fold cross-validation, solver type 2 - dual coordinate descent for L2-loss SVM)",
+          "source": "Appendix C.3 Number of instances >> number of features, transcribed page 18-19",
+          "unit": null,
+          "model_variant": "LIBLINEAR -s 2, covtype dataset (Appendix C.3)"
+        },
+        {
+          "name": "LIBLINEAR training parameters - covtype dataset (solver -s 1, default)",
+          "value": "-c 4 -v 5 -s 1 (C=4, 5-fold cross-validation, solver type 1 default - L2-regularized L2-loss support vector classification, dual)",
+          "source": "Appendix C.3 Number of instances >> number of features, transcribed page 18-19",
+          "unit": null,
+          "model_variant": "LIBLINEAR -s 1 (default), covtype dataset (Appendix C.3)"
+        }
+      ],
+      "sources_examined": [
+        "Section 3.1 RBF Kernel, transcribed page 4-5",
+        "Section 2.2 Scaling, transcribed page 4",
+        "Section 3.2 Cross-validation and Grid-search, transcribed page 5",
+        "Appendix A.1-A.3 examples (grid.py usage), transcribed page 9-11",
+        "Appendix A.1 Astroparticle Physics, transcribed page 9",
+        "Appendix A.2 Bioinformatics, transcribed page 10",
+        "Appendix A.3 Vehicle, transcribed page 11",
+        "Section 3.2 / Figure 3 caption, transcribed page 7-8",
+        "Section 3.2 Cross-validation and Grid-search, transcribed page 8",
+        "Section 1.2 Proposed Procedure and Section 3.2, transcribed page 3 and 8",
+        "Appendix C.1 Number of instances << number of features, transcribed page 17",
+        "Appendix C.2 Both numbers of instances and features are large, transcribed page 18",
+        "Appendix C.3 Number of instances >> number of features, transcribed page 18-19"
+      ]
+    },
+    "data_pipeline": {
+      "reference_urls": [
+        "http://www.csie.ntu.edu.tw/~cjlin",
+        "http://www.csie.ntu.edu.tw/~cjlin/papers/guide/data/",
+        "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/svmguide1",
+        "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/svmguide1.t",
+        "http://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets",
+        "http://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/covtype.libsvm.binary.scale.bz2"
+      ],
+      "datasets": [
+        {
+          "dataset": "Astroparticle Physics (svmguide1)",
+          "dataset_source": "Real-world dataset supplied by a user (Jan Conrad, Uppsala University); Table 1 lists 3,089 training instances, 4,000 testing instances, 4 features, 2 classes; loaded via LIBSVM's svm-train/svm-predict tools or, in the Jupyter example, downloaded directly from the LIBSVM Data Sets URL using svm_read_problem",
+          "normalization": "Linearly scaled each attribute to the range [-1, +1] using svm-scale with '-l -1 -u 1' (or equivalently csr_find_scale_param with lower=-1, upper=1 in the Python example); scaling parameters ('range1') saved from the training set via '-s range1' and reused on the test set via '-r range1' so both sets use identical scaling factors",
+          "augmentation": "not stated - no data augmentation described; only scaling/preprocessing and SVM parameter selection are applied",
+          "split_convention": "Uses the pre-existing train/test split provided in the original files (svmguide1 for training, svmguide1.t for testing); 5-fold cross-validation performed on the training set for parameter selection",
+          "source": "Appendix A.1, transcribed pages 9-10; Table 1, transcribed page 2; Jupyter Notebook example Appendix A.4.2, transcribed pages 12-16"
+        },
+        {
+          "dataset": "Bioinformatics (svmguide2)",
+          "dataset_source": "Real-world dataset supplied by a user (Cory Spencer, Simon Fraser University; Gardy et al., 2003); Table 1 lists 391 training instances, 0 testing instances, 20 features, 3 classes; loaded via LIBSVM's svm-train tool on the single file svmguide2 (no separate test file)",
+          "normalization": "Linearly scaled each attribute to the range [-1, +1] using svm-scale with '-l -1 -u 1' applied directly to the single svmguide2 file to produce svmguide2.scale; no '-s'/'-r' save-and-reuse of the scaling range is shown in this example because there is only one file (no separate test set requiring the same range)",
+          "augmentation": "not stated - no data augmentation described; only scaling/preprocessing and SVM parameter selection are applied",
+          "split_convention": "No separate train/test split exists for this dataset (Table 1 notes 0 testing instances); 5-fold cross-validation ('-v 5') is performed on the single available file to obtain an accuracy estimate in place of a held-out test accuracy",
+          "source": "Appendix A.2, transcribed page 10; Table 1 and footnote 4, transcribed page 2"
+        },
+        {
+          "dataset": "Vehicle (svmguide3)",
+          "dataset_source": "Real-world dataset supplied by a user from Germany; Table 1 lists 1,243 training instances, 41 testing instances, 21 features, 2 classes; loaded via LIBSVM's svm-train/svm-predict tools on the files svmguide3 (train) and svmguide3.t (test)",
+          "normalization": "Linearly scaled each attribute to the range [-1, +1] using svm-scale with '-l -1 -u 1'; scaling parameters ('range3') saved from the training set via '-s range3' and reused on the test set via '-r range3' so both sets use identical scaling factors",
+          "augmentation": "not stated - no data augmentation described; only scaling/preprocessing and SVM parameter selection are applied",
+          "split_convention": "Uses the pre-existing train/test split provided in the original files (svmguide3 for training, svmguide3.t for testing); 5-fold cross-validation performed on the training set for parameter selection",
+          "source": "Appendix A.3, transcribed page 11; Table 1, transcribed page 2"
+        },
+        {
+          "dataset": "Traffic light signals (svmguide4)",
+          "dataset_source": "Real-world dataset (courtesy of an anonymous user), available at the LIBSVM Data Sets website; provided as separate training file svmguide4 and testing file svmguide4.t",
+          "normalization": "Linearly scaled to [0,1] using svm-scale '-l 0'; the paper contrasts scaling each set separately (incorrect, gives lower accuracy) versus saving the training scaling range with '-s range4' and reusing it on the test set with '-r range4' (correct method, gives higher accuracy)",
+          "augmentation": "not stated - no data augmentation described; this example is used solely to illustrate correct vs. incorrect scaling practice",
+          "split_convention": "Uses the pre-existing train/test split provided in the original files (svmguide4 for training, svmguide4.t for testing)",
+          "source": "Appendix B, transcribed page 16"
+        },
+        {
+          "dataset": "Leukemia (leu)",
+          "dataset_source": "Microarray gene-expression dataset from the LIBSVM data sets collection; training set has 38 instances and testing set has 34 instances, with 7,129 features; the two files (leu and leu.t) are merged into a single combined file 'leu.combined' via 'cat leu leu.t > leu.combined'",
+          "normalization": "not stated - no explicit scaling step described for this dataset in Appendix C.1 (unlike Appendix A examples, no svm-scale command is shown)",
+          "augmentation": "not stated - no data augmentation described",
+          "split_convention": "Original train/test files are merged into one combined file; 5-fold cross-validation ('grid.py leu.combined') is then run on the combined data to compare RBF vs. linear kernel performance, rather than using a held-out test set",
+          "source": "Appendix C.1, transcribed page 17"
+        },
+        {
+          "dataset": "rcv1_train.binary / rcv1_test.binary (document classification)",
+          "dataset_source": "Document classification datasets from the LIBSVM data sets collection; rcv1_train.binary has 20,242 instances and 47,236 features; rcv1_test.binary has 677,399 instances",
+          "normalization": "not stated - no explicit scaling/normalization step is described for these datasets in Appendix C.2",
+          "augmentation": "not stated - no data augmentation described",
+          "split_convention": "5-fold cross-validation ('-v 5') performed directly on each named file (rcv1_train.binary or rcv1_test.binary) rather than a separate train/test split",
+          "source": "Appendix C.2, transcribed page 18"
+        },
+        {
+          "dataset": "covtype.libsvm.binary.scale (forest cover type)",
+          "dataset_source": "Dataset from the LIBSVM data sets collection, downloaded from the URL http://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/covtype.libsvm.binary.scale.bz2; 581,012 instances and 54 features",
+          "normalization": "Dataset filename indicates it is already pre-scaled ('.scale'); no additional scaling step described in the paper's own text beyond using this pre-scaled file",
+          "augmentation": "not stated - no data augmentation described",
+          "split_convention": "5-fold cross-validation ('-v 5') performed directly on the single file using LIBLINEAR with options -s 1 and -s 2, rather than a separate train/test split",
+          "source": "Appendix C.3, transcribed pages 18-19"
+        },
+        {
+          "dataset": "german (Statlog collection, numeric version 'german.numer')",
+          "dataset_source": "Dataset 'german' from the Statlog collection (Michie et al., 1994), used to illustrate coarse-to-fine grid search; referred to as 'german.numer scale' in Figures 2 and 3",
+          "normalization": "Paper states 'After scaling this set' before grid search, indicating the set was scaled, but does not give the exact scaling method/range/tool parameters used for this particular illustration",
+          "augmentation": "not stated - no data augmentation described",
+          "split_convention": "5-fold cross-validation used via grid-search (coarse grid then fine grid) on the (scaled) german dataset to select (C, gamma); no separate held-out test set accuracy is reported for this illustration",
+          "source": "Section 3.2, transcribed pages 7-8"
+        }
+      ]
+    },
+    "validation": {
+      "flags": [],
+      "attempts": 2,
+      "retried_stages": [
+        "claims",
+        "data_pipeline",
+        "architecture_notes"
+      ]
+    }
+  },
+  "coder_output": {
+    "script_path": "coder/output-ablation/2003 - A Practical Guide to Support Vector Classification/train.py",
+    "script_version": 1,
+    "diff_from_previous": null
+  },
+  "runner_output": {
+    "status": "success",
+    "reproduced_metrics": {
+      "claim_id": "c1",
+      "metric": "Accuracy by our procedure",
+      "unit": "%",
+      "value": 96.625,
+      "higher_is_better": true,
+      "task_type": "classification",
+      "train_loss": null,
+      "eval_loss": null,
+      "train_metric": 97.76626740045322,
+      "eval_metric": 96.625,
+      "epochs_completed": null,
+      "num_train_samples": 3089,
+      "num_eval_samples": 4000,
+      "wall_clock_seconds": 65.39026141166687,
+      "num_runs": 1,
+      "run_values": [
+        96.625
+      ],
+      "best_C": 8.0,
+      "best_gamma": 8.0,
+      "best_cv_accuracy": 96.98931693104565
+    },
+    "logs_path": "orchestrator/output-ablation/2003 - A Practical Guide to Support Vector Classification/logs/attempt-1",
+    "error_trace": null
+  },
+  "critic_output": null,
+  "retry_count": 0,
+  "retry_budget": 0,
+  "fidelity_retry_count": 0,
+  "history": [
+    {
+      "timestamp": "2026-10-08T18:46:50+00:00",
+      "stage": "orchestrator",
+      "event": "loop started",
+      "detail": "retry_budget=0, plateau_threshold=0.98, modes=probe/smoke/capped/full"
+    },
+    {
+      "timestamp": "2026-10-08T18:47:59+00:00",
+      "stage": "coder",
+      "event": "generated script v1",
+      "detail": "claim=c1, 368 lines"
+    },
+    {
+      "timestamp": "2026-10-08T18:49:29+00:00",
+      "stage": "runner",
+      "event": "ran v1: success",
+      "detail": "stage_reached=full, failed_stage=None, exit_code=0, 89.42s, no triage"
+    },
+    {
+      "timestamp": "2026-10-08T18:49:29+00:00",
+      "stage": "orchestrator",
+      "event": "loop finished: success",
+      "detail": "a stage passed; nothing to retry"
+    }
+  ],
+  "verdict": "success",
+  "attempts": [
+    {
+      "version": 1,
+      "feedback_given": null,
+      "script_path": "orchestrator/output-ablation/2003 - A Practical Guide to Support Vector Classification/attempts/v1_train.py",
+      "script_chars": 12906,
+      "plateau_ratio": null,
+      "runner_status": "success",
+      "stage_reached": "full",
+      "failed_stage": null,
+      "exit_code": 0,
+      "wall_clock_seconds": 89.42,
+      "triage_category": null,
+      "triage_reasoning": null,
+      "suggested_fix": null,
+      "syntax_error": null,
+      "logs_path": "orchestrator/output-ablation/2003 - A Practical Guide to Support Vector Classification/logs/attempt-1",
+      "action": "done",
+      "verdict": "success",
+      "reason": "a stage passed; nothing to retry",
+      "checkup_rule": null,
+      "checkup_message": null,
+      "critic_verdict": null
+    }
+  ]
+}

@@ -1,0 +1,909 @@
+{
+  "paper_id": "2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms",
+  "source_pdf": null,
+  "reader_output": {
+    "paper": "2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms",
+    "source_markdown": "ocr/output/vlm/2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms.md",
+    "method_summary": {
+      "problem": "The paper argues that the original MNIST handwritten-digit dataset, despite being the most widely used benchmark in deep learning due to its small size and ease of use via built-in helper functions in libraries like scikit-learn, TensorFlow, and PyTorch, has become too easy: modern methods already achieve accuracies above 99.7%, so it no longer meaningfully discriminates between algorithms, yet the community keeps using it anyway. The paper also notes that an existing alternative extension, EMNIST (which adds handwritten letter classes to MNIST), does not solve this cleanly because using it requires modifying the deep learning framework's MNIST helper functions and changing the network's output classification structure to handle the additional classes, so it is not a seamless drop-in replacement.",
+      "core_idea": "The paper's contribution is Fashion-MNIST itself: a new dataset built by taking real front-look product photographs from Zalando's e-commerce catalog across 10 fashion categories and running them through a fixed image-conversion pipeline (trimming background, resizing/subsampling to fit a 28x28 canvas, sharpening, centering, negating, and grayscale conversion) so that the resulting images exactly match MNIST's format: same image size (28x28 grayscale), same number of classes (10), same total example count (70,000) split into 60,000 training and 10,000 test images, and the same binary file structure/encoding used by the original MNIST files. Class labels are assigned using Zalando's manually assigned and reviewed silhouette codes rather than any learned or automatic labeling.",
+      "novelty": "Relative to MNIST, the novelty is not a new algorithm but a new, harder benchmark dataset that preserves MNIST's exact interface (size, format, split structure) while replacing simple handwritten digits with more visually complex fashion product images, so it functions as a true drop-in substitute rather than a variant requiring code changes. Relative to EMNIST, which extends MNIST's class count and thus forces changes to framework helpers and to the network's output layer, Fashion-MNIST's novelty is that it keeps the same 10-class structure and same data format so no architecture or loading-code modification is needed - only the data source URL changes. Thus the contribution is a substitution (harder image content) within an unchanged interface, rather than an extension of that interface.",
+      "summary": "This paper addresses the problem that MNIST, despite remaining the dominant benchmark for prototyping machine learning and deep learning algorithms because of its convenient size and out-of-the-box support in common libraries, has become too easy to meaningfully differentiate modern algorithms, with reported accuracies already exceeding 99.7%, while an existing proposed alternative, EMNIST, fails to be a seamless substitute because incorporating its additional handwritten-letter classes requires changing both the framework's data-loading helpers and the classification network's output structure. To address this without sacrificing MNIST's convenience, the authors construct Fashion-MNIST, a dataset of 70,000 grayscale images of fashion products drawn from 10 categories on Zalando's online catalog, processed through a defined image pipeline (background trimming, resizing, sharpening, centering, intensity negation, and grayscale conversion) so that every image ends up at 28x28 pixels, labels remain confined to 10 classes assigned via expert-reviewed silhouette codes, and the training/test split (60,000/10,000) and file format exactly mirror the original MNIST distribution. The central idea is therefore not a new model or learning technique but a carefully engineered dataset that is a true drop-in replacement for MNIST - usable by simply changing the data source URL - while presenting visually richer, more challenging classification content than handwritten digits. This matters because it lets researchers keep all the existing MNIST-based tooling and rapid-prototyping workflow while obtaining a benchmark that is harder and thus more useful for distinguishing algorithm performance, as illustrated by a battery of classical machine learning classifiers evaluated on both datasets for comparison.",
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1)",
+        "Section 2 Fashion-MNIST Dataset (transcribed page 2)",
+        "Section 4 Conclusions (transcribed page 6)"
+      ]
+    },
+    "architecture_notes": {
+      "model_name": "not stated in the paper - this paper does not propose a neural network model architecture; it presents a dataset (Fashion-MNIST) and benchmarks it using existing, off-the-shelf classifiers",
+      "overall_structure": "This paper does not define or propose any novel machine learning model architecture. It is a dataset paper: it describes a pipeline for converting Zalando product photographs into a 28x28 grayscale image dataset (Fashion-MNIST), and it reports benchmark classification accuracies using a variety of off-the-shelf classifiers (e.g. DecisionTreeClassifier, ExtraTreeClassifier, GaussianNB, GradientBoostingClassifier, KNeighborsClassifier, LinearSVC, LogisticRegression, MLPClassifier, PassiveAggressiveClassifier, Perceptron, RandomForestClassifier, SGDClassifier, SVC) from the scikit-learn library, run with various hyperparameter settings listed in Table 3. No new network architecture, layer type, or model structure is introduced or specified by the authors themselves; the 'MLPClassifier' entries in Table 3 refer to the standard scikit-learn multi-layer perceptron classifier used as one of many pre-existing benchmark algorithms, not a proposed architecture of this paper.",
+      "components": [],
+      "key_equations": [],
+      "depth_or_scale": "not stated in the paper - no depth/width scaling rule or naming convention for a model architecture is given, since the paper does not propose its own model architecture",
+      "unstated_details": [
+        "The paper does not propose any novel model architecture at all - it is exclusively a dataset paper (Fashion-MNIST) with benchmark results using standard, pre-existing scikit-learn classifiers.",
+        "For the MLPClassifier rows in Table 3 (the only neural-network-like entries), only 'activation' (relu/tanh) and 'hidden_layer_sizes' (e.g. [100], [100,10], [10,10], [10]) are given as scikit-learn parameter settings; no architectural details such as input/output layer sizes, weight initialization, bias terms, loss function, or regularization are specified beyond these scikit-learn defaults, and these are not a model proposed by the authors but rather one of many baseline classifiers benchmarked.",
+        "No convolutional neural network or deep learning architecture designed specifically for Fashion-MNIST is described anywhere in the paper's own text; the paper explicitly defers a 'more comprehensive table with explanations on the algorithms' to an external GitHub repository (https://github.com/zalandoresearch/fashion-mnist) rather than specifying it in the paper itself."
+      ],
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1)",
+        "Section 2 Fashion-MNIST Dataset (transcribed page 2-3)",
+        "Figure 1 description block (transcribed page 2)",
+        "Section 3 Experiments and Table 3 (transcribed pages 3-6)",
+        "Section 4 Conclusions (transcribed page 6)"
+      ]
+    },
+    "claims": {
+      "claims": [
+        {
+          "claim_id": "c1",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.798,
+          "unit": "",
+          "source": "Table 3, transcribed page 3",
+          "model_variant": "DecisionTreeClassifier criterion=entropy max_depth=10 splitter=best"
+        },
+        {
+          "claim_id": "c2",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.873,
+          "unit": "",
+          "source": "Table 3, transcribed page 3",
+          "model_variant": "DecisionTreeClassifier criterion=entropy max_depth=10 splitter=best"
+        },
+        {
+          "claim_id": "c3",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.88,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "GradientBoostingClassifier n_estimators=100 loss=deviance max_depth=10"
+        },
+        {
+          "claim_id": "c4",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.969,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "GradientBoostingClassifier n_estimators=100 loss=deviance max_depth=10"
+        },
+        {
+          "claim_id": "c5",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.854,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "KNeighborsClassifier weights=distance n_neighbors=5 p=1"
+        },
+        {
+          "claim_id": "c6",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.959,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "KNeighborsClassifier weights=distance n_neighbors=5 p=1"
+        },
+        {
+          "claim_id": "c7",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.836,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "LinearSVC loss=hinge C=1 multi_class=ovr penalty=l2"
+        },
+        {
+          "claim_id": "c8",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.917,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "LinearSVC loss=hinge C=1 multi_class=ovr penalty=l2"
+        },
+        {
+          "claim_id": "c9",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.842,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "LogisticRegression C=1 multi_class=ovr penalty=l1"
+        },
+        {
+          "claim_id": "c10",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.917,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "LogisticRegression C=1 multi_class=ovr penalty=l1"
+        },
+        {
+          "claim_id": "c11",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.871,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "MLPClassifier activation=relu hidden_layer_sizes=[100]"
+        },
+        {
+          "claim_id": "c12",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.972,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "MLPClassifier activation=relu hidden_layer_sizes=[100]"
+        },
+        {
+          "claim_id": "c13",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.776,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "PassiveAggressiveClassifier C=1"
+        },
+        {
+          "claim_id": "c14",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.877,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "PassiveAggressiveClassifier C=1"
+        },
+        {
+          "claim_id": "c15",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.782,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "Perceptron penalty=l1"
+        },
+        {
+          "claim_id": "c16",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.887,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "Perceptron penalty=l1"
+        },
+        {
+          "claim_id": "c17",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.873,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "RandomForestClassifier n_estimators=100 criterion=entropy max_depth=100"
+        },
+        {
+          "claim_id": "c18",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.97,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "RandomForestClassifier n_estimators=100 criterion=entropy max_depth=100"
+        },
+        {
+          "claim_id": "c19",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.819,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "SGDClassifier loss=hinge penalty=l2"
+        },
+        {
+          "claim_id": "c20",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.914,
+          "unit": "",
+          "source": "Table 3, transcribed page 5",
+          "model_variant": "SGDClassifier loss=hinge penalty=l2"
+        },
+        {
+          "claim_id": "c21",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.897,
+          "unit": "",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": "SVC C=10 kernel=rbf"
+        },
+        {
+          "claim_id": "c22",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.973,
+          "unit": "",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": "SVC C=10 kernel=rbf"
+        },
+        {
+          "claim_id": "c23",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.511,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "GaussianNB priors=uniform"
+        },
+        {
+          "claim_id": "c24",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.524,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "GaussianNB priors=uniform"
+        },
+        {
+          "claim_id": "c25",
+          "metric": "Test Accuracy",
+          "dataset": "Fashion-MNIST",
+          "reported_value": 0.775,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "ExtraTreeClassifier criterion=gini max_depth=10 splitter=best"
+        },
+        {
+          "claim_id": "c26",
+          "metric": "Test Accuracy",
+          "dataset": "MNIST",
+          "reported_value": 0.806,
+          "unit": "",
+          "source": "Table 3, transcribed page 4",
+          "model_variant": "ExtraTreeClassifier criterion=gini max_depth=10 splitter=best"
+        }
+      ],
+      "tables_examined": [
+        "Table 1: Files contained in the Fashion-MNIST dataset (transcribed page 2)",
+        "Table 2: Class names and example images in Fashion-MNIST dataset (transcribed page 3)",
+        "Table 3: Benchmark on Fashion-MNIST (Fashion) and MNIST (transcribed pages 3-6)"
+      ],
+      "candidates_considered": 115
+    },
+    "hyperparameters": {
+      "hyperparameters": [
+        {
+          "name": "experimental protocol / repetitions",
+          "value": "All algorithms are repeated 5 times by shuffling the training data and the average accuracy on the test set is reported.",
+          "source": "Section 3 (Experiments), transcribed page 3",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "DecisionTreeClassifier best configuration",
+          "value": "criterion=entropy, max_depth=10, splitter=best (best result among tested settings: 0.798 Fashion, 0.873 MNIST)",
+          "source": "Table 3, transcribed page 3-4",
+          "unit": null,
+          "model_variant": "DecisionTreeClassifier"
+        },
+        {
+          "name": "ExtraTreeClassifier best configuration",
+          "value": "criterion=gini, max_depth=10, splitter=best (best result among tested settings: 0.775 Fashion, 0.806 MNIST)",
+          "source": "Table 3, transcribed page 4",
+          "unit": null,
+          "model_variant": "ExtraTreeClassifier"
+        },
+        {
+          "name": "GaussianNB configuration",
+          "value": "priors=[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]",
+          "source": "Table 3, transcribed page 4",
+          "unit": null,
+          "model_variant": "GaussianNB"
+        },
+        {
+          "name": "GradientBoostingClassifier best configuration",
+          "value": "n_estimators=100, loss=deviance, max_depth=10 (best result among tested settings: 0.880 Fashion, 0.969 MNIST)",
+          "source": "Table 3, transcribed page 4",
+          "unit": null,
+          "model_variant": "GradientBoostingClassifier"
+        },
+        {
+          "name": "KNeighborsClassifier best configuration",
+          "value": "weights=distance, n_neighbors=5, p=1 (best result among tested settings: 0.854 Fashion, 0.959 MNIST)",
+          "source": "Table 3, transcribed page 4",
+          "unit": null,
+          "model_variant": "KNeighborsClassifier"
+        },
+        {
+          "name": "LinearSVC best configuration",
+          "value": "loss=hinge, C=1, multi_class=ovr, penalty=l2 (best result among tested settings: 0.836 Fashion, 0.917 MNIST)",
+          "source": "Table 3, transcribed pages 4-5",
+          "unit": null,
+          "model_variant": "LinearSVC"
+        },
+        {
+          "name": "LogisticRegression best configuration",
+          "value": "C=1, multi_class=ovr, penalty=l1 (best result among tested settings: 0.842 Fashion, 0.917 MNIST)",
+          "source": "Table 3, transcribed page 5",
+          "unit": null,
+          "model_variant": "LogisticRegression"
+        },
+        {
+          "name": "MLPClassifier best configuration",
+          "value": "activation=relu, hidden_layer_sizes=[100] (best result among tested settings: 0.871 Fashion, 0.972 MNIST)",
+          "source": "Table 3, transcribed page 5",
+          "unit": null,
+          "model_variant": "MLPClassifier"
+        },
+        {
+          "name": "PassiveAggressiveClassifier best configuration",
+          "value": "C=1 (best result among tested settings: 0.776 Fashion, 0.877 MNIST)",
+          "source": "Table 3, transcribed page 5",
+          "unit": null,
+          "model_variant": "PassiveAggressiveClassifier"
+        },
+        {
+          "name": "Perceptron best configuration",
+          "value": "penalty=l1 (best result among tested settings: 0.782 Fashion, 0.887 MNIST)",
+          "source": "Table 3, transcribed page 5",
+          "unit": null,
+          "model_variant": "Perceptron"
+        },
+        {
+          "name": "RandomForestClassifier best configuration",
+          "value": "n_estimators=100, criterion=entropy, max_depth=100 (best result among tested settings: 0.873 Fashion, 0.970 MNIST)",
+          "source": "Table 3, transcribed page 5",
+          "unit": null,
+          "model_variant": "RandomForestClassifier"
+        },
+        {
+          "name": "SGDClassifier best configuration",
+          "value": "loss=hinge, penalty=l2 (best result among tested settings: 0.819 Fashion, 0.914 MNIST)",
+          "source": "Table 3, transcribed pages 5-6",
+          "unit": null,
+          "model_variant": "SGDClassifier"
+        },
+        {
+          "name": "SVC best configuration",
+          "value": "C=10, kernel=rbf (best result among tested settings: 0.897 Fashion, 0.973 MNIST)",
+          "source": "Table 3, transcribed page 6",
+          "unit": null,
+          "model_variant": "SVC"
+        }
+      ],
+      "sources_examined": [
+        "Section 3: Experiments prose section (transcribed page 3)",
+        "Table 3: Benchmark on Fashion-MNIST (Fashion) and MNIST, including classifier hyperparameter settings (transcribed pages 3-6)"
+      ]
+    },
+    "data_pipeline": {
+      "reference_urls": [
+        "https://github.com/zalandoresearch/fashion-mnist",
+        "https://trends.google.com/trends/explore?date=all&q=mnist,CIFAR,ImageNet",
+        "http://www.zalando.com"
+      ],
+      "datasets": [
+        {
+          "dataset": "Fashion-MNIST",
+          "dataset_source": "Built by the authors from Zalando's own product catalog: front-look thumbnail images (51x73) of 70,000 unique fashion products across 10 categories, converted via a 7-step pipeline (PNG conversion, background trimming, resizing longest edge to 28, Gaussian sharpening, extending shortest edge to 28 and centering, intensity negation, 8-bit grayscale conversion) to produce 28x28 grayscale images stored in the same idx/ubyte file format as MNIST; dataset is freely available at https://github.com/zalandoresearch/fashion-mnist.",
+          "normalization": "not stated beyond the conversion pipeline itself (steps include intensity negation and conversion to 8-bit grayscale); no additional per-pixel mean subtraction, scaling to [0,1], or whitening is mentioned in the paper.",
+          "augmentation": "not stated - the paper describes only the one-time image conversion/preprocessing pipeline used to construct the dataset; no train-time data augmentation (e.g., crops, flips) is mentioned for training the benchmark classifiers.",
+          "split_convention": "The full dataset contains 70,000 images total across 10 classes with 7,000 images per class (per abstract and Table 2 context). The dataset is divided into a training set of 60,000 images and a test set of 10,000 images (Table 1). Per the text, 'the training set receives a randomly-selected 6,000 examples from each class,' which the paper does not explicitly restate for the test set; however, given 7,000 images per class total and 6,000 per class allocated to training, the remaining 1,000 images per class (10 classes x 1,000 = 10,000, matching the stated test set size in Table 1) constitute the test set - this per-class test composition is implied by the stated totals but not explicitly spelled out in the paper's text.",
+          "source": "Section 2 Fashion-MNIST Dataset, paragraph on class labels/dataset split and Table 1/Table 2, transcribed pages 2-3"
+        }
+      ]
+    },
+    "validation": {
+      "flags": [],
+      "attempts": 2,
+      "retried_stages": [
+        "claims",
+        "hyperparameters",
+        "data_pipeline"
+      ]
+    }
+  },
+  "coder_output": {
+    "script_path": "coder/output/2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms/train.py",
+    "script_version": 1,
+    "diff_from_previous": null
+  },
+  "runner_output": {
+    "status": "success",
+    "reproduced_metrics": {
+      "claim_id": "c17",
+      "metric": "Test Accuracy",
+      "unit": "",
+      "value": 0.8764799999999999,
+      "higher_is_better": true,
+      "task_type": "classification",
+      "train_loss": null,
+      "eval_loss": null,
+      "train_metric": 1.0,
+      "eval_metric": 0.8764799999999999,
+      "epochs_completed": null,
+      "num_train_samples": 60000,
+      "num_eval_samples": 10000,
+      "wall_clock_seconds": 147.29494166374207,
+      "num_runs": 5,
+      "run_values": [
+        0.8773,
+        0.8763,
+        0.8756,
+        0.8764,
+        0.8768
+      ]
+    },
+    "logs_path": "orchestrator/output/2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms/logs/attempt-1",
+    "error_trace": null
+  },
+  "critic_output": {
+    "verdict": "pass",
+    "reason": "the reproduced value is better than the claim beyond tolerance - the claimed result is achievable with this implementation",
+    "recommendation": "none",
+    "claim_id": "c17",
+    "metric": "Test Accuracy",
+    "dataset": "Fashion-MNIST",
+    "unit": "",
+    "claimed": 0.873,
+    "reproduced": 0.8764799999999999,
+    "run_values": [
+      0.8773,
+      0.8763,
+      0.8756,
+      0.8764,
+      0.8768
+    ],
+    "higher_is_better": true,
+    "gap": 0.0034799999999999276,
+    "relative_gap": 0.0039862542955325635,
+    "tolerance": 0.0007969943538068267,
+    "reporting_precision": 0.0005,
+    "test_noise": 0.0033297297187609687,
+    "run_spread": 0.00039849717690341335,
+    "evidence": "measured spread of 5 runs",
+    "exceeds_claim": true,
+    "merged_claim_ids": [
+      "c17"
+    ],
+    "metrics_mode": "full",
+    "script_version": 1,
+    "seed_run_values": [],
+    "review": {
+      "method_fidelity": "faithful",
+      "summary": "This is the paper's method. The paper proposes no model; claim c17 is Table 3's RandomForestClassifier row (n_estimators=100, criterion=entropy, max_depth=100) on the official Fashion-MNIST 60,000/10,000 split, averaged over 5 shuffled repetitions. The script instantiates exactly those hyperparameters, trains on all 60,000 training rows, evaluates accuracy on the full untouched 10,000-image test set, and averages 5 seeds \u2014 matching the paper's protocol. Unstated choices (max_features='sqrt' to emulate old 'auto', n_jobs=-1, raw uint8 pixels, per-repetition random_state) are disclosed and immaterial for a tree ensemble. The mean 0.87648 lands slightly above the claimed 0.873, consistent with scikit-learn version drift rather than any deviation.",
+      "curve_assessment": "The \"curve\" is a repetition curve, not a training curve: 5 independent fits give eval accuracies 0.8773, 0.8763, 0.8756, 0.8764, 0.8768 (mean 0.87648), a spread of well under half a point, all five above the 0.873 target and far above the 0.1000 majority-class chance level. train_metric is 1.0000 in every run, which is the expected behaviour of a fully grown (max_depth=100, bootstrap) random forest that memorises the training set; it is not evidence of leakage, since the 10,000 test rows are never fitted on. num_train_samples=60000 and num_eval_samples=10000 in both the runner log and the metrics match Table 1 exactly. The result is stable and reproducible across seeds.",
+      "findings": [
+        {
+          "kind": "matches_paper",
+          "aspect": "architecture / model hyperparameters",
+          "severity": "high",
+          "paper_quote": "RandomForestClassifier | n_estimators=100 criterion=entropy max_depth=100 | 0.873 | 0.970",
+          "script_lines": [
+            247,
+            248,
+            249,
+            250
+          ],
+          "script_snippet": "clf = RandomForestClassifier(\n            n_estimators=100,\n            criterion=\"entropy\",\n            max_depth=100,",
+          "explanation": "The estimator and the three hyperparameters named in Table 3's best RandomForestClassifier row for Fashion-MNIST are reproduced verbatim; these are the only model settings the paper specifies.",
+          "verified": false,
+          "problems": [
+            "paper_quote not found in the paper or its extraction"
+          ]
+        },
+        {
+          "kind": "matches_paper",
+          "aspect": "evaluation protocol / repetitions",
+          "severity": "medium",
+          "paper_quote": "All algorithms are repeated 5 times by shuffling the training data and the average accuracy on the test set is reported.",
+          "script_lines": [
+            231,
+            239,
+            243,
+            302
+          ],
+          "script_snippet": "num_runs = 1 if is_capped else 5\n    for run_idx in range(num_runs):\n        perm = rng_for_shuffle.permutation(num_train_samples)\n    mean_eval_acc = float(np.mean(run_eval_accuracies))",
+          "explanation": "Five repetitions with reshuffled training data, each scored on the test set, and the mean reported \u2014 exactly the protocol in Section 3. The full (uncapped) run executed 5 repetitions per the runner log.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "matches_paper",
+          "aspect": "data split",
+          "severity": "high",
+          "paper_quote": "The training set has 60,000 images and the test set has 10,000 images.",
+          "script_lines": [
+            52,
+            55,
+            66,
+            69
+          ],
+          "script_snippet": "train_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=True, download=True, transform=None\n    )\n    test_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=False, download=True, transform=None\n    )\n    assert x_train.shape == (60000, 784), (\n    assert x_test.shape == (10000, 784), (",
+          "explanation": "Data trace: x_train/y_train (60000x784) are the only arrays passed to clf.fit (line 265, via the permuted copies); x_test/y_test (10000) are only ever used in clf.predict (line 269) and the accuracy at line 272. No train_test_split is used, so no unpacking-order risk, and the asserts plus the runner log (train=60000, test=10000) confirm the sizes match Table 1. No test data enters training.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "matches_paper",
+          "aspect": "evaluation metric",
+          "severity": "medium",
+          "paper_quote": "the average accuracy on the test set is reported",
+          "script_lines": [
+            269,
+            272,
+            316
+          ],
+          "script_snippet": "eval_pred = clf.predict(x_test)\n        eval_acc = float(np.mean(eval_pred == y_test))\n        \"value\": mean_eval_acc,",
+          "explanation": "The reported value is plain top-1 accuracy on the held-out official test split, averaged over repetitions \u2014 the metric the paper's Table 3 reports.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "matches_paper",
+          "aspect": "preprocessing",
+          "severity": "low",
+          "paper_quote": "not stated beyond the conversion pipeline itself (steps include intensity negation and conversion to 8-bit grayscale); no additional per-pixel mean subtraction, scaling to [0,1], or whitening is mentioned",
+          "script_lines": [
+            60,
+            62
+          ],
+          "script_snippet": "x_train = train_ds.data.numpy().reshape(len(train_ds), -1).astype(np.float32)\n    x_test = test_ds.data.numpy().reshape(len(test_ds), -1).astype(np.float32)",
+          "explanation": "Raw 0-255 pixel values are flattened to 784-dim vectors with no scaling, matching the paper's silence on extra normalisation. Nothing is fitted on the data, so there is no fit-on-test leakage path. Tree splits are invariant to monotone rescaling anyway.",
+          "verified": false,
+          "problems": [
+            "a matches_paper finding needs a quote of what is stated"
+          ]
+        },
+        {
+          "kind": "unstated_choice",
+          "aspect": "regularisation / max_features",
+          "severity": "medium",
+          "paper_quote": "n_estimators=100 criterion=entropy max_depth=100",
+          "script_lines": [
+            251,
+            252,
+            253
+          ],
+          "script_snippet": "max_features=\"sqrt\",  # library version: replicate old scikit-learn's\n                                   # default max_features='auto' for classifiers,\n                                   # since 'auto' has been removed in scikit-learn 1.5.2.",
+          "explanation": "The paper lists only three hyperparameters, so max_features is unstated; the script sets 'sqrt' explicitly to emulate the 2017-era 'auto' default. This is the closest available match to what the authors would have run, and is disclosed in the bookkeeping. Residual scikit-learn version drift in tree-growing details is the most plausible source of the small positive offset over 0.873.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "unstated_choice",
+          "aspect": "initialisation / random seeds",
+          "severity": "low",
+          "paper_quote": "not stated",
+          "script_lines": [
+            240,
+            256
+          ],
+          "script_snippet": "run_seed = args.seed + run_idx\n            random_state=run_seed,",
+          "explanation": "The paper does not give seeds; the script derives a distinct random_state per repetition from --seed (42..46 in the run), which varies bootstrap and feature-sampling draws across the 5 repetitions as the 'shuffling' protocol intends, while staying reproducible.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "unstated_choice",
+          "aspect": "data source",
+          "severity": "low",
+          "paper_quote": "The dataset is freely available at https://github.com/zalandoresearch/fashion-mnist.",
+          "script_lines": [
+            52,
+            53
+          ],
+          "script_snippet": "train_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=True, download=True, transform=None\n    )",
+          "explanation": "The paper names a repository rather than a download mechanism; torchvision fetches the same idx/ubyte files and official split, so this is an immaterial sourcing choice.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "unstated_choice",
+          "aspect": "optimizer / training loop CLI",
+          "severity": "low",
+          "paper_quote": "not stated",
+          "script_lines": [
+            111,
+            126,
+            131
+          ],
+          "script_snippet": "\"--epochs\", type=int, default=1,\n        \"--batch-size\", type=int, default=256,\n        \"--lr\", type=float, default=0.0,",
+          "explanation": "Epochs, batch size and learning rate do not exist for a random forest; the script keeps them as documented no-ops (confirmed in the runner log) rather than silently applying a gradient-training regime the paper never describes. Harmless.",
+          "verified": true,
+          "problems": []
+        },
+        {
+          "kind": "unstated_choice",
+          "aspect": "parallelism",
+          "severity": "low",
+          "paper_quote": "not stated",
+          "script_lines": [
+            255
+          ],
+          "script_snippet": "n_jobs=-1,",
+          "explanation": "n_jobs only affects wall-clock time (147.29s total), not the fitted forest or the accuracy.",
+          "verified": true,
+          "problems": []
+        }
+      ],
+      "hypotheses": [],
+      "summary_problems": [],
+      "model": "claude-opus-5"
+    },
+    "judgements": [
+      {
+        "verdict": "pass",
+        "reason": "the reproduced value is better than the claim beyond tolerance - the claimed result is achievable with this implementation",
+        "recommendation": "none",
+        "claim_id": "c17",
+        "metric": "Test Accuracy",
+        "dataset": "Fashion-MNIST",
+        "unit": "",
+        "claimed": 0.873,
+        "reproduced": 0.8764799999999999,
+        "run_values": [
+          0.8773,
+          0.8763,
+          0.8756,
+          0.8764,
+          0.8768
+        ],
+        "higher_is_better": true,
+        "gap": 0.0034799999999999276,
+        "relative_gap": 0.0039862542955325635,
+        "tolerance": 0.0007969943538068267,
+        "reporting_precision": 0.0005,
+        "test_noise": 0.0033297297187609687,
+        "run_spread": 0.00039849717690341335,
+        "evidence": "measured spread of 5 runs",
+        "exceeds_claim": true,
+        "merged_claim_ids": [
+          "c17"
+        ],
+        "metrics_mode": "full",
+        "script_version": 1,
+        "seed_run_values": [],
+        "review": {
+          "method_fidelity": "faithful",
+          "summary": "This is the paper's method. The paper proposes no model; claim c17 is Table 3's RandomForestClassifier row (n_estimators=100, criterion=entropy, max_depth=100) on the official Fashion-MNIST 60,000/10,000 split, averaged over 5 shuffled repetitions. The script instantiates exactly those hyperparameters, trains on all 60,000 training rows, evaluates accuracy on the full untouched 10,000-image test set, and averages 5 seeds \u2014 matching the paper's protocol. Unstated choices (max_features='sqrt' to emulate old 'auto', n_jobs=-1, raw uint8 pixels, per-repetition random_state) are disclosed and immaterial for a tree ensemble. The mean 0.87648 lands slightly above the claimed 0.873, consistent with scikit-learn version drift rather than any deviation.",
+          "curve_assessment": "The \"curve\" is a repetition curve, not a training curve: 5 independent fits give eval accuracies 0.8773, 0.8763, 0.8756, 0.8764, 0.8768 (mean 0.87648), a spread of well under half a point, all five above the 0.873 target and far above the 0.1000 majority-class chance level. train_metric is 1.0000 in every run, which is the expected behaviour of a fully grown (max_depth=100, bootstrap) random forest that memorises the training set; it is not evidence of leakage, since the 10,000 test rows are never fitted on. num_train_samples=60000 and num_eval_samples=10000 in both the runner log and the metrics match Table 1 exactly. The result is stable and reproducible across seeds.",
+          "findings": [
+            {
+              "kind": "matches_paper",
+              "aspect": "architecture / model hyperparameters",
+              "severity": "high",
+              "paper_quote": "RandomForestClassifier | n_estimators=100 criterion=entropy max_depth=100 | 0.873 | 0.970",
+              "script_lines": [
+                247,
+                248,
+                249,
+                250
+              ],
+              "script_snippet": "clf = RandomForestClassifier(\n            n_estimators=100,\n            criterion=\"entropy\",\n            max_depth=100,",
+              "explanation": "The estimator and the three hyperparameters named in Table 3's best RandomForestClassifier row for Fashion-MNIST are reproduced verbatim; these are the only model settings the paper specifies.",
+              "verified": false,
+              "problems": [
+                "paper_quote not found in the paper or its extraction"
+              ]
+            },
+            {
+              "kind": "matches_paper",
+              "aspect": "evaluation protocol / repetitions",
+              "severity": "medium",
+              "paper_quote": "All algorithms are repeated 5 times by shuffling the training data and the average accuracy on the test set is reported.",
+              "script_lines": [
+                231,
+                239,
+                243,
+                302
+              ],
+              "script_snippet": "num_runs = 1 if is_capped else 5\n    for run_idx in range(num_runs):\n        perm = rng_for_shuffle.permutation(num_train_samples)\n    mean_eval_acc = float(np.mean(run_eval_accuracies))",
+              "explanation": "Five repetitions with reshuffled training data, each scored on the test set, and the mean reported \u2014 exactly the protocol in Section 3. The full (uncapped) run executed 5 repetitions per the runner log.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "matches_paper",
+              "aspect": "data split",
+              "severity": "high",
+              "paper_quote": "The training set has 60,000 images and the test set has 10,000 images.",
+              "script_lines": [
+                52,
+                55,
+                66,
+                69
+              ],
+              "script_snippet": "train_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=True, download=True, transform=None\n    )\n    test_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=False, download=True, transform=None\n    )\n    assert x_train.shape == (60000, 784), (\n    assert x_test.shape == (10000, 784), (",
+              "explanation": "Data trace: x_train/y_train (60000x784) are the only arrays passed to clf.fit (line 265, via the permuted copies); x_test/y_test (10000) are only ever used in clf.predict (line 269) and the accuracy at line 272. No train_test_split is used, so no unpacking-order risk, and the asserts plus the runner log (train=60000, test=10000) confirm the sizes match Table 1. No test data enters training.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "matches_paper",
+              "aspect": "evaluation metric",
+              "severity": "medium",
+              "paper_quote": "the average accuracy on the test set is reported",
+              "script_lines": [
+                269,
+                272,
+                316
+              ],
+              "script_snippet": "eval_pred = clf.predict(x_test)\n        eval_acc = float(np.mean(eval_pred == y_test))\n        \"value\": mean_eval_acc,",
+              "explanation": "The reported value is plain top-1 accuracy on the held-out official test split, averaged over repetitions \u2014 the metric the paper's Table 3 reports.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "matches_paper",
+              "aspect": "preprocessing",
+              "severity": "low",
+              "paper_quote": "not stated beyond the conversion pipeline itself (steps include intensity negation and conversion to 8-bit grayscale); no additional per-pixel mean subtraction, scaling to [0,1], or whitening is mentioned",
+              "script_lines": [
+                60,
+                62
+              ],
+              "script_snippet": "x_train = train_ds.data.numpy().reshape(len(train_ds), -1).astype(np.float32)\n    x_test = test_ds.data.numpy().reshape(len(test_ds), -1).astype(np.float32)",
+              "explanation": "Raw 0-255 pixel values are flattened to 784-dim vectors with no scaling, matching the paper's silence on extra normalisation. Nothing is fitted on the data, so there is no fit-on-test leakage path. Tree splits are invariant to monotone rescaling anyway.",
+              "verified": false,
+              "problems": [
+                "a matches_paper finding needs a quote of what is stated"
+              ]
+            },
+            {
+              "kind": "unstated_choice",
+              "aspect": "regularisation / max_features",
+              "severity": "medium",
+              "paper_quote": "n_estimators=100 criterion=entropy max_depth=100",
+              "script_lines": [
+                251,
+                252,
+                253
+              ],
+              "script_snippet": "max_features=\"sqrt\",  # library version: replicate old scikit-learn's\n                                   # default max_features='auto' for classifiers,\n                                   # since 'auto' has been removed in scikit-learn 1.5.2.",
+              "explanation": "The paper lists only three hyperparameters, so max_features is unstated; the script sets 'sqrt' explicitly to emulate the 2017-era 'auto' default. This is the closest available match to what the authors would have run, and is disclosed in the bookkeeping. Residual scikit-learn version drift in tree-growing details is the most plausible source of the small positive offset over 0.873.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "unstated_choice",
+              "aspect": "initialisation / random seeds",
+              "severity": "low",
+              "paper_quote": "not stated",
+              "script_lines": [
+                240,
+                256
+              ],
+              "script_snippet": "run_seed = args.seed + run_idx\n            random_state=run_seed,",
+              "explanation": "The paper does not give seeds; the script derives a distinct random_state per repetition from --seed (42..46 in the run), which varies bootstrap and feature-sampling draws across the 5 repetitions as the 'shuffling' protocol intends, while staying reproducible.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "unstated_choice",
+              "aspect": "data source",
+              "severity": "low",
+              "paper_quote": "The dataset is freely available at https://github.com/zalandoresearch/fashion-mnist.",
+              "script_lines": [
+                52,
+                53
+              ],
+              "script_snippet": "train_ds = torchvision.datasets.FashionMNIST(\n        root=data_dir, train=True, download=True, transform=None\n    )",
+              "explanation": "The paper names a repository rather than a download mechanism; torchvision fetches the same idx/ubyte files and official split, so this is an immaterial sourcing choice.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "unstated_choice",
+              "aspect": "optimizer / training loop CLI",
+              "severity": "low",
+              "paper_quote": "not stated",
+              "script_lines": [
+                111,
+                126,
+                131
+              ],
+              "script_snippet": "\"--epochs\", type=int, default=1,\n        \"--batch-size\", type=int, default=256,\n        \"--lr\", type=float, default=0.0,",
+              "explanation": "Epochs, batch size and learning rate do not exist for a random forest; the script keeps them as documented no-ops (confirmed in the runner log) rather than silently applying a gradient-training regime the paper never describes. Harmless.",
+              "verified": true,
+              "problems": []
+            },
+            {
+              "kind": "unstated_choice",
+              "aspect": "parallelism",
+              "severity": "low",
+              "paper_quote": "not stated",
+              "script_lines": [
+                255
+              ],
+              "script_snippet": "n_jobs=-1,",
+              "explanation": "n_jobs only affects wall-clock time (147.29s total), not the fitted forest or the accuracy.",
+              "verified": true,
+              "problems": []
+            }
+          ],
+          "hypotheses": [],
+          "summary_problems": [],
+          "model": "claude-opus-5"
+        }
+      }
+    ]
+  },
+  "retry_count": 0,
+  "retry_budget": 3,
+  "fidelity_retry_count": 0,
+  "history": [
+    {
+      "timestamp": "2026-09-20T17:50:27+00:00",
+      "stage": "orchestrator",
+      "event": "loop started",
+      "detail": "retry_budget=3, plateau_threshold=0.98, modes=probe/smoke/capped/full"
+    },
+    {
+      "timestamp": "2026-09-20T17:51:22+00:00",
+      "stage": "coder",
+      "event": "generated script v1",
+      "detail": "claim=c17, 338 lines"
+    },
+    {
+      "timestamp": "2026-09-20T17:54:20+00:00",
+      "stage": "runner",
+      "event": "ran v1: success",
+      "detail": "stage_reached=full, failed_stage=None, exit_code=0, 177.97s, no triage"
+    },
+    {
+      "timestamp": "2026-09-20T17:54:55+00:00",
+      "stage": "critic",
+      "event": "judged v1: pass",
+      "detail": "pass: Test Accuracy reproduced 0.87648 (mean of 5 runs) vs claimed 0.873 +/- 0.000797; verdict 'pass' is final"
+    },
+    {
+      "timestamp": "2026-09-20T17:54:55+00:00",
+      "stage": "critic",
+      "event": "reviewed v1: faithful",
+      "detail": "0 verified stated problem(s); matches_paper 5, deviates_from_paper 0, unstated_choice 5, implementation_bug 0, unverified 2"
+    },
+    {
+      "timestamp": "2026-09-20T17:54:55+00:00",
+      "stage": "orchestrator",
+      "event": "loop finished: success",
+      "detail": "a stage passed; nothing to retry; critic verdict: pass"
+    }
+  ],
+  "verdict": "success",
+  "attempts": [
+    {
+      "version": 1,
+      "feedback_given": null,
+      "script_path": "orchestrator/output/2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms/attempts/v1_train.py",
+      "script_chars": 12075,
+      "plateau_ratio": null,
+      "runner_status": "success",
+      "stage_reached": "full",
+      "failed_stage": null,
+      "exit_code": 0,
+      "wall_clock_seconds": 177.97,
+      "triage_category": null,
+      "triage_reasoning": null,
+      "suggested_fix": null,
+      "syntax_error": null,
+      "logs_path": "orchestrator/output/2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms/logs/attempt-1",
+      "action": "done",
+      "verdict": "success",
+      "reason": "a stage passed; nothing to retry; critic verdict: pass",
+      "checkup_rule": null,
+      "checkup_message": null,
+      "critic_verdict": "pass"
+    }
+  ]
+}

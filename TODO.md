@@ -104,9 +104,14 @@ by-hand judgements.
 - [x] **Ladder for models without epochs** — `model_family` → classical `capped` uses 5,000/2,000
       rows (RF capped 0.8435 vs smoke 0.776, previously identical).
 - [x] Coder: capped subsets seeded random + stratified (svmguide1 first-N-rows single-class crash).
-- [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history;
-      consider a "no record for too long" hang rule; keep calibrating thresholds from every halt's
-      logged evidence (one false positive already found and fixed end to end).
+- [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history
+      — until then `no_first_record` is disarmed for them, so a legacy hang is bounded only by the
+      stage budget; keep calibrating thresholds from every halt's logged evidence (one false
+      positive already found and fixed end to end). ~~A "no record for too long" hang rule~~ —
+      done 2026-10-08, see `runner/`'s section below.
+- [ ] **`no_first_record` has never fired in Docker.** It is verified by replay only (the measured
+      cold fetch, the SVC silence, the disarm paths); the live kill path it uses is the same one
+      the other six rules and the timeout already exercise.
 
 ### 2. The Critic agent (`critic/`) — v1 ✅, v2 ✅ 2026-09-14
 
@@ -250,12 +255,17 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [x] **Check-ups judge health, not fidelity** — fidelity is now `critic/`'s job (2026-09-14).
 - [ ] **Scripts from before the progress contract** fall back to exit-code-only judgement until
       regenerated.
-- [ ] **A run that writes NO record is invisible to the check-ups.** Every rule needs at least one
-      history record, so a script stuck inside its first fit is never halted. Hit for real on
-      2026-09-20: Fashion-MNIST targeted the SVC claim (c21, 0.897), one LIBSVM fit on 60k x 784 is
-      tens of minutes single-threaded, and the paper's protocol repeats it 5 times — 15 minutes in,
-      the history file was still empty and nothing had fired. Killed by hand. **Needs a
-      "no first record within N minutes of the stage starting" rule**, with N per stage.
+- [x] **A run that writes NO record is invisible to the check-ups** — fixed 2026-10-08 with a
+      seventh rule, `no_first_record`: a stage silent past its per-stage deadline is halted with
+      evidence (capped 900 s, full/seed2/seed3 5400 s; `probe`/`smoke` deliberately never armed;
+      overridable with `--first-record-deadline MODE=SECONDS` on both the Runner and the
+      Orchestrator). Silence is measured by `SilenceClock`, which restarts while the shared
+      dataset mount grows, so the measured 1707 s cold fetch does not count against a script —
+      and the rule is disarmed for a script that predates the progress contract, which can never
+      write a record. 11 new replay tests (92 in the suite). The incident it fixes: Fashion-MNIST
+      targeted the SVC claim (c21, 0.897), one LIBSVM fit on 60k x 784 is tens of minutes
+      single-threaded, the paper repeats it 5 times, and 15 minutes in the history file was still
+      empty and nothing had fired. Killed by hand.
 - [ ] **The image is not reproducible byte-for-byte** — pin `python:3.11-slim` by digest.
 - [ ] **Container runs as root** — hidden on macOS, visible on a Linux host.
 - [ ] **`--memory` / `--cpus` unset** — deliberate (exit 137 looks like a crash), but two containers

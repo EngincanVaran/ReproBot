@@ -1,0 +1,194 @@
+{
+  "verdict": "pass",
+  "reason": "the reproduced value is within tolerance of the claim (binomial noise of the evaluation set)",
+  "recommendation": "none",
+  "claim_id": "c5",
+  "metric": "test error",
+  "dataset": "MNIST",
+  "unit": "%",
+  "claimed": 0.87,
+  "reproduced": 0.8199999999999985,
+  "run_values": [
+    0.8199999999999985
+  ],
+  "higher_is_better": false,
+  "gap": -0.05000000000000149,
+  "relative_gap": -0.057471264367817805,
+  "tolerance": 0.18573432639121937,
+  "reporting_precision": 0.005,
+  "test_noise": 0.09286716319560968,
+  "run_spread": null,
+  "evidence": "binomial noise of the evaluation set",
+  "exceeds_claim": false,
+  "merged_claim_ids": [
+    "c5"
+  ],
+  "metrics_mode": null,
+  "claim_groups": [
+    {
+      "canonical_claim_id": "c1",
+      "metric": "Training cross validation accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 68.9,
+      "unit": "%",
+      "model_variant": "DLSVM L2",
+      "merged_claim_ids": [
+        "c1"
+      ]
+    },
+    {
+      "canonical_claim_id": "c2",
+      "metric": "Public leaderboard accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 69.4,
+      "unit": "%",
+      "model_variant": "DLSVM L2",
+      "merged_claim_ids": [
+        "c2"
+      ]
+    },
+    {
+      "canonical_claim_id": "c3",
+      "metric": "Private leaderboard accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 71.2,
+      "unit": "%",
+      "model_variant": "DLSVM L2",
+      "merged_claim_ids": [
+        "c3"
+      ]
+    },
+    {
+      "canonical_claim_id": "c1b",
+      "metric": "Training cross validation accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 67.6,
+      "unit": "%",
+      "model_variant": "Softmax",
+      "merged_claim_ids": [
+        "c1b"
+      ]
+    },
+    {
+      "canonical_claim_id": "c2b",
+      "metric": "Public leaderboard accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 69.3,
+      "unit": "%",
+      "model_variant": "Softmax",
+      "merged_claim_ids": [
+        "c2b"
+      ]
+    },
+    {
+      "canonical_claim_id": "c3b",
+      "metric": "Private leaderboard accuracy",
+      "dataset": "ICML 2013 Facial Expression Recognition Challenge",
+      "reported_value": 70.1,
+      "unit": "%",
+      "model_variant": "Softmax",
+      "merged_claim_ids": [
+        "c3b"
+      ]
+    },
+    {
+      "canonical_claim_id": "c4",
+      "metric": "test error",
+      "dataset": "MNIST",
+      "reported_value": 0.99,
+      "unit": "%",
+      "model_variant": "Softmax",
+      "merged_claim_ids": [
+        "c4"
+      ]
+    },
+    {
+      "canonical_claim_id": "c5",
+      "metric": "test error",
+      "dataset": "MNIST",
+      "reported_value": 0.87,
+      "unit": "%",
+      "model_variant": "DLSVM",
+      "merged_claim_ids": [
+        "c5"
+      ]
+    },
+    {
+      "canonical_claim_id": "c6",
+      "metric": "Test error",
+      "dataset": "CIFAR-10",
+      "reported_value": 11.9,
+      "unit": "%",
+      "model_variant": "ConvNet+SVM",
+      "merged_claim_ids": [
+        "c6"
+      ]
+    },
+    {
+      "canonical_claim_id": "c6b",
+      "metric": "Test error",
+      "dataset": "CIFAR-10",
+      "reported_value": 14.0,
+      "unit": "%",
+      "model_variant": "ConvNet+Softmax",
+      "merged_claim_ids": [
+        "c6b"
+      ]
+    },
+    {
+      "canonical_claim_id": "c7",
+      "metric": "Avg. cross entropy",
+      "dataset": "CIFAR-10",
+      "reported_value": 0.353,
+      "unit": "nats",
+      "model_variant": "ConvNet+SVM",
+      "merged_claim_ids": [
+        "c7"
+      ]
+    },
+    {
+      "canonical_claim_id": "c8",
+      "metric": "Hinge loss squared",
+      "dataset": "CIFAR-10",
+      "reported_value": 0.313,
+      "unit": "unitless",
+      "model_variant": "ConvNet+SVM",
+      "merged_claim_ids": [
+        "c8"
+      ]
+    },
+    {
+      "canonical_claim_id": "c9",
+      "metric": "Avg. cross entropy",
+      "dataset": "CIFAR-10",
+      "reported_value": 0.072,
+      "unit": "nats",
+      "model_variant": "ConvNet+Softmax",
+      "merged_claim_ids": [
+        "c9"
+      ]
+    },
+    {
+      "canonical_claim_id": "c10",
+      "metric": "Hinge loss squared",
+      "dataset": "CIFAR-10",
+      "reported_value": 213.2,
+      "unit": "unitless",
+      "model_variant": "ConvNet+Softmax",
+      "merged_claim_ids": [
+        "c10"
+      ]
+    },
+    {
+      "canonical_claim_id": "c11",
+      "metric": "Test error after initializing ConvNet+Softmax with DLSVM weights (11.9% error) and further training",
+      "dataset": "CIFAR-10",
+      "reported_value": 14.0,
+      "unit": "%",
+      "model_variant": "ConvNet+Softmax initialized from DLSVM weights",
+      "merged_claim_ids": [
+        "c11"
+      ]
+    }
+  ]
+}
