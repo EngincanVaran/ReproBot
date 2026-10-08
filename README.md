@@ -13,7 +13,7 @@
 | Paper | Claimed | ReproBot |
 |---|---|---|
 | Tang 2013 — MLP with an L2-SVM loss | MNIST 0.87% test error | **0.82%** |
-| Hsu/Chang/Lin — RBF SVM guide | svmguide1 96.9% | **96.925%** |
+| Hsu/Chang/Lin — RBF SVM guide | svmguide1 96.9% | **96.625%** |
 | Xiao 2017 — Fashion-MNIST random forest | 0.873 (mean of 5) | **0.8773** |
 | Frosst & Hinton — soft decision tree | MNIST 94.45% | **95.11%** |
 | Wijaya 2023 — dense regression net | Boston RMSE 3.02 | **3.33** (mean of 3 seeds) |
