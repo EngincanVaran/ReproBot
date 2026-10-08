@@ -27,7 +27,12 @@ have reproduced a paper, which is worse than a late one, so:
   a margin measured against the chance level of a trivial predictor, which the
   script computes from its own data;
 * no rule treats a late plateau as a problem - a run that is clearly better
-  than chance and has stopped improving is simply converged.
+  than chance and has stopped improving is simply converged;
+* the one rule that judges silence instead of a curve (`no_first_record`, for a
+  script stuck inside its very first fit) is armed only on the stages where
+  silence is diagnostic, disarms for good the instant any record arrives, and
+  measures SILENCE rather than elapsed time - a dataset still arriving is a sign
+  of life, so the ~1707 s cold CIFAR-10 fetch never counts against a script.
 """
 
 from __future__ import annotations
@@ -61,6 +66,52 @@ DIVERGE_LOSS_FACTOR: Final[float] = 1.5
 DIVERGE_ADVANTAGE_KEPT: Final[float] = 0.5
 # Slack before a loss counts as below its declared lower bound.
 LOWER_BOUND_TOLERANCE: Final[float] = 1e-3
+# Most files `SilenceClock` will walk in the shared dataset mount before it stops
+# counting. Real caches hold a handful of archives and extracted folders; the bound
+# is there so an unpacked image dataset cannot turn a 5 s poll into a slow one.
+CACHE_SCAN_MAX_ENTRIES: Final[int] = 20_000
+
+# How long a stage may stay completely silent - not one progress record - before
+# `no_first_record` halts it. Every other rule needs a record, so a script stuck
+# inside its FIRST fit is otherwise invisible: on 2026-09-20 a Fashion-MNIST run
+# targeted the RBF SVC claim, one LIBSVM fit on 60,000 x 784 rows is tens of
+# minutes single-threaded and the paper repeats it five times, and fifteen minutes
+# in the history file was still empty. A person had to kill it.
+#
+# The numbers are deliberately far above anything a healthy run has ever needed:
+#
+#   * the longest real wait before a first record is a COLD dataset fetch, measured
+#     at 1707 s of a 1774 s probe (~170 MB of CIFAR-10 on a slow connection);
+#   * the longest real first unit of work is the soft decision tree's first epoch,
+#     ~105 s (40 epochs in a 70 min full run); Tang's is ~8 s (400 epochs, 54 min),
+#     the Fashion-MNIST forest's first repetition ~40 s (5 in 3.3 min), and the SVM
+#     guide's single fit 73 s end to end.
+#
+# So `full` waits 5400 s: 3.2x the cold fetch and ~50x the slowest real first epoch,
+# while still turning the SVC incident's remaining hours into a bounded 90 minutes.
+# `capped` waits 900 s: 1.7x the whole slowest measured capped stage (~525 s) and
+# half its own 1800 s budget.
+#
+# 900 s is BELOW the measured cold fetch on purpose, and what makes it safe is that
+# the clock measures silence, not elapsed time: `SilenceClock` restarts it while the
+# shared dataset cache is growing, so a download never counts against the deadline.
+# Without that, `--mode capped` on a cold cache - a documented way to run one stage,
+# with no `probe` in front of it to warm the mount - would be halted mid-download and
+# the Orchestrator would hand the Coder a script that was never at fault.
+#
+# `probe` and `smoke` have NO entry on purpose, and that is the conservative choice
+# rather than an omission: probe is the stage that absorbs the cold fetch, whose
+# worst case is a property of the network rather than of the script, and both stages
+# can legitimately finish without writing a record at all (a probe is a couple of
+# optimizer steps). Their short budgets - 2700 s and 900 s - already bound them, and
+# a timeout stops the Orchestrator for a human instead of asking the Coder to
+# regenerate a script that was never the problem.
+DEFAULT_FIRST_RECORD_SECONDS: Final[dict[str, float]] = {
+    "capped": 900.0,
+    "full": 5400.0,
+    "seed2": 5400.0,
+    "seed3": 5400.0,
+}
 
 type RuleName = Literal[
     "non_finite",
@@ -69,6 +120,7 @@ type RuleName = Literal[
     "no_progress",
     "stuck_at_chance",
     "diverged",
+    "no_first_record",
 ]
 
 ALL_RULES: Final[tuple[RuleName, ...]] = (
@@ -78,9 +130,11 @@ ALL_RULES: Final[tuple[RuleName, ...]] = (
     "no_progress",
     "stuck_at_chance",
     "diverged",
+    "no_first_record",
 )
 
-# Which rules may halt which stage. Probe and smoke are too short for trends.
+# Which rules may halt which stage. Probe and smoke are too short for trends, and
+# too short to read anything into silence (see DEFAULT_FIRST_RECORD_SECONDS).
 STAGE_RULES: Final[dict[str, tuple[RuleName, ...]]] = {
     "probe": ("non_finite", "loss_below_lower_bound"),
     "smoke": ("non_finite", "loss_below_lower_bound"),
@@ -88,7 +142,12 @@ STAGE_RULES: Final[dict[str, tuple[RuleName, ...]]] = {
     # steps, and a real model can leave its loss unchanged to four digits over that
     # while its predictions already improve (a soft decision tree whose leaves start
     # uniform sat at ln 10 = 2.303 with 30% accuracy, three times chance).
-    "capped": ("non_finite", "loss_below_lower_bound", "worse_than_chance"),
+    "capped": (
+        "non_finite",
+        "loss_below_lower_bound",
+        "worse_than_chance",
+        "no_first_record",
+    ),
     "full": ALL_RULES,
     # Extra seeds are the full run again with another seed, judged the same way.
     "seed2": ALL_RULES,
@@ -211,6 +270,23 @@ def parse_record(line: str) -> ProgressRecord | None:
     )
 
 
+def writes_progress_history(script_path: Path) -> bool:
+    """Does this generated script implement the progress contract at all?
+
+    A script written before the contract (the `Trainer`-era NIN and WRN, and Tang's
+    and Wijaya's scripts still on disk) never writes a record however healthy it is,
+    so judging its silence would halt a run that is doing exactly the right thing.
+    The test is a literal in the generated text, the same cheap kind of check
+    `coder/`'s own CLI-flag gate makes, and it fails toward "not armed": a script
+    that builds the marker dynamically is left alone rather than halted.
+    """
+    try:
+        text = script_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return PROGRESS_MARKER in text or HISTORY_SUFFIX in text
+
+
 def history_path_from_metrics(metrics_path: Path) -> Path:
     """`metrics.full.json` -> `metrics.full.history.jsonl`: the rule scripts follow."""
     name = metrics_path.name
@@ -251,6 +327,67 @@ class HistoryTail:
             else:
                 records.append(record)
         return records
+
+
+class SilenceClock:
+    """How long a stage has gone without any observable sign of life.
+
+    `no_first_record` must not confuse "doing nothing" with "doing something that
+    does not report yet", and the one thing that legitimately precedes a first
+    record is a dataset download: the repo measured 1707 s of a 1774 s probe as
+    CIFAR-10 arriving. Wall-clock time since launch would therefore halt an honest
+    `--mode capped` run on a cold cache, since nothing warms the mount in front of
+    it - so the clock restarts whenever the shared dataset mount changes size or
+    file count, and the deadline is measured from the last such change.
+
+    That mount is the only live signal available. The script's own stdout is not:
+    `runner/docker_runner.py` captures both streams through a blocking
+    `subprocess.run(capture_output=True)`, so not one line is readable until the
+    process exits. Two consequences worth knowing: a download the script buffers
+    entirely in memory (`pandas.read_csv(url)`) touches no file and so looks like
+    silence, and a script re-downloading in a loop keeps resetting the clock until
+    the stage's own timeout ends it.
+
+    The walk is bounded (CACHE_SCAN_MAX_ENTRIES) and only runs while a stage is
+    still silent, so the diagnosis can never become the slow part of the run.
+    """
+
+    def __init__(self, cache_dir: Path | None, now: float) -> None:
+        self.cache_dir = cache_dir
+        self._fingerprint = self._read_fingerprint()
+        self._last_sign_of_life = now
+
+    def _read_fingerprint(self) -> tuple[int, int]:
+        """(entries, total bytes) under the dataset mount; (0, 0) when unreadable.
+
+        Any change counts as life, in either direction: a file being appended to, a
+        new one appearing, or an archive being deleted after extraction.
+        """
+        if self.cache_dir is None or not self.cache_dir.exists():
+            return (0, 0)
+        entries = 0
+        total = 0
+        try:
+            for path in self.cache_dir.rglob("*"):
+                entries += 1
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    # A temporary file of a download in flight, already gone.
+                    continue
+                if entries >= CACHE_SCAN_MAX_ENTRIES:
+                    break
+        except OSError:
+            return (entries, total)
+        return (entries, total)
+
+    def silent_seconds(self, now: float) -> float:
+        """Seconds since the last sign of life, restarting the clock on cache growth."""
+        fingerprint = self._read_fingerprint()
+        if fingerprint != self._fingerprint:
+            self._fingerprint = fingerprint
+            self._last_sign_of_life = now
+        return max(0.0, now - self._last_sign_of_life)
 
 
 # --------------------------------------------------------------------------- #
@@ -558,6 +695,52 @@ def rule_diverged(records: list[ProgressRecord], mode: str) -> Halt | None:
     )
 
 
+def rule_no_first_record(
+    records: list[ProgressRecord],
+    mode: str,
+    silent_seconds: float,
+    first_record_seconds: dict[str, float] | None = None,
+) -> Halt | None:
+    """Not one record yet, long after this stage should have reported something.
+
+    The only rule that judges silence rather than a curve, because every other rule
+    needs a record and a script stuck inside its first fit writes none - the real
+    2026-09-20 Fashion-MNIST SVC run was invisible to all six of them. Five things
+    keep it from killing a slow-but-honest run: the first record disarms it for the
+    rest of the stage (this is about never starting, never about slowing down); it
+    only ever sees a stage that is STILL RUNNING, since the caller passes a clock
+    only while the container is alive; it is armed on `capped` and `full` only; its
+    deadline sits multiples above the longest first unit of work any healthy run has
+    needed; and it is given SILENCE rather than elapsed time, so a dataset download
+    does not count against it (`SilenceClock`, DEFAULT_FIRST_RECORD_SECONDS).
+    """
+    if records:
+        return None
+    table = DEFAULT_FIRST_RECORD_SECONDS if first_record_seconds is None else first_record_seconds
+    deadline = table.get(mode)
+    if deadline is None or silent_seconds < deadline:
+        return None
+    return Halt(
+        "no_first_record",
+        mode,
+        int(silent_seconds),
+        "second",
+        f"nothing happened for {int(silent_seconds)}s of this stage - no progress record, "
+        f"and no growth in the shared dataset cache either (its deadline is "
+        f"{int(deadline)}s): the script never finished a single epoch, repetition or fit, "
+        f"so there is no learning curve to judge at all.",
+        "Nothing can be diagnosed from a run that never reports, so the first unit of work "
+        "has to become observable. Check that the stage's own data and epoch caps really "
+        "apply before the first fit (a capped stage quietly training on the whole dataset "
+        "looks exactly like this), that the dataset is read from --data-dir instead of being "
+        "downloaded again, and that progress is recorded at the finest unit the method "
+        "allows - when one indivisible fit costs more than the whole stage, the script must "
+        "report from inside it rather than only after it.",
+    )
+
+
+# Every RuleName belongs to exactly one of these two registries: RULES judges a
+# curve, TIMED_RULES judges how long the stage has been silent.
 RULES: Final[dict[RuleName, Callable[[list[ProgressRecord], str], Halt | None]]] = {
     "non_finite": rule_non_finite,
     "loss_below_lower_bound": rule_loss_below_lower_bound,
@@ -567,13 +750,38 @@ RULES: Final[dict[RuleName, Callable[[list[ProgressRecord], str], Halt | None]]]
     "diverged": rule_diverged,
 }
 
+type TimedRule = Callable[[list[ProgressRecord], str, float, dict[str, float] | None], Halt | None]
 
-def evaluate(records: list[ProgressRecord], mode: str) -> Halt | None:
-    """Run the rules this stage allows, in order; the first that fires wins."""
-    if not records:
-        return None
+TIMED_RULES: Final[dict[RuleName, TimedRule]] = {
+    "no_first_record": rule_no_first_record,
+}
+
+
+def evaluate(
+    records: list[ProgressRecord],
+    mode: str,
+    silent_seconds: float | None = None,
+    first_record_seconds: dict[str, float] | None = None,
+) -> Halt | None:
+    """Run the rules this stage allows, in order; the first that fires wins.
+
+    `silent_seconds` is how long the stage has shown no sign of life at all (see
+    `SilenceClock`), and the caller passes it only while the container is still
+    alive. Without it the rules that judge the clock are skipped, which is what
+    keeps them out of the post-exit pass: once a stage has finished, "it never
+    reported anything" is no longer worth halting - a probe may legitimately exit
+    before its first epoch, and the exit code and logs are the evidence from then on.
+    """
     for name in STAGE_RULES.get(mode, ALL_RULES):
-        halt = RULES[name](records, mode)
+        timed = TIMED_RULES.get(name)
+        if timed is not None:
+            if silent_seconds is None:
+                continue
+            halt = timed(records, mode, silent_seconds, first_record_seconds)
+        else:
+            if not records:
+                continue
+            halt = RULES[name](records, mode)
         if halt is not None:
             return halt
     return None

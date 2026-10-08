@@ -33,6 +33,7 @@ Usage:
     uv run python -m runner.pipeline --input coder/output --max-stage smoke
     uv run python -m runner.pipeline --mode probe --no-build
     uv run python -m runner.pipeline --timeout probe=300 --timeout smoke=1800
+    uv run python -m runner.pipeline --mode full --first-record-deadline full=10800
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from loguru import logger
 
+from runner.checkups import DEFAULT_FIRST_RECORD_SECONDS
 from runner.docker_runner import (
     ALL_MODES,
     DEFAULT_CACHE_DIR,
@@ -57,6 +59,7 @@ from runner.docker_runner import (
     DockerUnavailableError,
     ImageMissingError,
     RunnerOutput,
+    parse_first_record_overrides,
     parse_timeout_overrides,
     stages_up_to,
 )
@@ -254,6 +257,20 @@ def main() -> None:
         help="Seconds between live check-up reads of a running stage's history file",
     )
     parser.add_argument(
+        "--first-record-deadline",
+        action="append",
+        metavar="MODE=SECONDS",
+        help=(
+            "Override how long a stage may stay silent - no progress record at all, and "
+            "no dataset arriving either - before the 'no_first_record' check-up halts it; "
+            "repeatable. Defaults: "
+            + ", ".join(
+                f"{mode}={int(seconds)}s" for mode, seconds in DEFAULT_FIRST_RECORD_SECONDS.items()
+            )
+            + " (probe and smoke are never halted for silence)"
+        ),
+    )
+    parser.add_argument(
         "--no-triage",
         action="store_true",
         help="Never make the Haiku failure-classification call (runs fully offline)",
@@ -269,6 +286,7 @@ def main() -> None:
     # handling (usage line, exit 2) rather than a traceback out of a helper.
     try:
         stage_timeouts = parse_timeout_overrides(args.timeout)
+        first_record_seconds = parse_first_record_overrides(args.first_record_deadline)
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -292,6 +310,7 @@ def main() -> None:
         run_triage=not args.no_triage,
         live_checkups=not args.no_live_checkups,
         checkup_interval=args.checkup_interval,
+        first_record_seconds=first_record_seconds,
     )
     # A missing daemon or image is a setup problem, not a bug worth a traceback -
     # and it is the single most likely reason a first run does not start, so it

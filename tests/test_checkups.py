@@ -14,9 +14,11 @@ from runner.checkups import (
     PROGRESS_MARKER,
     HistoryTail,
     ProgressRecord,
+    SilenceClock,
     evaluate,
     history_path_from_metrics,
     parse_record,
+    writes_progress_history,
 )
 
 ABLATION = Path(__file__).resolve().parents[1] / "docs/notes/tang-2013-ablation/ablation.json"
@@ -423,3 +425,157 @@ def test_history_path_from_metrics() -> None:
     assert history_path_from_metrics(Path("/w/metrics.full.json")).name == (
         "metrics.full.history.jsonl"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Silence - a stage that never writes a first record
+# --------------------------------------------------------------------------- #
+
+
+def test_fashion_mnist_svc_first_fit_is_halted_instead_of_running_for_hours() -> None:
+    """The 2026-09-20 incident this rule exists for.
+
+    The Coder targeted Fashion-MNIST's RBF SVC claim (c21, 0.897). One LIBSVM fit on
+    60,000 x 784 rows is tens of minutes single-threaded and the paper's protocol
+    repeats it five times, so the first `repetition` record was hours away; fifteen
+    minutes in, `metrics.full.history.jsonl` was still empty and all six curve rules
+    had nothing to judge. A person killed it by hand.
+
+    The rule is deliberately more patient than that person was - it is sized against
+    a cold dataset download, not against impatience - but it does end the run.
+    """
+    assert evaluate([], "full", 900.0) is None  # 15 min: where the human gave up
+    halt = evaluate([], "full", 5400.0)
+    assert halt is not None
+    assert halt.rule == "no_first_record"
+    assert halt.mode == "full" and halt.kind == "second" and halt.step == 5400
+    assert "never finished a single epoch, repetition or fit" in halt.message
+    assert "live check-up" in halt.feedback()
+
+
+def test_silent_stage_past_its_deadline_halts() -> None:
+    for mode, deadline in (("capped", 900.0), ("full", 5400.0), ("seed3", 5400.0)):
+        halt = evaluate([], mode, deadline + 1.0)
+        assert halt is not None and halt.rule == "no_first_record"
+
+
+def test_silent_stage_inside_its_deadline_never_halts() -> None:
+    # The slowest real first unit of work is the soft decision tree's first epoch,
+    # ~105 s of its 70 min full run; Tang's is ~8 s and the forest's ~40 s.
+    for elapsed in (0.0, 105.0, 200.0, 899.0):
+        assert evaluate([], "capped", elapsed) is None
+    for elapsed in (0.0, 105.0, 900.0, 5399.0):
+        assert evaluate([], "full", elapsed) is None
+
+
+def test_cold_dataset_download_is_never_mistaken_for_a_dead_run() -> None:
+    # A cold cache put 1707 s of CIFAR-10 download in front of the first record of a
+    # 1774 s probe. Probe and smoke are not armed at all, and full's deadline sits
+    # 3.2x above the measured fetch.
+    for mode in ("probe", "smoke"):
+        assert evaluate([], mode, 2699.0) is None
+    assert evaluate([], "full", 1707.0) is None
+
+
+def test_cold_cache_capped_run_is_not_halted_while_the_dataset_arrives(tmp_path: Path) -> None:
+    """`--mode capped` on a cold cache, which no probe runs in front of.
+
+    capped's 900 s deadline is below the measured 1707 s CIFAR-10 fetch, so elapsed
+    time would halt an honest run mid-download and the Orchestrator would blame the
+    script. The clock measures silence instead: while the mount grows it restarts,
+    and it only starts counting once the data has landed.
+    """
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    archive = datasets / "cifar-10-python.tar.gz"
+    archive.write_bytes(b"")
+    clock = SilenceClock(datasets, 0.0)
+
+    # 1707 s of download, in ~170 MB of chunks, as torchvision writes it.
+    for tick, written in enumerate(range(1, 18), start=1):
+        archive.write_bytes(b"x" * (written * 10_000_000))
+        now = tick * 100.0
+        silent = clock.silent_seconds(now)
+        assert silent < 900.0
+        assert evaluate([], "capped", silent) is None
+
+    # The fetch is done at ~1700 s; from there the stage is genuinely silent, and
+    # capped's own 1800 s budget ends it before the deadline is even reached.
+    assert evaluate([], "capped", clock.silent_seconds(2000.0)) is None
+    halt = evaluate([], "capped", clock.silent_seconds(2600.0))
+    assert halt is not None and halt.rule == "no_first_record"
+
+
+def test_silence_clock_counts_a_warm_cache_as_silence(tmp_path: Path) -> None:
+    # Nothing to download: the deadline then measures the script's own silence, which
+    # is the Fashion-MNIST SVC case (Fashion-MNIST was already in the shared mount).
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    (datasets / "fashion-mnist.arff").write_bytes(b"y" * 1_000)
+    clock = SilenceClock(datasets, 0.0)
+    assert clock.silent_seconds(900.0) == 900.0
+    assert clock.silent_seconds(5400.0) == 5400.0
+    assert evaluate([], "full", clock.silent_seconds(5400.0)) is not None
+
+
+def test_silence_clock_tolerates_a_missing_cache_directory(tmp_path: Path) -> None:
+    # The mount is created before a run, but a --cache-dir that does not exist yet
+    # (or a file vanishing mid-walk) must not crash the watcher thread.
+    clock = SilenceClock(tmp_path / "never-created", 0.0)
+    assert clock.silent_seconds(10.0) == 10.0
+    assert SilenceClock(None, 0.0).silent_seconds(10.0) == 10.0
+
+
+def test_first_record_disarms_the_rule_for_the_rest_of_the_stage() -> None:
+    # The real Fashion-MNIST forest: 5 repetitions, one record each, 3.3 min total.
+    # Once any record exists the rule is off, however sparse the records become -
+    # it is about never starting, not about slowing down.
+    records = [
+        rec(
+            i + 1,
+            5,
+            kind="repetition",
+            eval_metric=v,
+            metric="Test Accuracy",
+            unit="",
+            higher_is_better=True,
+            chance=0.1,
+            bound=None,
+            target=0.873,
+        )
+        for i, v in enumerate([0.8773, 0.8774, 0.8753, 0.8792, 0.8775])
+    ]
+    assert evaluate(records[:1], "full", 86400.0) is None
+    assert evaluate(records, "full", 86400.0) is None
+    assert evaluate(records[:1], "capped", 86400.0) is None
+
+
+def test_a_finished_stage_is_never_halted_for_silence() -> None:
+    # The post-exit pass hands no wall clock, so a probe that legitimately exits
+    # before its first epoch keeps its exit code as the verdict.
+    for mode in ("probe", "smoke", "capped", "full"):
+        assert evaluate([], mode) is None
+
+
+def test_first_record_deadline_is_configurable_per_stage() -> None:
+    assert evaluate([], "full", 1200.0, {"full": 600.0}) is not None
+    assert evaluate([], "full", 1200.0, {}) is None  # no entry = never halted
+    assert evaluate([], "capped", 1200.0, {"capped": 7200.0}) is None
+
+
+def test_pre_contract_script_cannot_arm_the_silence_rule(tmp_path: Path) -> None:
+    # The Trainer-era NIN/WRN scripts and Tang's and Wijaya's current ones write no
+    # history however healthy they are, so the Runner disarms the rule for them
+    # rather than halting a run that is doing the right thing.
+    legacy = tmp_path / "train.py"
+    legacy.write_text("from transformers import Trainer\nTrainer(...).train()\n", encoding="utf-8")
+    assert writes_progress_history(legacy) is False
+    assert evaluate([], "full", 86400.0, {}) is None  # what the Runner then passes
+
+    current = tmp_path / "current.py"
+    current.write_text(
+        f'print(f"{PROGRESS_MARKER} {{json.dumps(record)}}")\n',
+        encoding="utf-8",
+    )
+    assert writes_progress_history(current) is True
+    assert writes_progress_history(tmp_path / "absent.py") is False

@@ -87,11 +87,14 @@ fitted on the training split), `target_value` (the claim) and `loss_lower_bound`
 
 **The mechanism.** `run_stage` keeps its blocking `subprocess.run`; a watcher thread
 beside it reads new history lines every `--checkup-interval` seconds (default 5),
-logs them (at most ~20 lines per stage), and evaluates the rules. When one fires, the
-watcher kills the container by name — the timeout path's own `docker kill` — and the
-stage ends with status **`halted`** and the evidence. The rules run once more after
-exit, because a short stage can finish between two polls. No triage call is made: the
-rule's evidence is the diagnosis. A script that writes no history is judged on its
+logs them (at most ~20 lines per stage), and evaluates the rules **on every tick,
+whether or not a record arrived** — the tick that sees nothing is exactly the one
+`no_first_record` has to decide. When a rule fires, the watcher kills the container by
+name — the timeout path's own `docker kill` — and the stage ends with status
+**`halted`** and the evidence. The rules run once more after exit, because a short
+stage can finish between two polls; that final pass is given no wall clock, so silence
+can only halt a stage that is still running. No triage call is made: the rule's
+evidence is the diagnosis. A finished script that wrote no history is judged on its
 exit code alone, with a warning. `--no-live-checkups` turns all of it off.
 
 **The rules** — pure functions, conservative, because a false halt kills a run that
@@ -105,6 +108,7 @@ would have reproduced a paper:
 | `no_progress` | the loss is flat (<0.1% range) over the opening window **and** the metric is not meaningfully better than chance | full |
 | `stuck_at_chance` | after warmup (max(3, 10% of the run)), the metric is not meaningfully past chance for 3 records running — skipped when the claim itself sits near chance | full |
 | `diverged` | the loss is >1.5x its best **and** the metric has kept <50% of its best gain over chance, for 3 records running | full |
+| `no_first_record` | the stage has been **silent** — no record written, no dataset arriving — for longer than its per-stage deadline | capped, full |
 
 "Meaningfully past chance" is max(3 SEs, 10% of the distance from chance to a perfect
 score). `no_progress` was first allowed in `capped` too, and end-to-end testing
@@ -112,13 +116,80 @@ showed why it cannot be: a correctly generated soft tree, whose leaves start uni
 held its loss at ln 10 = 2.303 for all five capped epochs while accuracy was already
 30% — three times chance.
 
-**Verified** (`tests/test_checkups.py`, 22 replays of real curves; plus Docker):
+### `no_first_record` — the rule that judges silence
+
+Every rule above needs at least one record, so a script stuck inside its **first**
+fit was invisible to all six of them. That is not hypothetical. On **2026-09-20** the
+Coder targeted Fashion-MNIST's RBF SVC claim (c21, 0.897); one LIBSVM fit on
+60,000 × 784 rows is tens of minutes single-threaded, and the paper's protocol
+repeats it five times. Fifteen minutes in, `metrics.full.history.jsonl` was still
+empty, every rule had nothing to judge, the stage had ~86,000 s of budget left — and
+a person killed the container by hand. `no_first_record` is that person.
+
+| Stage | Deadline | Why that number |
+|---|---|---|
+| `probe`, `smoke` | **never armed** | `probe` is the stage that absorbs a cold dataset fetch, whose worst case belongs to the network rather than the script, and both stages can legitimately end *without* a record (a probe is a couple of optimizer steps). Their 2700 s / 900 s budgets already bound them, and a timeout stops the loop for a human instead of asking the Coder to rewrite a script that was never at fault. |
+| `capped` | 900 s | 1.7× the slowest measured capped stage (~525 s), 8× its slowest real first epoch (~105 s), half its own 1800 s budget. Below the 1707 s cold fetch — which is safe only because the clock measures silence, not elapsed time (next paragraph). |
+| `full`, `seed2`, `seed3` | 5400 s | 3.2× the longest wait ever measured before a first record (the 1707 s cold CIFAR-10 fetch) and ~50× the slowest real first epoch, while still bounding the SVC incident's remaining hours at 90 minutes. |
+
+The deadlines are defaults, not constants: `DEFAULT_FIRST_RECORD_SECONDS` in
+`checkups.py`, overridable per stage with `--first-record-deadline MODE=SECONDS`
+(same shape as `--timeout`) for a paper whose first unit of work is honestly huge.
+
+Four properties keep it from killing a slow-but-honest run:
+
+1. **The first record disarms it for the rest of the stage.** It is a rule about never
+   starting, never about slowing down — the Fashion-MNIST forest's five sparse
+   `repetition` records, or a single `fit`, switch it off for good.
+2. **It only ever sees a stage that is still running.** `evaluate()` takes the clock
+   as an argument and the watcher is the only caller that passes it; the post-exit
+   pass does not, so a stage that has already finished is judged on its exit code as
+   before — including a `probe` that legitimately exits before its first epoch.
+3. **It counts silence, not elapsed time** (below).
+4. **Its deadline is sized against the slowest first unit of work ever measured here**,
+   not against the compute a paper might need.
+5. **It is armed only for a script that can report.** Before launching, the Runner
+   checks the generated `train.py` for the `REPROBOT_PROGRESS` marker; a script from
+   before the progress contract (the `Trainer`-era NIN and WRN, Tang's and Wijaya's
+   current scripts) never writes a record however healthy it is, so the rule is
+   disarmed for it with a warning and only the stage budget bounds that run.
+
+**A dataset download is not silence** — `SilenceClock`, and the reason the capped
+deadline can sit below the measured 1707 s CIFAR-10 fetch. The clock restarts whenever
+the shared dataset mount (`runner/cache/datasets`) changes in file count or total
+bytes, so the deadline is measured from the moment the data stopped arriving, not from
+container start. Without it, `bash reproduce.sh capped` on a cold cache — a documented
+single-stage run, with no `probe` in front of it to warm the mount — would be halted
+mid-download, and the Orchestrator would hand the Coder a complaint about a script
+that was never at fault. With it, that run stays untouched while the fetch proceeds and
+is bounded by capped's own 1800 s budget instead.
+
+**That mount is the only live signal there is.** The obvious alternative — watch the
+script's log, since a downloading script does print — is not available: `run_stage`
+captures both streams through a blocking `subprocess.run(capture_output=True)`, so not
+one line is readable until the process exits. Making the log a liveness signal would
+mean replacing that capture with pipe readers and re-proving the timeout path around
+them, which is a large change to the most delicate code in this stage for a signal the
+cache already gives. Two honest limits of the cheaper choice, both documented in
+`checkups.py`: a download the script buffers entirely in memory (`pandas.read_csv(url)`
+writes no file) still looks like silence, and a script re-downloading in a loop keeps
+resetting the clock until the stage's own timeout ends it. The walk is bounded at
+20,000 entries and runs only while a stage is still silent, so the check cannot become
+the slow part of the run.
+
+**Verified** (`tests/test_checkups.py`, 33 replays of real curves and real timings; plus
+Docker):
 
 | Curve | Result |
 |---|---|
 | Tang ablation, as generated (mom 0.9, C=1.0) | halted at epoch 12, `diverged` |
 | Tang ablation, whitened PCA | halted at epoch 6, `diverged` |
 | Tang ablation, 4 stable configs; Tang C=0.1; Wijaya; soft tree (fixed, 40 epochs); random forest; SVM | never halted |
+| Fashion-MNIST SVC, 2026-09-20: empty history in `full`, warm cache | untouched at 900 s (where the human gave up), halted at 5400 s, `no_first_record` |
+| The same silence in `probe`/`smoke`, and a 1707 s cold fetch in `full` | never halted |
+| The measured cold CIFAR-10 fetch replayed chunk by chunk under `--mode capped` | never halted while the mount grows; counts only afterwards |
+| Any stage after it has exited, with no record | never halted — exit code decides |
+| A pre-contract (`Trainer`-era) script, silent for 24 h | never halted — the rule is not armed for it |
 | Soft tree, sign-flipped loss, **live `full` run in Docker** | halted at epoch 1 of 40, container killed 0.3 s after the record — ~70 min saved |
 | Same fault through the Orchestrator | halted in `probe` after 5 s → evidence fed to the Coder → regenerated script passed to `capped`, `success` |
 
@@ -480,6 +551,9 @@ uv run python -m runner.pipeline --mode probe
 uv run python -m runner.pipeline --timeout probe=300 --timeout smoke=900 \
     --memory 8g --cpus 4 --network none --no-triage
 
+# a paper whose first fit is honestly enormous: wait 3 h of silence, not 90 min
+uv run python -m runner.pipeline --mode full --first-record-deadline full=10800
+
 # the paper's real setup — needs a GPU and hours; never reached by default
 uv run python -m runner.pipeline --input coder/output/<paper> --max-stage full
 ```
@@ -654,7 +728,9 @@ Everything this section once listed as written-but-unrun has now run:
   Runner inside the Orchestrator.
 - **Check-ups only see what the script records.** A script from before the progress
   contract (NIN, WRN, Tang, Wijaya's current scripts) writes no history and is judged
-  on its exit code alone until regenerated.
+  on its exit code alone until regenerated — and `no_first_record` is deliberately
+  disarmed for it, so a legacy script that hangs is still bounded only by its stage
+  budget.
 - **Thresholds are calibrated on nine papers' worth of curves.** Every halt logs its
   evidence, so a false positive is visible; tune the constants in `checkups.py`.
 - **The image is not reproducible byte-for-byte.** `python:3.11-slim` is a moving tag
