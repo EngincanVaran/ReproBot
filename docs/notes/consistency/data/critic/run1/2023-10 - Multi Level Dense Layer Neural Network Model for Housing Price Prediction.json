@@ -1,0 +1,27 @@
+{
+  "verdict": "inconclusive",
+  "reason": "the reproduced value is worse than the claim beyond reporting precision, but a single run of this metric carries no noise estimate - the gap may come from one unlucky split or seed",
+  "recommendation": "run_more_seeds",
+  "claim_id": "c3",
+  "metric": "RMSE",
+  "dataset": "Boston Housing Dataset",
+  "unit": "",
+  "claimed": 3.02,
+  "reproduced": 3.7094259616915117,
+  "run_values": [
+    3.7094259616915117
+  ],
+  "higher_is_better": false,
+  "gap": 0.6894259616915117,
+  "relative_gap": 0.22828674228195753,
+  "tolerance": 0.005,
+  "reporting_precision": 0.005,
+  "test_noise": null,
+  "run_spread": null,
+  "evidence": "reporting precision only (single run, no noise estimate)",
+  "exceeds_claim": false,
+  "merged_claim_ids": [
+    "c3"
+  ],
+  "metrics_mode": "full"
+}

@@ -31,11 +31,13 @@ from loguru import logger
 
 from report.curves import read_curve, render_curve
 from report.render import ReportInputs, render, render_index
+from report.summary import render_summary
 
 DEFAULT_INPUT = Path("orchestrator/output")
 DEFAULT_CODER_OUTPUT = Path("coder/output")
 DEFAULT_OUTPUT = Path("report/output")
 REPORT_FILENAME = "report.md"
+SUMMARY_FILENAME = "SUMMARY.md"
 CURVE_FILENAME = "curve.svg"
 
 
@@ -45,7 +47,10 @@ def state_files(target: Path) -> list[Path]:
         return [target]
     if (target / "state.json").exists():
         return [target / "state.json"]
-    return sorted(target.glob("*/state.json"))
+    # `<dir>/<paper>/state.json` is one run per paper; `<dir>/<run>/<paper>/state.json`
+    # is several runs of the same papers side by side, which is what a repeated
+    # evaluation produces. Both are accepted, so a summary can span either layout.
+    return sorted(target.glob("*/state.json")) + sorted(target.glob("*/*/state.json"))
 
 
 def judged_mode(state: dict[str, Any]) -> str:
@@ -90,7 +95,10 @@ def build_report(state_path: Path, coder_output: Path, output_dir: Path) -> tupl
     coder_state["bookkeeping"] = bookkeeping
     state["coder_output"] = coder_state
 
-    report_dir = output_dir / paper
+    run_label = state_path.parent.parent.name
+    report_dir = (
+        output_dir / paper if run_label in ("output", "") else output_dir / run_label / paper
+    )
     report_dir.mkdir(parents=True, exist_ok=True)
     curve = read_curve(paper_dir / f"metrics.{mode}.history.jsonl")
     href = None
@@ -111,7 +119,10 @@ def build_report(state_path: Path, coder_output: Path, output_dir: Path) -> tupl
         f"  [report] {paper}: fidelity {critic.get('verdict') or 'not_evaluated'}, "
         f"execution {state.get('verdict')}, {len(markdown)} chars"
     )
-    return paper, f"{paper}/{REPORT_FILENAME}"
+    href = f"{paper}/{REPORT_FILENAME}"
+    if report_dir.parent != output_dir:
+        href = f"{report_dir.parent.name}/{href}"
+    return paper, href
 
 
 def main() -> None:
@@ -143,12 +154,15 @@ def main() -> None:
     failed = 0
     for path in paths:
         paper = path.parent.name
-        existing = args.output / paper / REPORT_FILENAME
+        run_label = path.parent.parent.name
+        prefix = args.output if run_label in ("output", "") else args.output / run_label
+        existing = prefix / paper / REPORT_FILENAME
         if existing.exists() and not args.force:
             logger.info(f"[skip]   {paper} (already reported; --force to rewrite)")
-            written.append(
-                (paper, json.loads(path.read_text(encoding="utf-8")), f"{paper}/{REPORT_FILENAME}")
-            )
+            href = f"{paper}/{REPORT_FILENAME}"
+            if prefix != args.output:
+                href = f"{run_label}/{href}"
+            written.append((paper, json.loads(path.read_text(encoding="utf-8")), href))
             continue
         logger.info(f"[report] {paper}")
         try:
@@ -163,6 +177,9 @@ def main() -> None:
         index = args.output / "README.md"
         index.write_text(render_index(written), encoding="utf-8")
         logger.info(f"  -> {index}")
+        summary = args.output / SUMMARY_FILENAME
+        summary.write_text(render_summary(written), encoding="utf-8")
+        logger.info(f"  -> {summary} (per paper, across runs)")
     logger.info(f"[done] {len(written)} report(s) written, {failed} failed")
 
 

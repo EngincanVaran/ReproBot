@@ -258,3 +258,6 @@ coder/output-ablation/
 orchestrator/output-ablation/
 critic/output-ablation/
 critic/output-ablation-loopon/
+coder/output-consistency/
+orchestrator/output-consistency/
+critic/output-consistency/
