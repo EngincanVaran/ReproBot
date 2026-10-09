@@ -261,3 +261,7 @@ critic/output-ablation-loopon/
 coder/output-consistency/
 orchestrator/output-consistency/
 critic/output-consistency/
+coder/output-e2e/
+orchestrator/output-e2e/
+critic/output-e2e/
+report/output-e2e/

@@ -83,11 +83,24 @@ def load_bookkeeping(paper_dir: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def coder_dir(coder_output: Path, run_label: str, paper: str) -> Path:
+    """Where *this run's* generated script, bookkeeping and history live.
+
+    Several runs of the same papers put the Coder's output under a run directory as
+    well (`coder/output-e2e/run2/<paper>`). A report that only knew the flat path
+    would draw every run's curve from whichever run happened to be there - the same
+    learning curve printed under three different numbers.
+    """
+    nested = coder_output / run_label / paper
+    return nested if nested.is_dir() else coder_output / paper
+
+
 def build_report(state_path: Path, coder_output: Path, output_dir: Path) -> tuple[str, str]:
     """Write one paper's report (and its curve) and return its id and relative link."""
     state = json.loads(state_path.read_text(encoding="utf-8"))
     paper = str(state.get("paper_id") or state_path.parent.name)
-    paper_dir = coder_output / paper
+    run_label = state_path.parent.parent.name
+    paper_dir = coder_dir(coder_output, run_label, paper)
     mode = judged_mode(state)
 
     bookkeeping = load_bookkeeping(paper_dir)
@@ -95,7 +108,6 @@ def build_report(state_path: Path, coder_output: Path, output_dir: Path) -> tupl
     coder_state["bookkeeping"] = bookkeeping
     state["coder_output"] = coder_state
 
-    run_label = state_path.parent.parent.name
     report_dir = (
         output_dir / paper if run_label in ("output", "") else output_dir / run_label / paper
     )

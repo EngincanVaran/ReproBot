@@ -225,6 +225,13 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [ ] **Intermittent all-empty tool payload** — caught and retried; root cause unknown.
 - [ ] **SVM guide: took the rounded 96.9% from the summary table**, not the appendix's 96.875%,
       and did not record the appendix's default-parameter accuracies as claims.
+- [ ] **The pseudo-unit survives a tightened prompt.** The unit schema was rewritten on
+      2026-09-20 to demand a symbol or an empty string ("Never a word like 'value'"), and the
+      2026-10-09 re-read of Wijaya still returned `unit: "value"` on its RMSE claim. The Critic
+      and the report normalise it away (`normalise_unit`), so no verdict is affected, but the
+      Runner's progress lines still print `RMSE(eval)=3.47value`. A schema description is not an
+      enforcement mechanism — the fix is a deterministic check at the Reader's own boundary, the
+      way `coder/`'s three gates work.
 
 ### `coder/`
 - [ ] **Target-claim selection is unstable across runs.** Fashion-MNIST picked the random forest

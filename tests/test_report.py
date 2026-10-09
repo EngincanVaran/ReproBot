@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from report.curves import read_curve, render_curve
-from report.pipeline import judged_mode
+from report.pipeline import coder_dir, judged_mode
 from report.render import ReportInputs, render, render_index
 
 STATE: dict[str, Any] = {
@@ -264,3 +264,13 @@ def test_the_index_lists_every_paper_with_its_band() -> None:
     index = render_index([("paper-a", STATE, "paper-a/report.md")])
     assert "[paper-a](paper-a/report.md)" in index
     assert "`pass`" in index and "±1.046" in index
+
+
+def test_each_run_reads_its_own_generated_script(tmp_path: Path) -> None:
+    """Three runs of one paper must not all report run 1's learning curve."""
+    paper = "2023-10 - Multi Level Dense Layer Neural Network Model"
+    (tmp_path / "run2" / paper).mkdir(parents=True)
+    assert coder_dir(tmp_path, "run2", paper) == tmp_path / "run2" / paper
+    # One run per paper keeps the flat layout every earlier batch wrote.
+    (tmp_path / paper).mkdir()
+    assert coder_dir(tmp_path, "output", paper) == tmp_path / paper
