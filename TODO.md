@@ -66,6 +66,16 @@ Wijaya all **pass**. Fashion-MNIST and the soft tree exceed their claims. Wijaya
 band, ±1.07 on 3.02, because three splits vary that much. The verdicts match the earlier
 by-hand judgements.
 
+**Repeated end to end, 2026-10-09** ([note](docs/notes/end-to-end/README.md)): three of those
+papers were re-read from their PDFs and carried through the whole pipeline **three times each**
+with the full loop on — **9 of 9 runs passed, every one reaching `full` on its first attempt**,
+77–238 s per run. Each paper's variance traced to exactly one unstated detail: Fashion-MNIST
+(fully specified) gave **bit-identical** values from three different scripts, the SVM guide moved
+96.625 ↔ 96.925 on whether the 5 CV folds are shuffled, and Wijaya moved 2.763 / 2.863 / 3.036 on
+the unstated split. Wijaya's third run is the seed escalation working unprompted: inconclusive at
+3.1285 → two seeds → **pass at 3.03629, ±0.2044 measured**. Combined table:
+`docs/notes/end-to-end/data/SUMMARY.md`.
+
 ---
 
 ## Where the pipeline is
@@ -319,6 +329,10 @@ Anything marked **cost** is actively wasting money or time on every run.
 ## Done
 
 ### 4th-report period (from 2026-09-14)
+- [x] **Three papers end to end, three runs each** — 9/9 pass, combined report over all nine
+      (`report/output-e2e/SUMMARY.md`), evidence in `docs/notes/end-to-end/`; fixed two report
+      bugs the repeated layout exposed (per-run coder output, index sort over equal paper names)
+      and made a zero-width spread read as "identical" rather than "claim not inside"
 - [x] **Critic v2** — `critic/review.py` (Opus 5 review, guards, runner log), `fix` route,
       `recover_leaked_fields`, 2 new test files (65 tests total); live loop on injected Wijaya
       bug: fail 4.76 → fix → pass 3.40, `faithful` (Sonnet comparison documented)

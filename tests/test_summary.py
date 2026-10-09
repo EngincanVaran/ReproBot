@@ -106,3 +106,54 @@ def test_the_summary_leads_with_pass_rates_and_names_the_failures() -> None:
 
 def test_an_empty_report_set_still_renders() -> None:
     assert "0 paper(s), 0 run(s)" in render_summary([])
+
+
+def test_identical_runs_report_no_spread_question() -> None:
+    """Fashion-MNIST's three runs all returned 0.87734; "inside the spread" has no answer."""
+    runs = [
+        (
+            "Fashion-MNIST",
+            {
+                "verdict": "success",
+                "critic_output": {
+                    "verdict": "pass",
+                    "metric": "Test Accuracy",
+                    "claimed": 0.873,
+                    "reproduced": 0.87734,
+                    "unit": "",
+                    "exceeds_claim": True,
+                },
+            },
+            f"run{i}/report.md",
+        )
+        for i in (1, 2, 3)
+    ]
+    papers = collect(runs)
+    assert papers[0].passes == 3
+    assert papers[0].claim_inside_spread() is None
+    text = render_summary(runs)
+    assert "identical across 3 runs" in text
+    assert "| no |" not in text
+
+
+def test_two_different_values_still_answer_it() -> None:
+    """The SVM guide's runs disagree, so the question applies and the claim is inside."""
+
+    def run(value: float, i: int) -> tuple[str, dict[str, object], str]:
+        return (
+            "SVM guide",
+            {
+                "verdict": "success",
+                "critic_output": {
+                    "verdict": "pass",
+                    "metric": "Accuracy by our procedure",
+                    "claimed": 96.9,
+                    "reproduced": value,
+                    "unit": "%",
+                },
+            },
+            f"run{i}/report.md",
+        )
+
+    runs = [run(96.625, 1), run(96.925, 2), run(96.625, 3)]
+    assert collect(runs)[0].claim_inside_spread() is True

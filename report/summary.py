@@ -78,9 +78,18 @@ class PaperRuns:
         The most useful single fact when generations disagree: a claim inside the
         spread means the system brackets the paper, and the remaining question is
         variance, not fidelity.
+
+        `None` when the question does not apply - fewer than two runs, or runs that
+        all landed on the same value. Fashion-MNIST's three runs returned an
+        identical 0.87734, and answering "no, 0.873 is not inside [0.87734,
+        0.87734]" would read as a failure beside a 3/3 pass. A paper with no
+        variation is not bracketing its claim; it is reproducing one number, and the
+        verdict column already says whether that number is close enough.
         """
         spread = self.spread()
         if spread is None or self.claimed is None or len(self.values) < 2:
+            return None
+        if spread[0] == spread[2]:
             return None
         return spread[0] <= self.claimed <= spread[2]
 
@@ -135,8 +144,10 @@ def render_summary(reports: list[tuple[str, dict[str, Any], str]]) -> str:
         spread = p.spread()
         if spread is None:
             got = "—"
-        elif len(p.values) == 1:
+        elif len(p.values) == 1 or spread[0] == spread[2]:
             got = _fmt(spread[1], p.unit)
+            if len(p.values) > 1:
+                got += f"<br><sub>identical across {len(p.values)} runs</sub>"
         else:
             got = (
                 f"{_fmt(spread[0], p.unit)} – {_fmt(spread[2], p.unit)}"

@@ -138,6 +138,16 @@ Judges a reproduced number against the paper's claim, and reviews why. Two halve
 
 ### report/ — the replication report (implemented 2026-09-20)
 
+**Exercised over a repeated evaluation on 2026-10-09:** nine runs (three papers × three runs,
+full loop) rendered into nine reports plus one `SUMMARY.md`, all 9 judged `pass` —
+`docs/notes/end-to-end/`. That layout found two bugs worth not reintroducing: the Coder's
+output is nested per run (`coder/output-e2e/run2/<paper>`), so `coder_dir()` must resolve it
+per run or every report draws one shared curve; and `render_index` sorted raw
+`(paper, state, href)` tuples, which raises as soon as two runs tie on the paper name. A
+spread of width zero (Fashion-MNIST returned an identical value three times) now prints
+"identical across N runs" with no answer to "claim inside spread", because that question
+presumes variation and "no" reads as a failure beside a 3/3 pass.
+
 Renders the Orchestrator's state object as Markdown (project plan §2.6). **No API call, no Docker, no plotting dependency**: every number is copied from `state.json`, and the learning curve is drawn as plain SVG from the same `metrics.<mode>.history.jsonl` the Runner's check-ups read. Full detail in `report/README.md`.
 
 - `curves.py` — history → `curve.svg`, with the paper's claim and the chance level as dashed reference lines (a regression RMSE means nothing until you know what predicting the mean gives). Literal colours, not theme tokens: the SVG is read on GitHub, in editors and in browsers.
