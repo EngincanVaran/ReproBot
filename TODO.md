@@ -257,6 +257,24 @@ Anything marked **cost** is actively wasting money or time on every run.
       way `coder/`'s three gates work.
 
 ### `coder/`
+- [ ] **`model_family` is misclassified across runs of one paper, and the ladder degrades
+      silently.** Three generations of Isolation Forest (`sklearn.ensemble.IsolationForest`):
+      runs 1 and 2 declared `classical`, run 3 declared `neural`. The classical template
+      scales *data* at `capped` (5,000/2,000); the neural one scales *epochs* and keeps
+      smoke's 512/256. Epochs are a no-op for a forest, so run 3's `capped` was a
+      byte-identical repeat of its `smoke` (both 0.61669921875, both 512 train / 256 eval)
+      and its stage comment talks about a net overfitting. Nothing errored, all four stages
+      reported PASSED, and one rung of the ladder was quietly meaningless. The judged `full`
+      number was unaffected. A deterministic check could catch this: if the script imports
+      from `sklearn` and never constructs a `torch.nn.Module`, `model_family` is not neural.
+- [ ] **Stage caps are templated without looking at the dataset size.** Isolation Forest on
+      Pima (768 rows) got `capped` caps of 5,000 train / 2,000 eval, so neither cap binds:
+      `capped` and `full` ran the identical experiment and returned the same AUC to 16
+      decimals (0.6827985074626867). The verdict is unaffected — `full` really is the full
+      setup — but the ladder saves nothing on a small dataset, and the generated script's
+      own comment on the capped stage ("eval_metric here is NOT comparable to the paper's
+      claim") is then wrong, because it *is* the full data. The caps should be derived from
+      the dataset's actual row count, or the stage should be skipped and labelled as skipped.
 - [ ] **Target-claim selection is unstable across runs.** Fashion-MNIST picked the random forest
       (c17, 0.873, ~3 min) on 2026-09-13 and the RBF SVC (c21, 0.897, hours) on 2026-09-20 — same
       paper, same prompt. Wijaya's Reader output also dropped from 14 claims to 4 between runs. So

@@ -1,0 +1,83 @@
+[
+  {
+    "run": "run1",
+    "paper": "2008-12 - Isolation Forest",
+    "claim_id": "c9",
+    "execution": "success",
+    "stage_reached": "full",
+    "exit_code": 0,
+    "wall_clock_seconds": 20.14,
+    "attempts": 1,
+    "script_chars": 15463,
+    "fidelity": "pass",
+    "claimed": 0.67,
+    "reproduced": 0.6827985074626867,
+    "tolerance": 0.005,
+    "exceeds_claim": true,
+    "evidence": "reporting precision only (single run, no noise estimate)",
+    "internal_run_values": [
+      0.6827985074626867
+    ],
+    "review_model": "claude-opus-5",
+    "method_fidelity": "faithful",
+    "findings_verified": 12,
+    "findings_total": 14
+  },
+  {
+    "run": "run2",
+    "paper": "2008-12 - Isolation Forest",
+    "claim_id": "c9",
+    "execution": "success",
+    "stage_reached": "full",
+    "exit_code": 0,
+    "wall_clock_seconds": 33.04,
+    "attempts": 1,
+    "script_chars": 14306,
+    "fidelity": "pass",
+    "claimed": 0.67,
+    "reproduced": 0.6787276119402985,
+    "tolerance": 0.010997263791315107,
+    "exceeds_claim": false,
+    "evidence": "measured spread of 10 runs",
+    "internal_run_values": [
+      0.6879029850746269,
+      0.686492537313433,
+      0.6732388059701492,
+      0.6814701492537313,
+      0.699134328358209,
+      0.6682164179104477,
+      0.6869477611940299,
+      0.6744626865671641,
+      0.6554179104477612,
+      0.6739925373134329
+    ],
+    "review_model": null,
+    "method_fidelity": null,
+    "findings_verified": null,
+    "findings_total": null
+  },
+  {
+    "run": "run3",
+    "paper": "2008-12 - Isolation Forest",
+    "claim_id": "c9",
+    "execution": "success",
+    "stage_reached": "full",
+    "exit_code": 0,
+    "wall_clock_seconds": 21.54,
+    "attempts": 1,
+    "script_chars": 15156,
+    "fidelity": "pass",
+    "claimed": 0.67,
+    "reproduced": 0.6745820895522388,
+    "tolerance": 0.005,
+    "exceeds_claim": false,
+    "evidence": "reporting precision only (single run, no noise estimate)",
+    "internal_run_values": [
+      0.6745820895522388
+    ],
+    "review_model": null,
+    "method_fidelity": null,
+    "findings_verified": null,
+    "findings_total": null
+  }
+]

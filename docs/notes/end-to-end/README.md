@@ -102,3 +102,88 @@ assignment "can move test RMSE by several tenths, which plausibly explains the r
   has no fidelity verdict at all, because `full` there needs a GPU.
 - **Review on run 1 only.** Runs 2 and 3 were judged by arithmetic alone, so a deviation that
   appeared in exactly those generations would not have been caught by the reviewer.
+
+---
+
+# Addendum, 2026-10-10: a paper the pipeline had never seen
+
+The three papers above were the papers this project debugged against. None of them answers
+the question a reviewer actually asks — *does it work on a paper you have not tuned on?* So
+the same protocol was run on a fourth: **Isolation Forest** (Liu, Ting & Zhou, ICDM 2008),
+never OCR'd, never read, never coded before today. Target claim **c9: AUC 0.67 on Pima**,
+three runs, full loop, review on run 1.
+
+Pima was chosen deliberately: 768 rows on OpenML so it costs seconds, a **mid-range** value
+that cannot be hit by luck (Breastw 0.99 and Shuttle 1.00 are near-ceiling and would pass
+almost anything), and the paper's own **weak** row — iForest's 0.67 loses to ORCA's 0.71,
+which is boldfaced as best. The Reader noticed that on its own and annotated the claim.
+
+## Result: 3 / 3 pass, first attempt every time, no retries
+
+| Run | Reproduced | How it passed | Tolerance | Evidence behind the tolerance |
+|---|---|---|---|---|
+| 1 | 0.682799 | `exceeds_claim` — better than 0.67 beyond tolerance | ±0.005 | reporting precision only |
+| 2 | 0.678728 | **within tolerance** | ±0.011 | **measured spread of 10 runs** |
+| 3 | 0.674582 | within tolerance (gap 0.0046) | ±0.005 | reporting precision only |
+
+Spread 0.6746 – 0.6828, mean 0.6787. End-to-end wall clock 20–33 s per run. The claim 0.67
+sits just **below** the spread: all three runs overshoot slightly, so this is a consistent
+small positive bias rather than noise around the claim. `sklearn`'s `IsolationForest` is the
+same authors' algorithm but not the same code, and the paper never says whether its 0.67 is
+one draw or a mean — either would explain a few thousandths.
+
+## What this one added that the first three did not
+
+**1. A task shape nothing else in the project has.** No train/test split: the forest is fit
+unsupervised on the whole contaminated set and the labels are used only afterwards, to score
+AUC. The Coder produced a working script for it on the first attempt, with no retry, having
+never seen the paper.
+
+**2. The same unstated-detail pattern, found again and predicted in advance.** Runs 1 and 3
+reproduced a **single seeded run**; run 2 implemented the paper's **ten-repeat protocol**.
+That is the entire difference in evidentiary quality between the rows above — and the Opus
+review on run 1 had already named the ambiguity before run 2 demonstrated it:
+
+> Table 3 does not state whether its AUC is a single run or an average (the ten-repeat
+> protocol is stated only for Section 5.4). The script reports one seeded run, so the 0.6828
+> vs 0.67 margin carries no variance estimate.
+
+So the reviewer identified the unstated choice, and an independent generation then resolved
+it the other way. Four papers, four different mechanisms, the same finding each time: the
+spread is the paper's under-specification, not the system's noise.
+
+**3. AUC exercised a path through the Critic that nothing else had.** AUC gets no binomial
+noise model, so a single run's tolerance is the claim's reporting precision alone (±0.005) —
+which is why run 3's pass, at a gap of 0.0046, is *just* inside. Run 2's ten repetitions gave
+the Critic a measured spread instead, and a ±0.011 band. Same claim, same verdict, two very
+different strengths of evidence, and the report records which is which.
+
+## Two bugs it surfaced, both silent
+
+**The VLM refused 3 of its 10 pages** — reproducibly, at two render scales, with
+`Output blocked by content filtering policy`. The paper's datasets are KDD Cup 99 intrusion
+traffic, which is the likeliest trigger. Worse, `ocr/vlm_extract.py` wrote nothing until every
+page succeeded, so one refusal produced **no output at all**. It now records a marker where a
+refused page belongs and continues; the 7 surviving pages carried Table 3 complete, so all 12
+AUC claims were extractable. Without that fix this paper could not be read.
+
+**`model_family` was misclassified on run 3**, which degraded a stage with no error anywhere.
+Runs 1 and 2 declared `classical`, so their `capped` stage scaled *data*; run 3 declared
+`neural`, whose `capped` scales *epochs* and keeps smoke's caps. Epochs mean nothing to a
+forest, so run 3's `capped` was a byte-identical repeat of its `smoke` — same 0.61669921875,
+same 512 train / 256 eval — while reporting PASSED and printing a comment about a net
+overfitting. The judged `full` number was unaffected.
+
+Both are recorded in `TODO.md`. Per-run evidence: `data/iforest-runs.json`, combined table
+`data/iforest-SUMMARY.md`.
+
+## Honest limits of this addendum
+
+- **One claim of 24.** The Reader extracted 24 claims (12 AUC, 12 processing times) and left
+  **7 flags unresolved after its 3-pass cap**, two of them substantive: Section 5.4's prose
+  AUC values and Figure 7's high-dimensional results were never captured at all.
+- **The ladder collapsed.** Pima has 768 rows and `capped` caps at 5,000/2,000, so for runs 1
+  and 2 `capped` *was* `full` — identical to 16 decimals. The escalation saved nothing here.
+- **Still a small CPU paper**, chosen for the same reason the other three were.
+- **It passed.** The project still has no paper that ReproBot honestly reports as *not*
+  replicating; every `fail` on record comes from a deliberately injected bug.
