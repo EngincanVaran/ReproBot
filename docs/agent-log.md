@@ -1243,3 +1243,30 @@ instructions; the add-on-technique guard; line-wise snippet checks.
 **Worth keeping:**
 - Guards prove citations are real, never that the reasoning is right.
 - One injected bug is a demonstration, not a measurement.
+
+## 2026-10-10 — Coding Agent: the final report
+
+**Asked:** write `docs/final-report/` in both column formats, built the way the third
+progress report is (one body, two variants), results-first and table-heavy because the
+tables are meant to be lifted into slides. Given a 152-line verified data pack with every
+usable number and an explicit rule: nothing not in the pack or a file it names goes in.
+
+**Came back:** `generate.py` plus both `.tex` files and both PDFs — 19 pages single-column,
+15 two-column, 15 tables, 3 figures, 31 references. The two `.tex` files differ only in
+`figure`/`figure*`, so the prose cannot drift. 102 tests re-run before citing the figure.
+
+**Worth keeping from it:**
+- **It caught an error in the data pack.** §F claimed the CIFAR-10 set was "all read and
+  extracted". Checked on disk and verified independently afterwards: 8 papers, **6** OCR'd,
+  **4** Reader-extracted, 2 carried to `smoke`, 0 fidelity verdicts. It wrote the per-paper
+  truth into `tab:gpuset` instead. The session had been repeating the wrong version.
+- It declined five numbers rather than source them loosely — API costs (in the third
+  report's generator but not in the pack), and four figures that come from an older Reader
+  run whose claim counts conflict with the current extraction (Wijaya 14 vs 4, Fashion-MNIST
+  26 vs 74, SVM guide 3 vs 27).
+- It dropped the third report's Wijaya curve panel, because that curve belongs to the
+  superseded 4.48 run and relabelling it would mislead; `fig:spread` replaces it with all 21
+  reproduced values this project holds for Wijaya and the SVM guide.
+- LaTeX traps recorded in its README so nobody re-derives them: wide-table overflow is
+  silent (`pdflatex` exits 0), a long `\texttt{}` cannot hyphenate in a `p{}` column, and
+  `*.aux`/`*.out` are not gitignored while `*.log` is.
