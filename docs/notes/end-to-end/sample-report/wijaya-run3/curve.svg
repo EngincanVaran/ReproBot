@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" width="640" height="260" role="img" aria-label="2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction - full run">
+<title>2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction - full run</title>
+<rect x="0" y="0" width="640" height="260" fill="#ffffff"/>
+<line x1="58" y1="226.0" x2="544" y2="226.0" stroke="#e2e2de" stroke-width="1"/>
+<text x="50" y="229.5" text-anchor="end" font-size="10" font-family="monospace" fill="#8b8f98">-0.4567</text>
+<line x1="58" y1="156.7" x2="544" y2="156.7" stroke="#e2e2de" stroke-width="1"/>
+<text x="50" y="160.2" text-anchor="end" font-size="10" font-family="monospace" fill="#8b8f98">6.64</text>
+<line x1="58" y1="87.3" x2="544" y2="87.3" stroke="#e2e2de" stroke-width="1"/>
+<text x="50" y="90.8" text-anchor="end" font-size="10" font-family="monospace" fill="#8b8f98">13.74</text>
+<line x1="58" y1="18.0" x2="544" y2="18.0" stroke="#e2e2de" stroke-width="1"/>
+<text x="50" y="21.5" text-anchor="end" font-size="10" font-family="monospace" fill="#8b8f98">20.84</text>
+<line x1="58" y1="136.5" x2="544" y2="136.5" stroke="#9aa0a8" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="550" y="140.0" font-size="10" font-family="sans-serif" fill="#9aa0a8">chance 8.7</text>
+<line x1="58" y1="192.0" x2="544" y2="192.0" stroke="#1c6444" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="550" y="195.5" font-size="10" font-family="sans-serif" fill="#1c6444">the paper's claim 3.02</text>
+<path d="M58.0,32.3 L62.4,182.4 L67.2,187.3 L72.1,189.8 L77.0,191.8 L81.8,193.1 L86.7,195.2 L91.6,197.8 L96.4,198.7 L101.3,194.9 L106.2,197.0 L111.0,197.4 L115.9,201.8 L120.8,199.1 L125.6,201.7 L130.5,203.1 L135.4,201.8 L140.2,203.9 L145.1,203.8 L149.9,202.1 L154.8,202.7 L159.7,203.4 L164.5,204.2 L169.4,204.7 L174.3,203.3 L179.1,203.8 L184.0,195.5 L188.9,205.4 L193.7,205.8 L198.6,199.6 L203.5,206.4 L208.3,205.2 L213.2,206.5 L218.1,205.0 L222.9,206.2 L227.8,204.9 L232.6,206.9 L237.5,206.8 L242.4,206.3 L247.2,206.0 L252.1,206.2 L257.0,205.2 L261.8,206.9 L266.7,205.0 L271.6,204.9 L276.4,207.7 L281.3,205.3 L286.2,208.3 L291.0,207.4 L295.9,208.4 L300.8,209.3 L305.6,204.0 L310.5,206.0 L315.4,208.8 L320.2,207.2 L325.1,202.8 L329.9,209.0 L334.8,208.3 L339.7,207.6 L344.5,208.7 L349.4,204.7 L354.3,204.9 L359.1,207.2 L364.0,209.1 L368.9,209.5 L373.7,206.7 L378.6,209.1 L383.5,203.7 L388.3,209.5 L393.2,207.1 L398.1,205.9 L402.9,209.9 L407.8,209.3 L412.6,206.1 L417.5,205.4 L422.4,206.2 L427.2,207.1 L432.1,209.8 L437.0,209.9 L441.8,210.4 L446.7,209.0 L451.6,210.0 L456.4,209.8 L461.3,209.7 L466.2,208.3 L471.0,207.3 L475.9,199.3 L480.8,205.2 L485.6,211.7 L490.5,205.9 L495.4,206.9 L500.2,207.7 L505.1,207.7 L509.9,210.8 L514.8,207.5 L519.7,207.0 L524.5,208.4 L529.4,210.9 L534.3,211.2 L539.1,210.8 L544.0,208.7" fill="none" stroke="#1f4f82" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M58.0,45.5 L62.4,181.3 L67.2,184.9 L72.1,186.2 L77.0,187.5 L81.8,187.1 L86.7,187.9 L91.6,189.0 L96.4,188.7 L101.3,185.8 L106.2,186.1 L111.0,186.4 L115.9,189.9 L120.8,187.6 L125.6,189.6 L130.5,189.8 L135.4,189.0 L140.2,190.0 L145.1,190.2 L149.9,187.3 L154.8,188.1 L159.7,189.4 L164.5,189.6 L169.4,190.5 L174.3,188.6 L179.1,188.9 L184.0,183.1 L188.9,190.3 L193.7,189.5 L198.6,185.9 L203.5,190.1 L208.3,190.8 L213.2,190.6 L218.1,190.1 L222.9,189.5 L227.8,190.1 L232.6,190.5 L237.5,189.0 L242.4,189.2 L247.2,190.4 L252.1,189.3 L257.0,188.0 L261.8,189.7 L266.7,190.0 L271.6,188.5 L276.4,189.3 L281.3,187.4 L286.2,189.9 L291.0,190.6 L295.9,190.8 L300.8,190.9 L305.6,189.4 L310.5,189.9 L315.4,190.0 L320.2,189.7 L325.1,186.3 L329.9,190.2 L334.8,188.9 L339.7,189.6 L344.5,189.4 L349.4,189.1 L354.3,188.9 L359.1,189.8 L364.0,190.0 L368.9,190.2 L373.7,188.4 L378.6,190.9 L383.5,187.8 L388.3,191.1 L393.2,190.5 L398.1,188.0 L402.9,190.0 L407.8,190.2 L412.6,190.8 L417.5,187.5 L422.4,189.5 L427.2,190.3 L432.1,189.6 L437.0,189.8 L441.8,190.2 L446.7,189.1 L451.6,190.1 L456.4,189.2 L461.3,190.3 L466.2,189.8 L471.0,188.5 L475.9,182.7 L480.8,189.2 L485.6,190.8 L490.5,186.8 L495.4,190.5 L500.2,188.3 L505.1,188.5 L509.9,189.9 L514.8,190.1 L519.7,190.3 L524.5,190.5 L529.4,190.8 L534.3,189.6 L539.1,189.8 L544.0,191.0" fill="none" stroke="#b4541f" stroke-width="1.8" stroke-linejoin="round"/>
+<circle cx="544.0" cy="208.7" r="3.2" fill="#1f4f82"/>
+<text x="550" y="212.2" font-size="10" font-family="sans-serif" fill="#1f4f82">train 1.31</text>
+<circle cx="544.0" cy="191.0" r="3.2" fill="#b4541f"/>
+<text x="550" y="194.5" font-size="10" font-family="sans-serif" fill="#b4541f">eval 3.13</text>
+<line x1="58" y1="226" x2="544" y2="226" stroke="#33363d" stroke-width="1"/>
+<text x="58.0" y="240" text-anchor="middle" font-size="10" font-family="monospace" fill="#8b8f98">1</text>
+<text x="544.0" y="240" text-anchor="middle" font-size="10" font-family="monospace" fill="#8b8f98">1000</text>
+<text x="58" y="254" font-size="10" font-family="sans-serif" fill="#8b8f98">epoch · RMSE (value)</text>
+</svg>
