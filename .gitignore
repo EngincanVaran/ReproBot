@@ -265,3 +265,7 @@ coder/output-e2e/
 orchestrator/output-e2e/
 critic/output-e2e/
 report/output-e2e/
+coder/output-iforest/
+orchestrator/output-iforest/
+critic/output-iforest/
+report/output-iforest/

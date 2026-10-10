@@ -222,6 +222,19 @@ Anything marked **cost** is actively wasting money or time on every run.
       and `orchestrator/` set a failing exit code. Must be fixed before chaining stages.
 
 ### `ocr/`
+- [x] **One refused page no longer loses the paper** (2026-10-10). The VLM extractor wrote
+      nothing until every page succeeded, so a single API refusal left no output at all.
+      Found on Isolation Forest: 3 of its 10 pages (1, 4, 10) are **reproducibly** blocked by
+      the API's content filter — retried at two render scales, same 400 each time. The paper's
+      datasets are network-intrusion sets (KDD Cup 99 HTTP/SMTP attack traffic), which is the
+      likeliest trigger. A refused page now logs loudly, leaves an explicit
+      `[OCR FAILED for this page]` marker so later stages see a *gap* rather than content the
+      paper never had, and extraction continues; if every page fails it raises instead of
+      writing a hollow file. The 7 surviving pages carried Table 3 complete, so all 12 AUC
+      claims were extractable — without the fix the paper was unusable.
+- [ ] **A model-free backend is the real fallback for a refused paper.** `pdfplumber_extract.py`
+      runs no model and so cannot be content-filtered. Nothing currently falls back to it
+      automatically; a paper the VLM refuses needs a human to notice and switch.
 - [ ] **2 of 8 CIFAR papers cannot be extracted** — *Stochastic Depth* and *DenseNet* fail on
       page 2 with a deterministic Anthropic content-filter false positive (model-side).
 - [ ] **Per-page resilience missing** — one bad page discards the whole paper.

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from anthropic import Anthropic
+from anthropic import Anthropic, APIError
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -65,6 +65,7 @@ PROMPT = """Transcribe this page of an academic paper into clean Markdown.
 class OcrResult:
     pdf_path: Path
     markdown_path: Path
+    failed_pages: tuple[int, ...] = ()
 
 
 def _render_page_png(pdf_path: Path, page_index: int, scale: float) -> bytes:
@@ -122,11 +123,27 @@ def run_vlm(
         n_pages = min(n_pages, max_pages)
 
     sections: list[str] = []
+    failed: list[int] = []
     for page_index in range(n_pages):
         page_num = page_index + 1
         page_start = time.monotonic()
         png_bytes = _render_page_png(pdf_path, page_index, scale)
-        text = _transcribe_page(client, png_bytes)
+        try:
+            text = _transcribe_page(client, png_bytes)
+        except APIError as exc:
+            # One unreadable page used to lose the whole paper: nothing is written until
+            # every page succeeds, so a single refusal left no output at all. A recorded
+            # gap is the better failure - the pages that did transcribe are still worth
+            # reading, and the marker tells every later stage that something is missing
+            # rather than letting it look like a page the paper never had.
+            logger.error(f"  [page {page_num}/{n_pages}] could not be transcribed: {exc}")
+            failed.append(page_num)
+            sections.append(
+                f"## Page {page_num}\n\n"
+                f"[OCR FAILED for this page: {type(exc).__name__}. "
+                f"Its content is missing from this file.]"
+            )
+            continue
         elapsed = time.monotonic() - page_start
         has_table = "|" in text
         logger.info(
@@ -135,8 +152,17 @@ def run_vlm(
         )
         sections.append(f"## Page {page_num}\n\n{text}")
 
+    if failed:
+        logger.warning(
+            f"  {len(failed)} of {n_pages} page(s) could not be transcribed: "
+            f"{', '.join(str(p) for p in failed)} - the Markdown carries a marker where "
+            f"each one belongs"
+        )
+    if len(failed) == n_pages:
+        raise RuntimeError(f"every page of {pdf_path.name} failed to transcribe")
+
     markdown_path.write_text("\n\n".join(sections), encoding="utf-8")
-    return OcrResult(pdf_path=pdf_path, markdown_path=markdown_path)
+    return OcrResult(pdf_path=pdf_path, markdown_path=markdown_path, failed_pages=tuple(failed))
 
 
 def extract_dataset(
