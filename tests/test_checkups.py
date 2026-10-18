@@ -5,11 +5,17 @@ synthetic shape chosen to pass. The two failure modes of phase 3 must halt early
 every healthy run must never halt - a false halt kills a reproduction.
 """
 
+import contextlib
 import json
+import os
+import signal
+import sys
 from pathlib import Path
 
 import pytest
 
+import runner.checkups
+import runner.docker_runner
 from runner.checkups import (
     HANG_FLOOR_SECONDS,
     HANG_GAP_MULTIPLIER,
@@ -712,3 +718,97 @@ def test_pre_contract_script_cannot_arm_the_silence_rule(tmp_path: Path) -> None
     )
     assert writes_progress_history(current) is True
     assert writes_progress_history(tmp_path / "absent.py") is False
+
+
+# --------------------------------------------------------------------------- #
+# The live watcher in `DockerRunner.run_stage`
+# --------------------------------------------------------------------------- #
+#
+# The rules above are pure; this is the thread that feeds them. `run_stage` runs a
+# stand-in process instead of `docker run`, with the hang floor and the first-record
+# deadline shrunk to seconds, so the real watcher loop - both silence checks side by
+# side - is exercised without a daemon.
+
+STANDIN = """
+import json, os, sys, time
+paper, mode, count, gap, tail = sys.argv[1:6]
+open(os.path.join(paper, "pid"), "w").write(str(os.getpid()))
+for step in range(1, int(count) + 1):
+    time.sleep(float(gap))
+    with open(os.path.join(paper, f"metrics.{mode}.history.jsonl"), "a") as handle:
+        handle.write(json.dumps({
+            "step": step, "steps_total": 100, "kind": "epoch", "train_loss": 1.0 / step,
+            "eval_metric": 0.5 + step / 100, "metric": "accuracy", "higher_is_better": True,
+            "chance_metric": 0.1,
+        }) + "\\n")
+if tail == "sleep":
+    time.sleep(60)
+"""
+
+
+def run_standin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    records: int,
+    tail: str,
+    timeout: int = 30,
+    first_record: dict[str, float] | None = None,
+) -> runner.docker_runner.StageRun:
+    paper = tmp_path / "paper"
+    (paper / "logs").mkdir(parents=True)
+    (paper / "train.py").write_text(f"# writes {PROGRESS_MARKER} records\n", encoding="utf-8")
+    (paper / "standin.py").write_text(STANDIN, encoding="utf-8")
+    command = [sys.executable, str(paper / "standin.py"), str(paper), mode, str(records), "0.05"]
+    monkeypatch.setattr(runner.docker_runner, "build_run_command", lambda **_: [*command, tail])
+    monkeypatch.setattr(runner.checkups, "HANG_FLOOR_SECONDS", 1.5)
+    stage_runner = runner.docker_runner.DockerRunner(
+        cache_dir=tmp_path / "cache",
+        stage_timeouts={mode: timeout},
+        run_triage=False,
+        checkup_interval=0.2,
+        first_record_seconds=first_record,
+    )
+
+    def kill(name: str, reason: str = "") -> None:
+        # On a timeout `subprocess.run` has already killed the stand-in itself.
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(int((paper / "pid").read_text(encoding="utf-8")), signal.SIGKILL)
+
+    monkeypatch.setattr(stage_runner, "kill_container", kill)
+    return stage_runner.run_stage(paper, paper / "logs", mode)
+
+
+def halt_rule(stage: runner.docker_runner.StageRun) -> object:
+    return ((stage.checkup or {}).get("halt") or {}).get("rule")
+
+
+def test_watcher_halts_a_full_run_whose_records_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "full", records=4, tail="sleep")
+    assert (stage.status, halt_rule(stage)) == ("halted", "hang")
+    assert stage.wall_clock_seconds < 15  # killed by the watcher, not the 30 s budget
+
+
+def test_watcher_halts_a_full_run_that_never_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(
+        tmp_path, monkeypatch, "full", records=0, tail="sleep", first_record={"full": 1.0}
+    )
+    assert (stage.status, halt_rule(stage)) == ("halted", "no_first_record")
+
+
+def test_watcher_leaves_a_healthy_full_run_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "full", records=5, tail="exit")
+    assert (stage.status, halt_rule(stage)) == ("success", None)
+
+
+def test_watcher_leaves_a_silent_capped_run_to_its_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "capped", records=4, tail="sleep", timeout=3)
+    assert (stage.status, halt_rule(stage)) == ("timeout", None)

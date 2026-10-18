@@ -217,6 +217,7 @@ Docker):
 | SVM guide's real `full` cadence (192 records) through `check_hang` | never halted |
 | WRN-28-10 at its real GPU pace (61 s/epoch), then silence | halted 1801 s after the last record, `hang` |
 | Stand-in process (no Docker) that writes 4 records and then sleeps, through `run_stage`'s real watcher, floor lowered to 3 s | `full`: halted, `hang`, process killed; `capped`: left to the timeout; a process that exits normally: `success` |
+| The same stand-in, now four `test_watcher_*` tests: records-then-silence, never reports, healthy exit, silent `capped` | `hang`, `no_first_record`, `success`, `timeout` — both silence checks through one watcher loop |
 
 ## Class architecture
 
