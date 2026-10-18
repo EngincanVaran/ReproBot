@@ -113,7 +113,13 @@ CLAIM_TOOL: dict[str, Any] = {
                             "type": "number",
                             "description": "Bare numeric value, e.g. 10.41 for '10.41%'.",
                         },
-                        "unit": {"type": "string", "description": "e.g. '%'."},
+                        "unit": {
+                            "type": "string",
+                            "description": "The unit SYMBOL only, e.g. '%', 's', 'MB'. "
+                            "Empty string for a dimensionless number (an accuracy of "
+                            "0.873, an R^2, an RMSE in the target's own units). Never a "
+                            "word like 'value', 'score', 'points' or 'accuracy'.",
+                        },
                         "source": {
                             "type": "string",
                             "description": "e.g. 'Table 1, transcribed page 5'.",

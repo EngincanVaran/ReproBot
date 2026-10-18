@@ -251,3 +251,22 @@ def test_guided_retry_feedback_lists_only_unstated_choices() -> None:
     assert "seeded random split" in text
     assert "Never change a value the paper states" in text
     assert "fidelity retry:" in text
+
+
+def test_a_word_where_a_unit_belongs_is_dropped() -> None:
+    # A 2026-09-20 run of Wijaya returned unit "value", which printed as "3.02value".
+    j = judge(
+        [claim("c3", "RMSE", 3.02, "value", dataset=BH)],
+        metrics("c3", 2.8843, hib=False, n=101),
+        runner_status="success",
+        metrics_mode="full",
+    )
+    assert j.unit == ""
+    assert "value" not in j.summary()
+    assert j.verdict == "pass" and j.exceeds_claim
+    # and a pseudo-unit no longer keeps two printings of one result apart
+    rows = [
+        claim("c3", "RMSE", 3.02, "value", dataset=BH, variant="testing set"),
+        claim("c9", "RMSE", 3.02, "", dataset=BH, variant="Table 3"),
+    ]
+    assert len(group_claims(rows)) == 1

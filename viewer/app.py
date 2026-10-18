@@ -70,11 +70,9 @@ from critic.pipeline import run_review
 from critic.pipeline import write_output as write_critic_output
 from ocr.vlm_extract import run_vlm
 from reader.pipeline import run_pipeline as run_reader_pipeline
-from report.build import slug as report_slug
-from report.pipeline import write_reports
-from report.sources import Roots as ReportRoots
-from report.sources import list_papers as list_reportable_papers
-from report.sources import load_run as load_report_run
+from report.pipeline import REPORT_FILENAME, SUMMARY_FILENAME, build_report, state_files
+from report.render import render_index
+from report.summary import render_summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = REPO_ROOT / "dataset"
@@ -149,8 +147,8 @@ def orchestrator_state_path(paper: str) -> Path:
 
 
 def report_path(paper: str) -> Path:
-    """`report.pipeline` writes `report/output/<slug>.md` (and a `.curve.svg` beside it)."""
-    return REPORT_DIR / f"{report_slug(paper)}.md"
+    """`report.pipeline` writes `report/output/<paper>/report.md` (and `curve.svg` beside it)."""
+    return REPORT_DIR / paper / REPORT_FILENAME
 
 
 def critic_json_path(paper: str) -> Path:
@@ -812,17 +810,20 @@ def render_critic_review_button(
 
 
 def generate_reports() -> None:
-    """Rebuild every paper's report with `report.pipeline.write_reports()`. Free: the
-    generator reads finished-run files and makes no model call."""
-    roots = ReportRoots(
-        reader=READER_DIR,
-        coder=CODER_DIR,
-        runner=RUNNER_DIR,
-        critic=CRITIC_DIR,
-        orchestrator=ORCHESTRATOR_DIR,
-    )
-    runs = [load_report_run(name, roots) for name in list_reportable_papers(roots)]
-    write_reports(runs, REPORT_DIR)
+    """Rebuild every orchestrated paper's report with `report.pipeline.build_report()`,
+    plus the index and cross-run summary its CLI writes. Free: the generator reads
+    finished-run files and makes no model call."""
+    written: list[tuple[str, dict[str, Any], str]] = []
+    for path in state_files(ORCHESTRATOR_DIR):
+        try:
+            name, href = build_report(path, CODER_DIR, REPORT_DIR)
+        except Exception as exc:  # noqa: BLE001 - one bad state must not hide the rest
+            logger.error(f"[viewer] report for {path.parent.name} failed: {exc}")
+            continue
+        written.append((name, json.loads(path.read_text(encoding="utf-8")), href))
+    if written:
+        (REPORT_DIR / "README.md").write_text(render_index(written), encoding="utf-8")
+        (REPORT_DIR / SUMMARY_FILENAME).write_text(render_summary(written), encoding="utf-8")
     st.rerun()
 
 
@@ -838,7 +839,10 @@ def render_report(paper: str) -> None:
         generate_reports()
     path = report_path(paper)
     if not path.exists():
-        st.info("No report yet - press the button to generate one for every finished run.")
+        st.info(
+            "No report yet - reports are built from orchestrator/output/<paper>/state.json, "
+            "so run the paper through the Orchestrator, then press the button."
+        )
         return
     text = path.read_text(encoding="utf-8")
     st.download_button(

@@ -43,11 +43,14 @@ runs, a watcher thread reads the script's learning-curve history file
 (`metrics.<mode>.history.jsonl`, one JSON record per epoch or repetition) from
 the bind mount, logs each record, and applies `runner/checkups.py`'s rules. When
 one fires - a non-finite loss, a loss below its own lower bound, a model worse
-than chance, no progress, stuck at chance, a collapse after learning - the
-container is killed by name, exactly as on a timeout, and the stage ends with
-status `halted` plus the evidence. The rules run once more after the process
-exits, because a short stage can finish between two polls. A `full` run whose
-records stop arriving for far longer than they ever took is halted the same way
+than chance, no progress, stuck at chance, a collapse after learning, or no first
+record at all within the stage's deadline (silence, not elapsed time: a growing
+dataset cache restarts that clock) - the container is killed by name,
+exactly as on a timeout, and the stage ends with status `halted` plus the
+evidence. The rules run once more after the process exits, because a short stage
+can finish between two polls; the wall clock is not handed to that final pass, so
+silence can only halt a stage that is still running. A `full` run whose records
+stop arriving for far longer than they ever took is halted the same way
 (`check_hang`). A script that writes no history keeps the old exit-code-only
 behaviour, with a warning.
 
@@ -77,13 +80,17 @@ from anthropic import Anthropic
 from loguru import logger
 
 from runner.checkups import (
+    DEFAULT_FIRST_RECORD_SECONDS,
     HISTORY_SUFFIX,
+    PROGRESS_MARKER,
     ArrivalClock,
     Halt,
     HistoryTail,
     ProgressRecord,
+    SilenceClock,
     check_hang,
     evaluate,
+    writes_progress_history,
 )
 from runner.triage import TriageResult, triage_failure
 
@@ -95,6 +102,10 @@ DEFAULT_CACHE_DIR: Final[Path] = RUNNER_DIR / "cache"
 
 DEFAULT_IMAGE: Final[str] = "reprobot-runner:latest"
 DEFAULT_CUDA_IMAGE: Final[str] = "reprobot-runner:cuda"
+
+# The generated script `reproduce.sh` runs. Read here for one reason only: to tell
+# whether it implements the progress contract at all (see run_stage).
+SCRIPT_FILENAME: Final[str] = "train.py"
 
 CONTAINER_WORKDIR: Final[str] = "/workspace"
 CONTAINER_DATA_DIR: Final[str] = "/workspace/data"
@@ -250,6 +261,36 @@ def parse_timeout_overrides(values: list[str] | None) -> dict[str, int]:
             raise ValueError(f"timeout for {mode!r} must be an integer, got {seconds!r}") from exc
         if parsed <= 0:
             raise ValueError(f"timeout for {mode!r} must be positive, got {parsed}")
+        overrides[mode] = parsed
+    return overrides
+
+
+def parse_first_record_overrides(values: list[str] | None) -> dict[str, float]:
+    """Parse repeated `--first-record-deadline mode=seconds` into a stage->seconds map.
+
+    Same shape as `parse_timeout_overrides`, and separate from it because the two
+    numbers answer different questions: a budget is how long a stage may take, this
+    is how long it may stay completely silent. Naming a stage the check-up rules do
+    not arm for silence (`probe`, `smoke`) is accepted and simply has no effect.
+    """
+    overrides: dict[str, float] = {}
+    for raw in values or []:
+        mode, sep, seconds = raw.partition("=")
+        if not sep:
+            raise ValueError(f"expected --first-record-deadline MODE=SECONDS, got {raw!r}")
+        mode = mode.strip()
+        if mode not in ALL_MODES:
+            raise ValueError(
+                f"unknown stage {mode!r} in --first-record-deadline; expected one of {ALL_MODES}"
+            )
+        try:
+            parsed = float(seconds)
+        except ValueError as exc:
+            raise ValueError(
+                f"first-record deadline for {mode!r} must be a number, got {seconds!r}"
+            ) from exc
+        if parsed <= 0:
+            raise ValueError(f"first-record deadline for {mode!r} must be positive, got {parsed}")
         overrides[mode] = parsed
     return overrides
 
@@ -573,6 +614,7 @@ class DockerRunner:
         user: str | None = None,
         live_checkups: bool = True,
         checkup_interval: float = DEFAULT_CHECKUP_INTERVAL,
+        first_record_seconds: dict[str, float] | None = None,
     ) -> None:
         self.image = image
         self.dockerfile = dockerfile
@@ -586,6 +628,10 @@ class DockerRunner:
         self.run_triage = run_triage
         self.live_checkups = live_checkups
         self.checkup_interval = checkup_interval
+        self.first_record_seconds = {
+            **DEFAULT_FIRST_RECORD_SECONDS,
+            **(first_record_seconds or {}),
+        }
 
     # -- daemon plumbing ---------------------------------------------------- #
 
@@ -759,6 +805,24 @@ class DockerRunner:
         )
         logger.info(f"  [{mode}] container: {container_name}")
         logger.info(f"  [{mode}] budget: {timeout_seconds}s")
+        # The silence rule is armed only for a script that can actually report: one
+        # written before the progress contract never writes a record, so measuring
+        # its silence would halt a healthy run.
+        deadline = self.first_record_seconds.get(mode)
+        contract = writes_progress_history(paper_dir / SCRIPT_FILENAME)
+        armed_deadlines = self.first_record_seconds if contract else {}
+        if self.live_checkups and deadline is not None and contract:
+            logger.info(
+                f"  [{mode}] first-record deadline: {int(deadline)}s of silence "
+                f"(a growing dataset cache restarts the clock, so a download does not count)"
+            )
+        elif self.live_checkups and deadline is not None:
+            logger.warning(
+                f"  [{mode}] {SCRIPT_FILENAME} predates the progress contract (no "
+                f"'{PROGRESS_MARKER}' in it), so it can never write a record: the "
+                f"'no_first_record' check-up is disarmed and only the stage budget "
+                f"bounds this run"
+            )
         logger.info(f"  [{mode}] command: {' '.join(command)}")
 
         history_path = history_path_for(paper_dir, mode)
@@ -781,18 +845,35 @@ class DockerRunner:
                 ):
                     logger.info(f"  [{mode}] progress: {record.describe()}")
 
-        clock = ArrivalClock(time.monotonic())
+        arrivals = ArrivalClock(time.monotonic())
 
         def watch() -> None:
+            # The rules are evaluated on every tick, not only when a new record
+            # arrives: `no_first_record` judges the silence itself, so the tick
+            # that sees nothing is exactly the one that has to decide. The clock it
+            # judges is the SilenceClock, which does not count a dataset download
+            # against the script - the shared mount is the only sign of life the
+            # Runner can see while a stage is still running.
+            clock = SilenceClock(self.cache_dir / "datasets", time.monotonic())
             while not stop_watching.wait(self.checkup_interval):
                 new = tail.read_new()
                 now = time.monotonic()
                 if new:
-                    clock.note(now)
+                    arrivals.note(now)
                     absorb(new)
-                    halt = evaluate(records, mode)
-                else:
-                    halt = check_hang(records, mode, clock, now)
+                # Once any record exists, silence is settled and the clock's walk
+                # would be wasted work, so stop asking it.
+                silent = None if records else clock.silent_seconds(now)
+                halt = evaluate(
+                    records,
+                    mode,
+                    silent_seconds=silent,
+                    first_record_seconds=armed_deadlines,
+                )
+                # After the first record, `check_hang` takes over the silence:
+                # records that started and then stopped.
+                if halt is None and not new:
+                    halt = check_hang(records, mode, arrivals, now)
                 if halt is not None:
                     halts.append(halt)
                     logger.error(
@@ -908,6 +989,8 @@ class DockerRunner:
         """
         absorb(tail.read_new())
         if not halts and self.live_checkups and status != "timeout":
+            # No wall clock is passed here on purpose: the stage is over, so the
+            # rules that judge silence have nothing left to stop (see `evaluate`).
             final = evaluate(records, mode)
             if final is not None:
                 halts.append(final)

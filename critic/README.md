@@ -89,11 +89,16 @@ matches the one reached by hand. They are the replay cases in `tests/test_critic
 | Paper | Claimed | Reproduced | Tolerance (evidence) | Verdict |
 |---|---|---|---|---|
 | Tang 2013, DLSVM on MNIST | 0.87% error | 0.82% | ±0.186 (binomial, n=10,000) | **pass** |
-| Hsu/Chang/Lin, SVM guide | 96.9% | 96.925% | ±0.548 (binomial, n=4,000) | **pass** |
+| Hsu/Chang/Lin, SVM guide | 96.9% | 96.625% | ±0.548 (binomial, n=4,000) | **pass** |
 | Fashion-MNIST, random forest | 0.873 | 0.8773 (mean of 5) | ±0.0018 (spread of 5 runs) | **pass**, exceeds claim |
 | Frosst & Hinton, soft decision tree | 94.45% | 95.11% | ±0.458 (binomial, n=10,000) | **pass**, exceeds claim |
 | Wijaya 2023, Boston Housing (old script) | RMSE 3.02 | 4.48 (one run) | ±0.005 (precision only) | **inconclusive** → run seeds |
 | Wijaya 2023, **end to end through the Orchestrator** | RMSE 3.02 | 3.33 (mean of 3.75, 2.84, 3.40) | ±1.07 (spread of 3 runs) | **pass** |
+
+The SVM guide's number moves between runs: 96.625% on 2026-09-13 and again on 2026-09-20, 96.925% on the 2026-09-14 rerun. Both pass. `SVC` reproduces all three of the paper's
+accuracies *exactly* at the settings it states (66.925 / 96.15 / 96.875%); what varies is
+which near-equal (C, γ) pair the paper's own grid search picks, and that depends on the
+fold assignment. The table shows the most recent orchestrated run.
 
 Wijaya is the interesting one. A single RMSE on a 101-row test split carries no noise
 estimate, and the paper never says how its split was drawn. A lone number could come

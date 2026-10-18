@@ -1,0 +1,23 @@
+{
+  "verdict": "not_evaluated",
+  "reason": "the run did not succeed (runner status 'error')",
+  "recommendation": "none",
+  "claim_id": null,
+  "metric": null,
+  "dataset": null,
+  "unit": "",
+  "claimed": null,
+  "reproduced": null,
+  "run_values": [],
+  "higher_is_better": null,
+  "gap": null,
+  "relative_gap": null,
+  "tolerance": null,
+  "reporting_precision": null,
+  "test_noise": null,
+  "run_spread": null,
+  "evidence": "",
+  "exceeds_claim": false,
+  "merged_claim_ids": [],
+  "metrics_mode": null
+}

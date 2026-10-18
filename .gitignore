@@ -246,6 +246,9 @@ orchestrator/output/
 # ReproBot: Critic verdicts (JSON judged from reader claims + reproduced metrics)
 critic/output/
 
+# ReproBot: generated replication reports (Markdown + curve SVGs)
+report/output/
+
 # macOS Finder metadata and the ruff cache
 .DS_Store
 .ruff_cache/
@@ -256,3 +259,18 @@ report/output*/
 # brag videos: keep the deliverables, not the render scratch
 brag-output*/work/
 brag-output*/composition/snapshots/
+# ReproBot: single-shot vs. loop ablation artefacts (docs/notes/ablation/).
+# Same contents as the stage output dirs above, written to separate paths so the
+# loop-ON evidence is never overwritten. The numbers the note quotes are copied
+# into docs/notes/ablation/data/ as committed evidence.
+coder/output-ablation/
+orchestrator/output-ablation/
+critic/output-ablation/
+critic/output-ablation-loopon/
+coder/output-consistency/
+orchestrator/output-consistency/
+critic/output-consistency/
+coder/output-e2e/
+orchestrator/output-e2e/
+critic/output-e2e/
+report/output-e2e/

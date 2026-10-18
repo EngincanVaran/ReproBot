@@ -1,0 +1,27 @@
+{
+  "verdict": "pass",
+  "reason": "the reproduced value is within tolerance of the claim (binomial noise of the evaluation set)",
+  "recommendation": "none",
+  "claim_id": "c1",
+  "metric": "Accuracy by our procedure",
+  "dataset": "Astroparticle",
+  "unit": "%",
+  "claimed": 96.9,
+  "reproduced": 96.625,
+  "run_values": [
+    96.625
+  ],
+  "higher_is_better": true,
+  "gap": -0.2750000000000057,
+  "relative_gap": -0.002837977296181689,
+  "tolerance": 0.5480784615363017,
+  "reporting_precision": 0.05,
+  "test_noise": 0.27403923076815084,
+  "run_spread": null,
+  "evidence": "binomial noise of the evaluation set",
+  "exceeds_claim": false,
+  "merged_claim_ids": [
+    "c1"
+  ],
+  "metrics_mode": "full"
+}

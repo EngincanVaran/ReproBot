@@ -1,0 +1,178 @@
+[
+  {
+    "paper": "2013-06 - Deep Learning using Linear Support Vector Machines",
+    "claim_id": "c5",
+    "loop_off": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "stage_reached": "full",
+      "wall_clock_seconds": 1139.99,
+      "fidelity_verdict": "pass",
+      "reproduced": 0.8499999999999952,
+      "claimed": 0.87,
+      "tolerance": 0.18573432639121937,
+      "run_values": [
+        0.8499999999999952
+      ],
+      "exceeds_claim": false,
+      "evidence": "binomial noise of the evaluation set"
+    },
+    "loop_on": {
+      "execution_verdict": null,
+      "retry_count": null,
+      "attempts": 0,
+      "fidelity_verdict": "pass",
+      "reproduced": 0.8199999999999985,
+      "claimed": 0.87,
+      "tolerance": 0.18573432639121937,
+      "run_values": [
+        0.8199999999999985
+      ],
+      "exceeds_claim": false,
+      "evidence": "binomial noise of the evaluation set"
+    }
+  },
+  {
+    "paper": "2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction",
+    "claim_id": "c3",
+    "loop_off": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "stage_reached": "full",
+      "wall_clock_seconds": 135.41,
+      "fidelity_verdict": "pass",
+      "reproduced": 2.5801572246107285,
+      "claimed": 3.02,
+      "tolerance": 0.005,
+      "run_values": [
+        2.5801572246107285
+      ],
+      "exceeds_claim": true,
+      "evidence": "reporting precision only (single run, no noise estimate)"
+    },
+    "loop_on": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "fidelity_verdict": "pass",
+      "reproduced": 2.8842813120953834,
+      "claimed": 3.02,
+      "tolerance": 0.005,
+      "run_values": [
+        2.8842813120953834
+      ],
+      "exceeds_claim": true,
+      "evidence": "reporting precision only (single run, no noise estimate)"
+    }
+  },
+  {
+    "paper": "2003 - A Practical Guide to Support Vector Classification",
+    "claim_id": "c1",
+    "loop_off": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "stage_reached": "full",
+      "wall_clock_seconds": 89.42,
+      "fidelity_verdict": "pass",
+      "reproduced": 96.625,
+      "claimed": 96.9,
+      "tolerance": 0.5480784615363017,
+      "run_values": [
+        96.625
+      ],
+      "exceeds_claim": false,
+      "evidence": "binomial noise of the evaluation set"
+    },
+    "loop_on": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "fidelity_verdict": "pass",
+      "reproduced": 96.625,
+      "claimed": 96.9,
+      "tolerance": 0.5480784615363017,
+      "run_values": [
+        96.625
+      ],
+      "exceeds_claim": false,
+      "evidence": "binomial noise of the evaluation set"
+    }
+  },
+  {
+    "paper": "2017-08 - Fashion-MNIST - a Novel Image Dataset for Benchmarking Machine Learning Algorithms",
+    "claim_id": "c17",
+    "loop_off": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "stage_reached": "full",
+      "wall_clock_seconds": 147.94,
+      "fidelity_verdict": "pass",
+      "reproduced": 0.8773,
+      "claimed": 0.873,
+      "tolerance": 0.0017955500549970756,
+      "run_values": [
+        0.8775,
+        0.8773,
+        0.8752,
+        0.8792,
+        0.8773
+      ],
+      "exceeds_claim": true,
+      "evidence": "measured spread of 5 runs"
+    },
+    "loop_on": {
+      "execution_verdict": "success",
+      "retry_count": 0,
+      "attempts": 1,
+      "fidelity_verdict": "pass",
+      "reproduced": 0.8764799999999999,
+      "claimed": 0.873,
+      "tolerance": 0.0007969943538068267,
+      "run_values": [
+        0.8773,
+        0.8763,
+        0.8756,
+        0.8764,
+        0.8768
+      ],
+      "exceeds_claim": true,
+      "evidence": "measured spread of 5 runs"
+    }
+  },
+  {
+    "paper": "2017-11 - Distilling a Neural Network Into a Soft Decision Tree",
+    "claim_id": "c1",
+    "loop_off": {
+      "execution_verdict": "retry_budget_exhausted",
+      "retry_count": 0,
+      "attempts": 1,
+      "stage_reached": "probe",
+      "wall_clock_seconds": 6.18,
+      "fidelity_verdict": "not_evaluated",
+      "reproduced": null,
+      "claimed": null,
+      "tolerance": null,
+      "run_values": [],
+      "exceeds_claim": false,
+      "evidence": ""
+    },
+    "loop_on": {
+      "execution_verdict": "success",
+      "retry_count": 1,
+      "attempts": 2,
+      "fidelity_verdict": "pass",
+      "reproduced": 95.11,
+      "claimed": 94.45,
+      "tolerance": 0.45790719583775924,
+      "run_values": [
+        95.11
+      ],
+      "exceeds_claim": true,
+      "evidence": "binomial noise of the evaluation set"
+    }
+  }
+]

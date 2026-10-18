@@ -30,15 +30,23 @@ runs showed.
   - With Sonnet the same loop misdiagnosed the bug and pushed the Coder away from the paper.
     See `critic/README.md`, "The first Critic loops".
 
+**Replication targets (2026-09-20):** four more CPU-sized papers added to `extra-papers/` —
+Breiman's Random Forests, Isolation Forest, fastText and Pang & Lee 2002. Between them they
+state **35+ per-dataset claims**, every dataset verified reachable, and they add two task
+shapes the pipeline has never seen: anomaly detection scored by AUC with no train/test split,
+and text classification from a plain corpus URL.
+
 **Next, in this order (Engincan, 2026-09-14):**
 1. ~~Build Critic v2 and run its loop on Wijaya~~ — done 2026-09-14.
 2. **Run the whole pipeline from scratch on that basic paper**: PDF → `ocr/` → `reader/` →
    Orchestrator with the Critic.
-3. **Then the report generator.** A plan was already presented: template-driven Markdown per
-   paper, SVG learning curves, claim table, attempt timeline, collapsible final script and a
-   cross-paper index. Its open questions are an optional Sonnet gap paragraph, reruns of old
-   papers, and Markdown vs HTML.
-4. Priority 3, loop controls.
+3. ~~The report generator~~ — **done 2026-09-20** (`report/`, deterministic, no LLM). Open
+   follow-ups: one report per *paper* rather than per state file, and a cross-paper narrative.
+4. **Multi-claim evaluation.** One run still targets one claim; Wijaya's report shows 1 of 8
+   distinct results tested, and the four new papers state 35+ claims between them. Cheapest
+   first: judge every claim the existing run already answers, then loop one paper over its
+   claims (Breiman's 13 datasets are seconds each).
+5. Priority 3, loop controls.
 
 ---
 
@@ -58,6 +66,16 @@ Since 2026-09-14 every row is judged by `critic/`: Tang, SVM guide, Fashion-MNIS
 Wijaya all **pass**. Fashion-MNIST and the soft tree exceed their claims. Wijaya passes on a wide
 band, ±1.07 on 3.02, because three splits vary that much. The verdicts match the earlier
 by-hand judgements.
+
+**Repeated end to end, 2026-10-09** ([note](docs/notes/end-to-end/README.md)): three of those
+papers were re-read from their PDFs and carried through the whole pipeline **three times each**
+with the full loop on — **9 of 9 runs passed, every one reaching `full` on its first attempt**,
+77–238 s per run. Each paper's variance traced to exactly one unstated detail: Fashion-MNIST
+(fully specified) gave **bit-identical** values from three different scripts, the SVM guide moved
+96.625 ↔ 96.925 on whether the 5 CV folds are shuffled, and Wijaya moved 2.763 / 2.863 / 3.036 on
+the unstated split. Wijaya's third run is the seed escalation working unprompted: inconclusive at
+3.1285 → two seeds → **pass at 3.03629, ±0.2044 measured**. Combined table:
+`docs/notes/end-to-end/data/SUMMARY.md`.
 
 ---
 
@@ -80,8 +98,8 @@ by-hand judgements.
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
 | `critic/` | ✅ v1 arithmetic verdicts + v2 Opus review (cited findings, guards, `fix` route) | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
-| `report/` | ✅ v1 built (deterministic Markdown, no model call) | reports for WRN, SVM guide (incl. a fail-then-fix run) and AutoReproduce (a run that never produced a result); 17 tests |
-| `viewer/` | ✅ merged on this branch (Mert's `runner-agent` + `critic-agent` work) | Runner tab (hardware, reproduced vs paper, curves), Critic tab, verdict and review buttons; checked with Streamlit AppTest, and one real review click |
+| `report/` | ✅ built 2026-09-20 — Markdown + SVG curve, claim table, gap, review, timeline, cross-run summary | generated from the real Wijaya state; main's implementation kept at the 2026-10-18 merge (this branch's parallel v1 dropped) |
+| `viewer/` | ✅ merged with main 2026-10-18 (Mert's `runner-agent` + `critic-agent` work) | Runner tab, Critic tab, verdict and review buttons; Report tab now drives main's `report/` (reports only papers with an Orchestrator `state.json`) |
 
 ---
 
@@ -99,12 +117,16 @@ by-hand judgements.
 - [x] Coder: capped subsets seeded random + stratified (svmguide1 first-N-rows single-class crash).
 - [x] **Hang check** (2026-10-01) — `check_hang` halts a `full`/`seed2`/`seed3` stage whose records
       stop arriving for longer than max(1800 s, 10 x the longest wait so far), on the watcher's
-      clock. 13 tests from real timings (SVM guide cadence, WRN GPU and CPU pace); the watcher
-      thread exercised with a stand-in process. **Not yet seen firing in Docker** (daemon was down).
-- [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history;
-      run one deliberately hung script in Docker to see `hang` kill a real container; keep
-      calibrating thresholds from every halt's logged evidence (one false positive already found
-      and fixed end to end).
+      clock. It covers silence *after* records start; `no_first_record` covers silence *before*
+      the first one. **Not yet seen firing in Docker** (daemon was down).
+- [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history
+      — until then `no_first_record` is disarmed for them, so a legacy hang is bounded only by the
+      stage budget; run one deliberately hung script in Docker to see `hang` kill a real container;
+      keep calibrating thresholds from every halt's logged evidence (one false positive already
+      found and fixed end to end).
+- [ ] **`no_first_record` has never fired in Docker.** It is verified by replay only (the measured
+      cold fetch, the SVC silence, the disarm paths); the live kill path it uses is the same one
+      the other six rules and the timeout already exercise.
 
 ### 2. The Critic agent (`critic/`) — v1 ✅, v2 ✅ 2026-09-14
 
@@ -219,8 +241,25 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [ ] **Intermittent all-empty tool payload** — caught and retried; root cause unknown.
 - [ ] **SVM guide: took the rounded 96.9% from the summary table**, not the appendix's 96.875%,
       and did not record the appendix's default-parameter accuracies as claims.
+- [ ] **The pseudo-unit survives a tightened prompt.** The unit schema was rewritten on
+      2026-09-20 to demand a symbol or an empty string ("Never a word like 'value'"), and the
+      2026-10-09 re-read of Wijaya still returned `unit: "value"` on its RMSE claim. The Critic
+      and the report normalise it away (`normalise_unit`), so no verdict is affected, but the
+      Runner's progress lines still print `RMSE(eval)=3.47value`. A schema description is not an
+      enforcement mechanism — the fix is a deterministic check at the Reader's own boundary, the
+      way `coder/`'s three gates work.
 
 ### `coder/`
+- [ ] **Target-claim selection is unstable across runs.** Fashion-MNIST picked the random forest
+      (c17, 0.873, ~3 min) on 2026-09-13 and the RBF SVC (c21, 0.897, hours) on 2026-09-20 — same
+      paper, same prompt. Wijaya's Reader output also dropped from 14 claims to 4 between runs. So
+      "the paper's headline claim" is not reproducible: **pin claims with `--claim-id` for any
+      comparison**, and prefer multi-claim runs over one model-chosen claim.
+- [ ] **Cost is not part of claim selection.** Nothing warns that a claim implies hours of CPU. The
+      Coder knows the estimator and the row count, so a rough cost estimate in `coder_output.json`
+      would let the Orchestrator confirm or refuse an expensive target before the container starts.
+      LIBSVM is single-threaded: one `SVC` fit on 60k x 784 is tens of minutes, and the paper asks
+      for five.
 - [ ] **`wall_clock_seconds` timed from the training loop, not the run start** — prompt made explicit
       2026-09-14 ("first statement of `main()`"); verify on the next regenerated scripts.
 - [ ] **Intermittent tool-field leak** — worked around in `reader/tooluse.py`'s shared
@@ -239,6 +278,17 @@ Anything marked **cost** is actively wasting money or time on every run.
 - [x] **Check-ups judge health, not fidelity** — fidelity is now `critic/`'s job (2026-09-14).
 - [ ] **Scripts from before the progress contract** fall back to exit-code-only judgement until
       regenerated.
+- [x] **A run that writes NO record is invisible to the check-ups** — fixed 2026-10-08 with a
+      seventh rule, `no_first_record`: a stage silent past its per-stage deadline is halted with
+      evidence (capped 900 s, full/seed2/seed3 5400 s; `probe`/`smoke` deliberately never armed;
+      overridable with `--first-record-deadline MODE=SECONDS` on both the Runner and the
+      Orchestrator). Silence is measured by `SilenceClock`, which restarts while the shared
+      dataset mount grows, so the measured 1707 s cold fetch does not count against a script —
+      and the rule is disarmed for a script that predates the progress contract, which can never
+      write a record. 11 new replay tests (92 in the suite). The incident it fixes: Fashion-MNIST
+      targeted the SVC claim (c21, 0.897), one LIBSVM fit on 60k x 784 is tens of minutes
+      single-threaded, the paper repeats it 5 times, and 15 minutes in the history file was still
+      empty and nothing had fired. Killed by hand.
 - [ ] **The image is not reproducible byte-for-byte** — pin `python:3.11-slim` by digest.
 - [ ] **Container runs as root** — hidden on macOS, visible on a Linux host.
 - [ ] **`--memory` / `--cpus` unset** — deliberate (exit 137 looks like a crash), but two containers
@@ -285,6 +335,10 @@ Anything marked **cost** is actively wasting money or time on every run.
 ## Done
 
 ### 4th-report period (from 2026-09-14)
+- [x] **Three papers end to end, three runs each** — 9/9 pass, combined report over all nine
+      (`report/output-e2e/SUMMARY.md`), evidence in `docs/notes/end-to-end/`; fixed two report
+      bugs the repeated layout exposed (per-run coder output, index sort over equal paper names)
+      and made a zero-width spread read as "identical" rather than "claim not inside"
 - [x] **Critic v2** — `critic/review.py` (Opus 5 review, guards, runner log), `fix` route,
       `recover_leaked_fields`, 2 new test files (65 tests total); live loop on injected Wijaya
       bug: fail 4.76 → fix → pass 3.40, `faithful` (Sonnet comparison documented)

@@ -1,0 +1,117 @@
+{
+  "verdict": "pass",
+  "reason": "the reproduced value is better than the claim beyond tolerance - the claimed result is achievable with this implementation",
+  "recommendation": "none",
+  "claim_id": "c1",
+  "metric": "test accuracy",
+  "dataset": "MNIST",
+  "unit": "%",
+  "claimed": 94.45,
+  "reproduced": 95.11,
+  "run_values": [
+    95.11
+  ],
+  "higher_is_better": true,
+  "gap": 0.6599999999999966,
+  "relative_gap": 0.006987824245632573,
+  "tolerance": 0.45790719583775924,
+  "reporting_precision": 0.005,
+  "test_noise": 0.22895359791887962,
+  "run_spread": null,
+  "evidence": "binomial noise of the evaluation set",
+  "exceeds_claim": true,
+  "merged_claim_ids": [
+    "c1"
+  ],
+  "metrics_mode": "full",
+  "claim_groups": [
+    {
+      "canonical_claim_id": "c1",
+      "metric": "test accuracy",
+      "dataset": "MNIST",
+      "reported_value": 94.45,
+      "unit": "%",
+      "model_variant": "soft decision tree depth 8, trained on true targets",
+      "merged_claim_ids": [
+        "c1"
+      ]
+    },
+    {
+      "canonical_claim_id": "c2",
+      "metric": "test accuracy",
+      "dataset": "MNIST",
+      "reported_value": 99.21,
+      "unit": "%",
+      "model_variant": "neural net (2 conv layers + fully connected)",
+      "merged_claim_ids": [
+        "c2"
+      ]
+    },
+    {
+      "canonical_claim_id": "c3",
+      "metric": "test accuracy",
+      "dataset": "MNIST",
+      "reported_value": 96.76,
+      "unit": "%",
+      "model_variant": "soft decision tree distilled from neural net (soft targets)",
+      "merged_claim_ids": [
+        "c3"
+      ]
+    },
+    {
+      "canonical_claim_id": "c4",
+      "metric": "test accuracy",
+      "dataset": "Connect4",
+      "reported_value": 80.6,
+      "unit": "%",
+      "model_variant": "soft decision tree depth 8, distilled from neural net",
+      "merged_claim_ids": [
+        "c4"
+      ]
+    },
+    {
+      "canonical_claim_id": "c5",
+      "metric": "test accuracy",
+      "dataset": "Connect4",
+      "reported_value": 78.63,
+      "unit": "%",
+      "model_variant": "soft decision tree depth 8, trained without distillation (raw data)",
+      "merged_claim_ids": [
+        "c5"
+      ]
+    },
+    {
+      "canonical_claim_id": "c6",
+      "metric": "test accuracy",
+      "dataset": "Letter",
+      "reported_value": 78.0,
+      "unit": "%",
+      "model_variant": "soft decision tree depth 9, trained on raw training data (not distilled)",
+      "merged_claim_ids": [
+        "c6"
+      ]
+    },
+    {
+      "canonical_claim_id": "c7",
+      "metric": "test accuracy",
+      "dataset": "Letter",
+      "reported_value": 81.0,
+      "unit": "%",
+      "model_variant": "soft decision tree distilled from ensemble of neural nets (depth not explicitly stated by paper; presumed same depth-9 architecture as the non-distilled Letter result, but this is an assumption not confirmed in the text)",
+      "merged_claim_ids": [
+        "c7"
+      ]
+    },
+    {
+      "canonical_claim_id": "c8",
+      "metric": "test accuracy",
+      "dataset": "Letter",
+      "reported_value": 95.9,
+      "unit": "%",
+      "model_variant": "ensemble of neural nets (source of soft targets for distillation)",
+      "merged_claim_ids": [
+        "c8"
+      ]
+    }
+  ]
+}

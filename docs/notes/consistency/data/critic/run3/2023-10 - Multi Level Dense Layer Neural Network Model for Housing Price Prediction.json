@@ -1,0 +1,27 @@
+{
+  "verdict": "pass",
+  "reason": "the reproduced value is better than the claim beyond tolerance - the claimed result is achievable with this implementation",
+  "recommendation": "none",
+  "claim_id": "c3",
+  "metric": "RMSE",
+  "dataset": "Boston Housing Dataset",
+  "unit": "",
+  "claimed": 3.02,
+  "reproduced": 2.6189613689275357,
+  "run_values": [
+    2.6189613689275357
+  ],
+  "higher_is_better": false,
+  "gap": -0.4010386310724643,
+  "relative_gap": -0.1327942486994915,
+  "tolerance": 0.005,
+  "reporting_precision": 0.005,
+  "test_noise": null,
+  "run_spread": null,
+  "evidence": "reporting precision only (single run, no noise estimate)",
+  "exceeds_claim": true,
+  "merged_claim_ids": [
+    "c3"
+  ],
+  "metrics_mode": "full"
+}

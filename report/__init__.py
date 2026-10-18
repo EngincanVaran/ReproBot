@@ -1,5 +1,5 @@
-"""Report generator: turn a finished run into a Markdown replication report.
+"""Report generator: the Orchestrator's state object rendered as a replication report.
 
-Deterministic and free: it reads what the earlier stages already wrote and makes no model
-call, so a report can be regenerated at any time and always agrees with the run's files.
+Deterministic and dependency-free — every number is copied from the state, the learning
+curve is drawn as plain SVG, and no model is called. See report/README.md.
 """

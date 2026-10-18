@@ -39,7 +39,7 @@ import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from critic.claims import group_claims, group_for, reporting_precision
+from critic.claims import group_claims, group_for, normalise_unit, reporting_precision
 
 type Verdict = Literal["pass", "fail", "inconclusive", "not_evaluated"]
 type Recommendation = Literal["none", "run_more_seeds", "guided_retry"]
@@ -162,7 +162,7 @@ def judge(
 
     claim = group.canonical
     claimed = float(claim["reported_value"])
-    unit = str(claim.get("unit") or "")
+    unit = normalise_unit(claim.get("unit"))
     metric = str(claim.get("metric") or metrics.get("metric") or "")
     known: dict[str, Any] = {
         "claim_id": claim_id,

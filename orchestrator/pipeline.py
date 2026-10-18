@@ -60,6 +60,7 @@ from orchestrator.loop import (
     DEFAULT_SEED_BUDGET_SECONDS,
     Orchestrator,
 )
+from runner.checkups import DEFAULT_FIRST_RECORD_SECONDS
 from runner.docker_runner import (
     DEFAULT_CACHE_DIR,
     DEFAULT_CHECKUP_INTERVAL,
@@ -70,6 +71,7 @@ from runner.docker_runner import (
     DockerUnavailableError,
     ImageMissingError,
     add_gpu_arguments,
+    parse_first_record_overrides,
     parse_timeout_overrides,
     runner_kwargs_from_args,
     stages_up_to,
@@ -270,6 +272,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds between live check-up reads of a running stage's history file",
     )
     parser.add_argument(
+        "--first-record-deadline",
+        action="append",
+        metavar="MODE=SECONDS",
+        help=(
+            "Override how long a stage may stay silent - no progress record at all, and "
+            "no dataset arriving either - before the 'no_first_record' check-up halts it; "
+            "repeatable. Defaults: "
+            + ", ".join(
+                f"{mode}={int(seconds)}s" for mode, seconds in DEFAULT_FIRST_RECORD_SECONDS.items()
+            )
+            + " (probe and smoke are never halted for silence)"
+        ),
+    )
+    parser.add_argument(
         "--no-critic",
         action="store_true",
         help="Stop at execution: do not compare the reproduced number with the paper's claim",
@@ -358,6 +374,7 @@ def main() -> None:
     # rather than a traceback out of a helper three frames down.
     try:
         stage_timeouts = parse_timeout_overrides(args.timeout)
+        first_record_seconds = parse_first_record_overrides(args.first_record_deadline)
     except ValueError as exc:
         parser.error(str(exc))
     if args.retry_budget < 0:
@@ -390,6 +407,7 @@ def main() -> None:
         run_triage=True,
         live_checkups=not args.no_live_checkups,
         checkup_interval=args.checkup_interval,
+        first_record_seconds=first_record_seconds,
     )
     try:
         runner.check_daemon()

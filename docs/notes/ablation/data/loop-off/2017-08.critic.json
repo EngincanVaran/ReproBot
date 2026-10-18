@@ -1,0 +1,31 @@
+{
+  "verdict": "pass",
+  "reason": "the reproduced value is better than the claim beyond tolerance - the claimed result is achievable with this implementation",
+  "recommendation": "none",
+  "claim_id": "c17",
+  "metric": "Test Accuracy",
+  "dataset": "Fashion-MNIST",
+  "unit": "",
+  "claimed": 0.873,
+  "reproduced": 0.8773,
+  "run_values": [
+    0.8775,
+    0.8773,
+    0.8752,
+    0.8792,
+    0.8773
+  ],
+  "higher_is_better": true,
+  "gap": 0.0042999999999999705,
+  "relative_gap": 0.004925544100801799,
+  "tolerance": 0.0017955500549970756,
+  "reporting_precision": 0.0005,
+  "test_noise": 0.0033297297187609687,
+  "run_spread": 0.0008977750274985378,
+  "evidence": "measured spread of 5 runs",
+  "exceeds_claim": true,
+  "merged_claim_ids": [
+    "c17"
+  ],
+  "metrics_mode": "full"
+}

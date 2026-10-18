@@ -1,0 +1,360 @@
+{
+  "paper_id": "2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction",
+  "source_pdf": null,
+  "reader_output": {
+    "paper": "2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction",
+    "source_markdown": "ocr/output/vlm/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction.md",
+    "method_summary": {
+      "problem": "The paper targets the task of predicting house prices, framed as a regression problem over tabular housing attributes. It argues that although neural networks (and other regression methods such as SVR and hedonic models) have been applied to this task with promising results, the existing neural-network-based approaches in the literature (specifically a prior standard feedforward ANN proposed for the Boston housing dataset) are used essentially \"off the shelf\" - proposed without any fine-tuning or customization of the model architecture - leaving room for improved accuracy through a more deliberately designed network structure.",
+      "core_idea": "The paper proposes a \"multi-level dense layer neural network\" in which, instead of a single linear stack of dense layers (a standard feedforward network where information flows in one direction), the input is fed in parallel into multiple independent branches (\"levels\"), each built from pairs of dense layers, inspired by modular neural network design. Within each level, pairs of dense layers with matching neuron counts are computed and concatenated; the concatenated outputs of the three levels' first-stage layers are each passed to a further dense layer per level; those three level outputs are concatenated together and passed through additional dense layers before reaching a single-unit output layer that yields the price prediction. Batch normalization is applied to the input before it enters this multi-branch structure to speed up training.",
+      "novelty": "Relative to the prior work it cites - particularly the deep neural network model proposed for house price prediction (a plain feedforward ANN with no architectural customization) and other baselines such as SVR-based hedonic modeling, XGBoost, Random Forest, Linear Regression, and SVM - the novelty is not a new learning mechanism per se but a new network topology: replacing the single monolithic feedforward path with a modular, multi-level architecture composed of several parallel, independent dense-layer branches (inspired by modular neural network concepts) that process information simultaneously and are progressively concatenated, combined with batch normalization applied at the input stage. The contribution is thus a customized, fine-tuned architectural design applied to a task where prior neural approaches used generic, uncustomized feedforward structures.",
+      "summary": "The paper addresses house price prediction, a regression task where prior work has applied methods ranging from hedonic and support-vector regression models to standard feedforward neural networks, but where, in the author's view, the neural-network approaches used so far are generic feedforward designs proposed without meaningful architectural fine-tuning or customization, leaving accuracy gains on the table. To address this, the paper introduces a multi-level dense layer neural network that departs from the single-direction, monolithic feedforward structure by, drawing on the idea of modular neural networks, splitting the input (after batch normalization) into several parallel independent branches or \"levels\" of dense layers that process information simultaneously, with outputs from paired dense layers within each level concatenated and propagated through further dense layers, and the outputs of all levels eventually merged and reduced to a single price prediction output. This modular, multi-branch design is intended to be more robust and computationally efficient than a standard/monolithic network by reducing high coupling between components while still allowing generalization gains. The core contribution is thus architectural: a specific parallel, level-based composition of dense layers with concatenation operations and input batch normalization, rather than a new optimization method or learning paradigm, aimed specifically at improving on prior uncustomized feedforward neural network baselines for housing price regression.",
+      "sources_examined": [
+        "Abstract (transcribed page 1)",
+        "Section 1 Introduction (transcribed page 1)",
+        "Section 2 Problem Settings (transcribed page 2)",
+        "Section 3 Methodologies (transcribed page 3)",
+        "Section 3.1 Architecture (transcribed page 3)",
+        "Section 3.2 Batch Normalization (transcribed page 4)"
+      ]
+    },
+    "architecture_notes": {
+      "model_name": "Multi Level Dense Layer Neural Network (also referred to as 'Proposed NN Model' / 'Proposed model')",
+      "overall_structure": "The 13-dimensional input feature vector X is first passed through a single Batch Normalization layer. The normalized input then feeds in parallel into three independent 'levels' (First, Second, Third), forming Hidden layer 1: each level consists of a pair of two 128-neuron ReLU dense layers processing the same normalized input independently. Within each level, the two dense layer outputs are concatenated. Each level's concatenated output is then passed through a single 128-neuron ReLU dense layer, forming Hidden layer 2 (again three parallel, independent dense layers, one per level). The three Hidden-layer-2 outputs (across the three levels) are then concatenated together into one combined vector. This combined vector is passed through further processing to produce the final scalar output (single unit) representing the predicted house price. The paper's two figures disagree on the exact form of this last stage (see Hidden layer 3 / final dense layer component and unstated_details for details) - Figure 2 depicts a separate 1-neuron 'Hidden layer 3' dense layer followed by one more concatenation before a distinct 'Output layer', while Figure 3 (the Keras-rendered graph) shows the three-level concatenation feeding directly into a single terminal dense layer (dense_9) with no further layer after it. This document does not state which of these two depictions is the one actually implemented; treating dense_9 as the sole output layer is only a plausible simplification consistent with Figure 3, not something the paper itself asserts as final.",
+      "components": [
+        {
+          "name": "Input layer",
+          "role": "Receives the raw 13-feature input vector for each house sample and passes it to batch normalization.",
+          "specification": "13 units, corresponding to the 13 input features of the Boston housing dataset (excluding the target MEDV).",
+          "source": "Section 3.1 Architecture (transcribed page 3); Figure 3 description block (transcribed page 5, labeled input_1 InputLayer)"
+        },
+        {
+          "name": "Batch Normalization layer",
+          "role": "Applied to the input data before it is passed into the hidden layers / parallel dense levels, to accelerate training and reduce internal covariate shift.",
+          "specification": "Standard Batch Normalization (BN), applied once at the start of the architecture on the input X. No further numeric configuration (e.g. momentum, epsilon) given.",
+          "source": "Section 3.2 Batch Normalization (transcribed page 4); Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5, labeled batch_normalization)"
+        },
+        {
+          "name": "Hidden layer 1 - three parallel pairs of dense layers (dense, dense_1, dense_2, dense_3, dense_4, dense_5)",
+          "role": "First hidden layer of the network; the batch-normalized input is fed in parallel into three independent 'levels', each level consisting of a pair of dense layers that process the same input.",
+          "specification": "3 levels (First, Second, Third), each level = 2 dense layers ('a pair'), so 6 dense layers total in this hidden layer. Each dense layer has 128 neurons with ReLU activation. Within a pair, both layers have the same number of neurons ('based on experiments conducted by the author, it will lead to better accuracy compared to using different amount of neurons').",
+          "source": "Section 3.1 Architecture (transcribed page 3); Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5, dense through dense_5)"
+        },
+        {
+          "name": "Concat after Hidden layer 1 (per level)",
+          "role": "Concatenates the outputs of the two dense layers within each of the three parallel levels, producing one combined vector per level to feed into Hidden layer 2.",
+          "specification": "Three separate concatenation operations, one per level: concatenate (dense + dense_1), concatenate_1 (dense_2 + dense_3), concatenate_2 (dense_4 + dense_5).",
+          "source": "Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5)"
+        },
+        {
+          "name": "Hidden layer 2 - three parallel dense layers (dense_6, dense_7, dense_8)",
+          "role": "Second hidden layer; each of the three levels' concatenated output from Hidden layer 1 is passed through a single dense layer per level, still operating in parallel across the three levels.",
+          "specification": "3 dense layers (one per level: dense_6 from concatenate, dense_7 from concatenate_1, dense_8 from concatenate_2), each with 128 neurons and ReLU activation (per the caption stating all 10 dense layers have 128 neurons with ReLU) -- but see note below on Hidden layer 3 discrepancy.",
+          "source": "Section 3.1 Architecture (transcribed page 3); Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5, dense_6/dense_7/dense_8)"
+        },
+        {
+          "name": "Concat after Hidden layer 2 (across levels)",
+          "role": "Combines the outputs of the three level-specific dense layers from Hidden layer 2 into a single vector before the final hidden processing.",
+          "specification": "One concatenation operation combining the three dense_6/dense_7/dense_8 outputs (referred to in Figure 2's description as the concat of First/Second/Third level outputs; in Figure 3 this is concatenate_3).",
+          "source": "Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5, concatenate_3)"
+        },
+        {
+          "name": "Hidden layer 3 / final dense layer (dense_9)",
+          "role": "Final layer applied to the combined (concatenated) output of the three levels; per prose text this is described as 'the last hidden layers by a single dense layer', whose output is then passed to the output layer producing the price prediction.",
+          "specification": "DISCREPANCY BETWEEN SOURCES: The prose (Section 3.1) states the combined output from the second hidden layer 'will be combined together before being calculated in the last hidden layers by a single dense layer', implying one dense layer maps to the output. The Figure 2 caption/description block explicitly depicts a distinct 'Hidden layer 3' consisting of a 1-neuron dense layer, followed by an additional final 'Concat' operation, and only then the separate 'Output layer' producing Y - i.e. Figure 2 shows dense layer -> concat -> output layer as three distinct stages. In contrast, Figure 3 (the Keras-generated plot_model diagram, described as showing the actual generated network) shows only concatenate_3 feeding directly into a single dense_9 layer, which is the final/output layer, with no additional dense layer or extra concat afterward. The paper does not reconcile this discrepancy anywhere in the text. This extraction reports both versions rather than resolving them: it is NOT stated by the paper which of the two structures (Figure 2's dense+concat+output as three stages, vs Figure 3's single dense_9 as the output) is authoritative, and any implementation must choose one interpretation as a guess.",
+          "source": "Section 3.1 Architecture (transcribed page 3); Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5)"
+        },
+        {
+          "name": "Output layer",
+          "role": "Produces the final single-value housing price prediction.",
+          "specification": "1 unit (single neuron) producing the price prediction Y. Per Figure 2's description this is a separate 'Output layer' fed by a final Concat after Hidden layer 3's 1-neuron dense layer. Per Figure 3's description, dense_9 (fed directly by concatenate_3) is itself the final Dense layer described as 'the final output layer' with no separate subsequent layer shown. Activation function of the output layer is not stated (likely linear/none for regression, but this is not stated in the paper).",
+          "source": "Section 3.1 Architecture (transcribed page 3); Figure 2 description block (transcribed page 4); Figure 3 description block (transcribed page 5)"
+        }
+      ],
+      "key_equations": [
+        {
+          "latex": "z = \\sum_{i=1}^{n} x_i w_i + b \\tag{6}",
+          "label": "6",
+          "defines": "The net input (weighted sum plus bias) computed by a single neuron in the network, as the basic building block of the model.",
+          "is_own_method": true
+        },
+        {
+          "latex": "j = g(z) = g(\\sum_{i=1}^{n} x_i w_i + b) \\tag{7}",
+          "label": "7",
+          "defines": "The neuron's output after passing the net input z through an activation function g; the general per-neuron computation used throughout the dense layers of the proposed model.",
+          "is_own_method": true
+        },
+        {
+          "latex": "z = \\frac{x - \\mu}{\\sigma} \\tag{5}",
+          "label": "5",
+          "defines": "Z-score normalization applied to input data before training (data preprocessing, not a network layer per se, but referenced as the normalization equation used ahead of the model).",
+          "is_own_method": true
+        }
+      ],
+      "depth_or_scale": "The paper does not give a closed-form depth/width scaling formula. It only states a fixed architecture description: '3 hidden layers consisting of 10 dense layers in total with the same amount of neurons (128 neurons)' and describes the layer counts/pairings in prose (six dense layers - 3 pairs - in the first hidden layer, three dense layers in the second hidden layer, one dense layer in the third/output stage per Figure 2, or one final dense_9 per Figure 3). No general rule for scaling to different numbers of levels, pairs, or neuron counts is given.",
+      "unstated_details": [
+        "Exact activation function (if any) of the final output layer/dense_9 is not stated (only ReLU is stated for the 10 hidden dense layers of 128 neurons; the output layer's activation, likely linear for regression, is never specified).",
+        "Whether the discrepancy between Figure 2 (which shows a distinct 1-neuron 'Hidden layer 3' dense layer, then an additional final Concat, then a separate 'Output layer') and Figure 3 (which shows concatenate_3 feeding directly into a single terminal dense_9 layer with no extra dense layer or concat afterward) reflects an error in one figure, or whether both stages exist but Figure 3 simply omits/merges them in its automatically generated plot. The paper never reconciles this itself. Any choice to treat dense_9 as literally the sole final output layer (equivalent to Figure 3) versus building the separate 1-neuron dense + concat + output-layer sequence described in Figure 2's prose is an interpretive choice not explicitly stated by the paper; the paper gives no resolving statement, so this must be flagged as a genuine ambiguity rather than resolved by the extraction.",
+        "Weight initialization scheme for the dense layers is not stated.",
+        "Whether biases are used in each dense layer (implied by generic neuron equations 6-7, but not confirmed specifically per layer of the proposed model) is not explicitly discussed.",
+        "The exact order/type of concatenation axis or dimensionality handling is not detailed (only that a 'Concat' operation is used).",
+        "No dropout or other regularization within the dense layers is mentioned; presence or absence of dropout is not stated.",
+        "Batch Normalization is stated to be applied to 'input data' before hidden layers, but its exact parameters (momentum, epsilon, whether learnable affine parameters are used) are not stated.",
+        "No padding/kernel details apply since this is a dense-only (fully connected) architecture, but the paper does not explicitly confirm that all layers are Dense (fully connected) as opposed to any other layer type beyond what is shown in Figure 3's Keras layer names (Dense, BatchNormalization, Concatenate, InputLayer).",
+        "The paper does not specify how many neurons are in the 'Hidden layer 3' dense layer(s) beyond the single figure caption noting '1-neuron dense layer' in Figure 2, which conflicts with the general statement that all 10 dense layers have 128 neurons; this internal inconsistency (10 layers all stated as 128 neurons in prose, but Figure 2 depicting a 1-neuron Hidden layer 3) is not resolved anywhere in the paper."
+      ],
+      "sources_examined": [
+        "Section 3.1 Architecture (transcribed page 3)",
+        "Figure 2 description block (transcribed page 4)",
+        "Section 3.2 Batch Normalization (transcribed page 4)",
+        "Figure 3 description block (transcribed page 5)",
+        "Section 3.3 Training Process (transcribed page 5, checked for architecture-relevant content, contains only training hyperparameters)",
+        "Figure 1 description block (transcribed page 4, generic neuron diagram, not the proposed architecture per se)"
+      ]
+    },
+    "claims": {
+      "claims": [
+        {
+          "claim_id": "c1",
+          "metric": "R^2",
+          "dataset": "Boston Housing Dataset",
+          "reported_value": 0.91,
+          "unit": "score",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": null
+        },
+        {
+          "claim_id": "c2",
+          "metric": "MSE",
+          "dataset": "Boston Housing Dataset",
+          "reported_value": 9.16,
+          "unit": "value",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": null
+        },
+        {
+          "claim_id": "c3",
+          "metric": "RMSE",
+          "dataset": "Boston Housing Dataset",
+          "reported_value": 3.02,
+          "unit": "value",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": null
+        },
+        {
+          "claim_id": "c4",
+          "metric": "MAE",
+          "dataset": "Boston Housing Dataset",
+          "reported_value": 2.31,
+          "unit": "value",
+          "source": "Table 3, transcribed page 6",
+          "model_variant": null
+        }
+      ],
+      "tables_examined": [
+        "Table 3: Algorithm comparison on different evaluation metrics (transcribed page 6/7)"
+      ],
+      "candidates_considered": 6
+    },
+    "hyperparameters": {
+      "hyperparameters": [
+        {
+          "name": "optimizer",
+          "value": "Adam (Adaptive Moments)",
+          "source": "Training Process section, transcribed page 5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "learning rate",
+          "value": "0.001",
+          "source": "Training Process section, transcribed page 5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "number of epochs",
+          "value": "1000",
+          "source": "Training Process section, transcribed page 5",
+          "unit": "epochs",
+          "model_variant": null
+        },
+        {
+          "name": "validation split",
+          "value": "20% of the training dataset used for validation",
+          "source": "Training Process section, transcribed page 5",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "batch normalization",
+          "value": "Standard Batch Normalization applied to input data before hidden layers",
+          "source": "Section 3.2 Batch Normalization, transcribed page 4",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "activation function",
+          "value": "ReLU",
+          "source": "Section 3.1 Architecture, transcribed page 3",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "hidden layer structure",
+          "value": "3 hidden layers consisting of 10 dense layers in total, each with 128 neurons",
+          "source": "Section 3.1 Architecture, transcribed page 3",
+          "unit": null,
+          "model_variant": null
+        },
+        {
+          "name": "data normalization",
+          "value": "Standard normalization (z-score normalization) via TensorFlow inbuilt function, transforming features to mean 0 and standard deviation 1",
+          "source": "Problem Settings section (Data Normalization), transcribed page 3",
+          "unit": null,
+          "model_variant": null
+        }
+      ],
+      "sources_examined": [
+        "Section 3.3 Training Process prose section (transcribed page 5)",
+        "Section 3.2 Batch Normalization prose section (transcribed page 4)",
+        "Section 3.1 Architecture prose section (transcribed page 3)",
+        "Problem Settings section including Data Normalization prose (transcribed page 3)",
+        "Figure 4 caption describing MAE/MSE during training (transcribed page 5)",
+        "Table 3: Algorithm comparison table (transcribed page 7) - checked, contains only results/metrics, no own hyperparameters distinct from baselines"
+      ]
+    },
+    "data_pipeline": {
+      "reference_urls": [
+        "https://github.com/wijayarobert/MultiLevelDenseLayerNN"
+      ],
+      "datasets": [
+        {
+          "dataset": "Boston Housing Dataset",
+          "dataset_source": "Standard Boston Housing Dataset containing 506 cases of housing price information in different suburbs of Boston, Massachusetts, with 14 attributes per case (as listed in Table 1). Paper does not name a specific loader or library used to obtain the dataset.",
+          "normalization": "Standard normalization (z-score normalization) applied to both training and testing dataset using TensorFlow's inbuilt normalization function, transforming features to mean 0 and standard deviation 1, per the formula z = (x - mu)/sigma given in Eq. 5.",
+          "augmentation": "not stated",
+          "split_convention": "From the original 506 samples, 405 samples are treated as training data and 101 samples are treated as test data. Separately, Section 3.3 states the model 'was trained and validated by 20% of the training dataset for 1000 epochs,' but the paper does not clarify whether this 20% validation split is drawn from the 405 training samples (leaving fewer than 405 for actual training) or refers to some other/separate partition - this relationship between the 405-sample training set and the 20% validation split is not explicitly stated or reconciled anywhere in the paper.",
+          "source": "Section 2 'Dataset' paragraph (transcribed page 2) for the 405/101 split; Section 3.3 'Training Process' (transcribed page 5) for the 20% validation statement; Section 2 'Data Normalization' paragraph (transcribed page 3) for normalization."
+        }
+      ]
+    },
+    "validation": {
+      "flags": [
+        {
+          "relates_to": "claims",
+          "description": "Table 3 also reports RMSE and MAE for the Proposed NN model, but claim c3 (RMSE=3.02) and c4 (MAE=2.31) are already captured; however only R2, MSE, RMSE, MAE for the proposed model were extracted while the paper's Section 4.1 text also reports separate train vs test values for R2 (0.948 train/0.911 test), MAE (1.99 train/2.31 test), MSE (7.24 train/9.16 test), RMSE (2.69 train/3.02 test) - the claims extraction only captured the test-set values from Table 3 and omitted the training-set values reported in the prose, which could be considered missing claims."
+        },
+        {
+          "relates_to": "claims: model_variant/table bolding",
+          "description": "Table 3 only bolds R2, MSE, and RMSE for Proposed NN (per its own caption 'outperforms existing algorithms in three different metrics (R2, MSE, and RMSE)'), and MAE for Proposed NN (2.31) is actually worse than ANN's MAE (2.10) - the claims extraction lists MAE=2.31 as claim c4 without flagging that this is not actually a case where the proposed model outperforms baselines, which is worth noting since the method_summary/claims narrative implies uniform superiority."
+        },
+        {
+          "relates_to": "cross-check: claims vs Table 3",
+          "description": "Table 3 in the paper lists RMSE for Proposed NN as 3.02, consistent with c3, but note XGBoost's RMSE in Table 3 is listed as 2.45 (lower than Proposed NN's 3.02) - this baseline value is correctly a baseline and not attributed to the proposed model, so no issue there, but it does contradict the paper's own claim that the proposed model outperforms in RMSE; this inconsistency exists in the paper itself, not the extraction, but was not flagged anywhere in the extractions despite being a notable internal inconsistency in the paper's own reported results."
+        },
+        {
+          "relates_to": "architecture_notes: Figure 2 vs Figure 3 discrepancy",
+          "description": "This is thoroughly documented already in unstated_details and components, so no new flag needed here, but confirming it is accurately described relative to the paper text (Figure 2 description says 1-neuron dense layer for Hidden layer 3, Figure 3 shows dense_9 directly after concatenate_3) - this matches the paper's figure descriptions, so extraction is accurate."
+        },
+        {
+          "relates_to": "hyperparameters: batch size",
+          "description": "The paper does not mention batch size anywhere, and the hyperparameters extraction does not list it either - consistent, no issue. However, the extraction's sources_examined list does not explicitly flag that batch size is missing/unstated the way architecture_notes flags unstated architectural details; this could be a minor gap in symmetry between extractions but is not a factual error."
+        },
+        {
+          "relates_to": "data_pipeline: hardware/runtime detail",
+          "description": "Figure 4 caption mentions training time on CPU (AMD Ryzen 3) and Google Colab GPU (1 minute 44 seconds and 1 minute 25 seconds respectively) - this hardware/runtime detail is not captured in hyperparameters or data_pipeline extractions, though it may be considered out of scope for either category."
+        }
+      ],
+      "attempts": 3,
+      "retried_stages": [
+        "claims",
+        "architecture_notes",
+        "hyperparameters",
+        "data_pipeline"
+      ]
+    }
+  },
+  "coder_output": {
+    "script_path": "coder/output-ablation/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction/train.py",
+    "script_version": 1,
+    "diff_from_previous": null
+  },
+  "runner_output": {
+    "status": "success",
+    "reproduced_metrics": {
+      "claim_id": "c3",
+      "metric": "RMSE",
+      "unit": "value",
+      "value": 2.5801572246107285,
+      "higher_is_better": false,
+      "task_type": "regression",
+      "train_loss": 1.115912557678458,
+      "eval_loss": 6.657212257385254,
+      "train_metric": 1.0563675673926025,
+      "eval_metric": 2.5801572246107285,
+      "epochs_completed": 1000,
+      "num_train_samples": 405,
+      "num_eval_samples": 101,
+      "wall_clock_seconds": 112.63716578483582
+    },
+    "logs_path": "orchestrator/output-ablation/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction/logs/attempt-1",
+    "error_trace": null
+  },
+  "critic_output": null,
+  "retry_count": 0,
+  "retry_budget": 0,
+  "fidelity_retry_count": 0,
+  "history": [
+    {
+      "timestamp": "2026-10-08T18:49:55+00:00",
+      "stage": "orchestrator",
+      "event": "loop started",
+      "detail": "retry_budget=0, plateau_threshold=0.98, modes=probe/smoke/capped/full"
+    },
+    {
+      "timestamp": "2026-10-08T18:51:28+00:00",
+      "stage": "coder",
+      "event": "generated script v1",
+      "detail": "claim=c3, 393 lines"
+    },
+    {
+      "timestamp": "2026-10-08T18:53:44+00:00",
+      "stage": "runner",
+      "event": "ran v1: success",
+      "detail": "stage_reached=full, failed_stage=None, exit_code=0, 135.41s, no triage"
+    },
+    {
+      "timestamp": "2026-10-08T18:53:44+00:00",
+      "stage": "orchestrator",
+      "event": "loop finished: success",
+      "detail": "a stage passed; nothing to retry"
+    }
+  ],
+  "verdict": "success",
+  "attempts": [
+    {
+      "version": 1,
+      "feedback_given": null,
+      "script_path": "orchestrator/output-ablation/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction/attempts/v1_train.py",
+      "script_chars": 16939,
+      "plateau_ratio": null,
+      "runner_status": "success",
+      "stage_reached": "full",
+      "failed_stage": null,
+      "exit_code": 0,
+      "wall_clock_seconds": 135.41,
+      "triage_category": null,
+      "triage_reasoning": null,
+      "suggested_fix": null,
+      "syntax_error": null,
+      "logs_path": "orchestrator/output-ablation/2023-10 - Multi Level Dense Layer Neural Network Model for Housing Price Prediction/logs/attempt-1",
+      "action": "done",
+      "verdict": "success",
+      "reason": "a stage passed; nothing to retry",
+      "checkup_rule": null,
+      "checkup_message": null,
+      "critic_verdict": null
+    }
+  ]
+}
