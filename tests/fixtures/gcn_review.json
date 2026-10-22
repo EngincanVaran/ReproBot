@@ -1,0 +1,222 @@
+{
+  "method_fidelity": "minor_deviations",
+  "summary": "This is the paper's method: real Planetoid Cora with the fixed 140/500/1000 split, two-layer GCN with renormalized adjacency, 16 hidden units, dropout 0.5 on both layers, Adam lr=0.01, 5e-4 L2 on the first layer only, Glorot init, row-normalized features, 200 epochs, early stopping window 10. Mean over 10 seeds is 81.19% vs the claimed 81.5%, inside the measured spread. Two things depart from the paper's protocol: the early-stopping criterion never triggers as implemented (it compares against the running best rather than a plain 10-epoch no-decrease window on a monotonically changing loss \u2014 all runs hit 200 epochs), and the monitoring/eval curve is the test split rather than validation. Neither moves the result outside tolerance.",
+  "curve_assessment": "Training converges cleanly: train_loss falls 1.9415 -> 0.33552 and train_metric rises 39.286 -> 98.571 over 200 epochs, with eval_metric climbing from 23.7 (chance_metric 13.0) to the low 80s by step ~130 and flattening (81.4 at step 133, 81.4 at 167, 82.0 at 197, 81.7 at 200). Eval loss decreases monotonically alongside (1.9438 -> 0.82572), so there is no late-training divergence; best_eval 83.5 at step 97 is seed/noise fluctuation within the band the plateau already occupies. Final mean over 10 runs is 81.19 with run values spanning 79.6 to 82.5, i.e. the plateau sits right at the 81.5 target rather than below it.",
+  "findings": [
+    {
+      "kind": "matches_paper",
+      "aspect": "architecture",
+      "severity": "high",
+      "paper_quote": "Z = f(X, A) = \\text{softmax}\\left(\\hat{A} \\text{ ReLU}\\left(\\hat{A} X W^{(0)}\\right) W^{(1)}\\right)",
+      "script_lines": [
+        210,
+        211,
+        214,
+        215,
+        216,
+        217,
+        218
+      ],
+      "script_snippet": "        self.gc1 = GraphConvolution(n_features, n_hidden)\n        self.gc2 = GraphConvolution(n_hidden, n_classes)\n    def forward(self, x, a_hat_sparse, training):\n        x = F.dropout(x, p=self.dropout, training=training)\n        h = F.relu(self.gc1(x, a_hat_sparse))\n        h = F.dropout(h, p=self.dropout, training=training)\n        logits = self.gc2(h, a_hat_sparse)",
+      "explanation": "Two-layer GCN exactly as Eq. 9: Ahat ReLU(Ahat X W0) W1, with the softmax folded into the cross-entropy loss. Hidden size 16 (line 257) matches the paper's stated 16 hidden units for Cora.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "preprocessing",
+      "severity": "high",
+      "paper_quote": "we introduce the following *renormalization trick*: $I_N + D^{-\\frac{1}{2}} A D^{-\\frac{1}{2}} \\rightarrow \\tilde{D}^{-\\frac{1}{2}} \\tilde{A} \\tilde{D}^{-\\frac{1}{2}}$, with $\\tilde{A} = A + I_N$",
+      "script_lines": [
+        173,
+        174,
+        175,
+        177,
+        178
+      ],
+      "script_snippet": "    adj_tilde = adj_csr + sp.eye(n, format=\"csr\", dtype=np.float32)\n    deg = np.array(adj_tilde.sum(axis=1)).flatten()\n    deg_inv_sqrt = np.power(deg, -0.5)\n    d_mat = sp.diags(deg_inv_sqrt)\n    a_hat = d_mat.dot(adj_tilde).dot(d_mat)",
+      "explanation": "The renormalized adjacency Ahat = Dtilde^{-1/2}(A+I)Dtilde^{-1/2} is computed once per run as a pre-processing step, which is the Table 3 row the 81.5 claim comes from.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "data split",
+      "severity": "high",
+      "paper_quote": "We choose the same dataset splits as in Yang et al. (2016) with an additional validation set of 500 labeled examples for hyperparameter optimization",
+      "script_lines": [
+        128,
+        129,
+        130
+      ],
+      "script_snippet": "    idx_test = test_idx_range.tolist()\n    idx_train = list(range(len(y)))\n    idx_val = list(range(len(y), len(y) + EXPECTED_VAL))",
+      "explanation": "The canonical Planetoid loading procedure is used: train = first 140 rows (20 per class), val = next 500, test = the 1000 test-index nodes. The runner log confirms train=140 val=500 test=1000, and RUN EVIDENCE reports num_train_samples=140, num_eval_samples=1000, matching the paper's 'test set of 1,000 labeled examples'. Training loss/gradients come only from idx_train (line 279); val labels are never used in the loss.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "loss",
+      "severity": "high",
+      "paper_quote": "\\mathcal{L} = -\\sum_{l \\in \\mathcal{Y}_L} \\sum_{f=1}^{F} Y_{lf} \\ln Z_{lf}",
+      "script_lines": [
+        279,
+        280,
+        281
+      ],
+      "script_snippet": "        train_loss_ce = F.cross_entropy(logits[train_idx_t], y[train_idx_t])\n        l2_term = l2_coef * torch.sum(model.gc1.weight ** 2)\n        loss = train_loss_ce + l2_term",
+      "explanation": "Cross-entropy restricted to the labeled training nodes only (Eq. 10), plus the first-layer L2 term the paper specifies; minimised in the correct direction.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "regularisation",
+      "severity": "medium",
+      "paper_quote": "0.5 (dropout rate), $5 \\cdot 10^{-4}$ (L2 regularization) and 16 (number of hidden units)",
+      "script_lines": [
+        257,
+        261,
+        280
+      ],
+      "script_snippet": "        model = GCN(n_features=x.shape[1], n_hidden=16, n_classes=n_classes, dropout=0.5).to(device)\n    l2_coef = 5e-4\n        l2_term = l2_coef * torch.sum(model.gc1.weight ** 2)",
+      "explanation": "Dropout 0.5, L2 5e-4 applied to the first GCN layer only (via a manual penalty rather than optimizer weight_decay, which would hit both layers), and 16 hidden units \u2014 all as stated for Cora.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "optimizer",
+      "severity": "high",
+      "paper_quote": "using Adam (Kingma & Ba, 2015) with a learning rate of $0.01$",
+      "script_lines": [
+        259,
+        364
+      ],
+      "script_snippet": "    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-8)\n    parser.add_argument(\"--lr\", type=float, default=0.01, help=\"Adam learning rate (paper: 0.01).\")",
+      "explanation": "Adam at a constant lr of 0.01, no schedule, matching the paper. Full-batch updates over the whole graph each iteration (one optimizer.step per epoch, line 283) match 'batch gradient descent using the full dataset for every training iteration'.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "initialisation",
+      "severity": "low",
+      "paper_quote": "We initialize weights using the initialization described in Glorot & Bengio (2010) and accordingly (row-)normalize input feature vectors.",
+      "script_lines": [
+        196,
+        165,
+        166,
+        167,
+        168
+      ],
+      "script_snippet": "        nn.init.xavier_uniform_(self.weight)\n    row_sum = np.array(features_csr.sum(axis=1)).flatten()\n    row_sum[row_sum == 0] = 1.0\n    inv = sp.diags(1.0 / row_sum)\n    return inv.dot(features_csr)",
+      "explanation": "Glorot/Xavier uniform init and row-normalisation of the bag-of-words features, both as stated. Row-normalisation is a per-row operation with no fitted statistics, so there is no train/test leakage concern.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "epochs",
+      "severity": "medium",
+      "paper_quote": "We train all models for a maximum of 200 epochs (training iterations)",
+      "script_lines": [
+        275,
+        360
+      ],
+      "script_snippet": "    for epoch in range(1, args.epochs + 1):\n    parser.add_argument(\"--epochs\", type=int, default=200, help=\"Max training epochs (paper: 200, early stopping window 10).\")",
+      "explanation": "Maximum of 200 epochs as stated; RUN EVIDENCE reports epochs_completed=200, so every run used the full budget.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "deviates_from_paper",
+      "aspect": "early stopping",
+      "severity": "medium",
+      "paper_quote": "early stopping with a window size of $10$, i.e. we stop training if the validation loss does not decrease for 10 consecutive epochs",
+      "script_lines": [
+        327,
+        328,
+        329,
+        330,
+        331,
+        332,
+        333,
+        334
+      ],
+      "script_snippet": "        if val_loss < best_val_loss - 1e-9:\n            best_val_loss = val_loss\n            patience_counter = 0\n        else:\n            patience_counter += 1\n            if patience_counter >= patience_window:\n                logger.info(\"Early stopping at epoch %d (val loss window=%d).\", epoch, patience_window)\n                break",
+      "explanation": "The paper's criterion is 'validation loss does not decrease for 10 consecutive epochs' (i.e. relative to the previous epochs in the window); the script compares against the global running best. Because validation loss falls almost monotonically here (eval_loss 1.9438 -> 0.82572 in the curve), the counter is reset constantly and no run ever stops early \u2014 epochs_completed=200 for all 10 runs, with no 'Early stopping' line in the runner log. The paper's criterion would likely have halted earlier. Effect on accuracy is small since the curve is flat after ~step 130.",
+      "verified": false,
+      "problems": [
+        "number 130 is not in the material given"
+      ]
+    },
+    {
+      "kind": "implementation_bug",
+      "aspect": "evaluation",
+      "severity": "medium",
+      "paper_quote": "We do not use the validation set labels for training.",
+      "script_lines": [
+        291,
+        296,
+        304,
+        306
+      ],
+      "script_snippet": "            test_loss_full = F.cross_entropy(eval_logits[test_idx_t], y[test_idx_t]).item()\n            test_acc = (test_pred == y[test_idx_t]).float().mean().item() * 100.0\n            \"eval_loss\": float(test_loss_full),\n            \"eval_metric\": float(test_acc),",
+      "explanation": "The per-epoch monitoring curve logs the 1000-node test split as eval_loss/eval_metric (monitoring_split_sample_counts shows num_eval_samples=1000), while the 500-node validation split is computed separately and used only for the early-stop check. This means the test set is observed throughout training rather than held out for monitoring. It does not leak into gradients \u2014 the loss at line 279 uses only idx_train \u2014 and the early-stopping decision correctly uses val_loss, so the reported final number is still an honest test-set evaluation; but the logged 'eval' curve is the test split, not a validation split.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "evaluation",
+      "severity": "medium",
+      "paper_quote": "report mean accuracy of 100 runs with random weight initializations",
+      "script_lines": [
+        412,
+        421,
+        433
+      ],
+      "script_snippet": "    num_runs = 1 if is_capped else 10\n        run_seed = args.seed + r\n    mean_eval_metric = float(np.mean(run_values))",
+      "explanation": "The paper averages 100 random initialisations; the script averages 10 seeds (disclosed in the Coder bookkeeping and the runner log) for compute budget. With run values spanning 79.6 to 82.5, the 10-run mean 81.19 carries more sampling noise than a 100-run mean would, but the averaging protocol is otherwise the paper's.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "architecture",
+      "severity": "low",
+      "paper_quote": "No explicit mention of whether/where bias terms are included in the layer-wise linear transformation (W^(l) matrices)",
+      "script_lines": [
+        195,
+        199,
+        200
+      ],
+      "script_snippet": "        self.weight = nn.Parameter(torch.empty(in_features, out_features))\n        support = torch.mm(h, self.weight)\n        out = torch.sparse.mm(a_hat_sparse, support)",
+      "explanation": "No bias term is used, matching the bare form of Eqs. 2/8/9; the paper never states bias is absent, so this is a disclosed guess. Also note dropout is applied to the layer input before the linear transform for both layers, which the paper leaves unspecified ('dropout rate for all layers').",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "data source",
+      "severity": "low",
+      "paper_quote": "We closely follow the experimental setup in Yang et al. (2016).",
+      "script_lines": [
+        46,
+        47,
+        48,
+        49
+      ],
+      "script_snippet": "PLANETOID_BASE_URL = \"https://raw.githubusercontent.com/kimiyoung/planetoid/master/data/\"\nPLANETOID_FILES = [\n    \"ind.cora.x\", \"ind.cora.y\", \"ind.cora.tx\", \"ind.cora.ty\",\n    \"ind.cora.allx\", \"ind.cora.ally\", \"ind.cora.graph\", \"ind.cora.test.index\",\n]",
+      "explanation": "The paper gives no download URL; the script uses the canonical Planetoid pickle files from Yang et al.'s repository, which is the source the paper's own code release uses. The loader asserts 2708 nodes / 7 classes (Table 1) and raises rather than falling back to synthetic data.",
+      "verified": true,
+      "problems": []
+    }
+  ],
+  "hypotheses": [],
+  "summary_problems": [
+    "number 130 is not in the material given"
+  ],
+  "model": "claude-opus-5"
+}

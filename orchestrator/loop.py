@@ -362,10 +362,14 @@ def decide_after_critic(
     retry_budget: int,
     has_unstated_choices: bool,
     has_stated_problems: bool = False,
+    pass_blocked: bool = False,
 ) -> CriticDecision:
     """Route a Critic verdict. Pure, like every other routing decision here.
 
-    * `pass` and `not_evaluated` are final.
+    * `pass` and `not_evaluated` are final - except a pass the review blocks (the method
+      is not the paper's; see `critic.review.pass_blocking_reasons`), which is a `fix`
+      when the review found stated problems and the retry budget has room, and otherwise
+      stands as an unestablished pass.
     * `inconclusive` asks for extra seeds once per script, and only when they are
       affordable (the full run was cheap enough) and this script's reproduce.sh can run
       them; otherwise the verdict stands as inconclusive.
@@ -378,6 +382,18 @@ def decide_after_critic(
       matches - and only when the Coder recorded unstated choices it could revisit and
       the general retry budget still has room. Otherwise the fail is final.
     """
+    if verdict == "pass" and pass_blocked:
+        if has_stated_problems and retry_count < retry_budget:
+            return CriticDecision(
+                "fix",
+                "the number passes, but the review found the script not doing what the paper "
+                "states; fixing that before the pass can count",
+            )
+        return CriticDecision(
+            "accept",
+            "the number passes, but the review blocks it and there is no room to fix it; "
+            "it is reported as not established",
+        )
     if verdict == "inconclusive" and recommendation == "run_more_seeds":
         if seeds_already_run:
             return CriticDecision("accept", "extra seeds already ran; the verdict stands")
@@ -837,6 +853,7 @@ class Orchestrator:
                 retry_budget=state.retry_budget,
                 has_unstated_choices=bool(self._assumptions(paper_dir)),
                 has_stated_problems=bool(review and review.stated_problems()),
+                pass_blocked=bool(review and review.pass_blocking_reasons()),
             )
             if choice.action == "run_seeds":
                 logger.info(f"  [critic] decide: {choice.action} - {choice.reason}")
@@ -871,6 +888,11 @@ class Orchestrator:
             "seed_run_values": seed_values,
             "checks": checks,
             "review": review.to_dict() if review else None,
+            "pass_blocked": (
+                review.pass_blocking_reasons()
+                if review is not None and judgement.verdict == "pass"
+                else []
+            ),
         }
         state.critic_output = {**entry, "judgements": [*previous, entry]}
         state.record(
@@ -886,7 +908,10 @@ class Orchestrator:
                 f"{len(review.stated_problems())} verified stated problem(s); "
                 + ", ".join(f"{k} {v}" for k, v in counts.items()),
             )
-            if judgement.verdict == "pass" and review.stated_problems():
+            if judgement.verdict == "pass" and review.pass_blocking_reasons():
+                for reason in review.pass_blocking_reasons():
+                    logger.warning(f"  [critic] PASS BLOCKED: {reason}")
+            elif judgement.verdict == "pass" and review.stated_problems():
                 logger.warning(
                     f"  [critic] the result passes, but the review found "
                     f"{len(review.stated_problems())} verified deviation(s) from the paper - "
@@ -898,8 +923,8 @@ class Orchestrator:
                 LoopDecision(
                     "retry",
                     None,
-                    f"the Critic judged a fail and the review found stated deviations: "
-                    f"{judgement.reason}",
+                    f"the Critic judged a {judgement.verdict} and the review found stated "
+                    f"deviations: {judgement.reason}",
                     deviation_feedback(judgement, review),
                 ),
                 judgement,
