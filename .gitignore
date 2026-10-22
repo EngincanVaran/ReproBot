@@ -281,3 +281,7 @@ viewer/jobs/
 # GPU-box Coder output and the Critic fail-path test runs (2026-09-25)
 coder/output-gpu/
 orchestrator/output_failtest*/
+
+# Local agent skills (symlinks into .venv, installed by streamlit)
+.agents/
+.claude/
