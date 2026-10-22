@@ -1,0 +1,213 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 925" width="1400" height="925" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+<defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter><radialGradient id="bg" cx="50%" cy="40%" r="75%"><stop offset="0" stop-color="#0a0f1f"/><stop offset="1" stop-color="#02030a"/></radialGradient><linearGradient id="hubline" x1="0" x2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset=".35" stop-color="#4ade80"/><stop offset=".65" stop-color="#38bdf8"/><stop offset="1" stop-color="#fbbf24"/></linearGradient></defs>
+<rect width="1400" height="925" fill="url(#bg)"/>
+<path d="M190.0,585 V618 Q190.0,648 220.0,648 H670" fill="none" stroke="#a78bfa" stroke-width="2.5" filter="url(#glow)"/>
+<circle cx="190.0" cy="585" r="4" fill="#a78bfa" filter="url(#glow)"/>
+<rect x="24" y="64" width="332" height="527" rx="20" fill="none" stroke="#a78bfa" stroke-opacity=".18"/>
+<rect x="30" y="70" width="320" height="515" rx="16" fill="#060a16" stroke="#a78bfa" stroke-opacity=".75" stroke-width="1.5"/>
+<circle cx="190.0" cy="50" r="34" fill="#a78bfa" opacity=".35" filter="url(#soft)"/>
+<circle cx="190.0" cy="50" r="30" fill="#060a16" stroke="#a78bfa" stroke-width="2" filter="url(#glow)"/>
+<g transform="translate(190.0,50)" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M-3,-15 Q-1,-3 11,-1 Q-1,1 -3,13 Q-5,1 -17,-1 Q-5,-3 -3,-15Z"/><path d="M11,6 Q12,11 17,12 Q12,13 11,18 Q10,13 5,12 Q10,11 11,6Z"/></g>
+<text x="190.0" y="120" text-anchor="middle" font-size="16" font-weight="700" letter-spacing="1" fill="#a78bfa">LLM &amp; AGENT INTELLIGENCE</text>
+<rect x="44" y="142" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="154" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">AI</text>
+<text x="108" y="169" font-size="15.5" font-weight="500" fill="#eef1fb">Anthropic Claude API</text>
+<text x="108" y="188" font-size="11.5" fill="#8a94b4">tool use, forced structured JSON</text>
+<rect x="44" y="214" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="226" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">S5</text>
+<text x="108" y="241" font-size="15.5" font-weight="500" fill="#eef1fb">Claude Sonnet 5</text>
+<text x="108" y="260" font-size="11.5" fill="#8a94b4">OCR, Reader and Coder calls</text>
+<rect x="44" y="286" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="298" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="322" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">O5</text>
+<text x="108" y="313" font-size="15.5" font-weight="500" fill="#eef1fb">Claude Opus 5</text>
+<text x="108" y="332" font-size="11.5" fill="#8a94b4">Critic review of code and logs</text>
+<rect x="44" y="358" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="370" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="394" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">H4</text>
+<text x="108" y="385" font-size="15.5" font-weight="500" fill="#eef1fb">Claude Haiku 4.5</text>
+<text x="108" y="404" font-size="11.5" fill="#8a94b4">Runner failure triage</text>
+<rect x="44" y="430" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="442" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="466" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">OK</text>
+<text x="108" y="457" font-size="15.5" font-weight="500" fill="#eef1fb">LLM Extraction Validator</text>
+<text x="108" y="476" font-size="11.5" fill="#8a94b4">flags routed back to one extractor</text>
+<rect x="44" y="502" width="292" height="62" rx="10" fill="#0b1122" stroke="#a78bfa" stroke-opacity=".28"/>
+<rect x="56" y="514" width="38" height="38" rx="9" fill="#a78bfa" fill-opacity=".14" stroke="#a78bfa" stroke-opacity=".9"/>
+<text x="75" y="538" text-anchor="middle" font-size="14" font-weight="700" fill="#a78bfa">LP</text>
+<text x="108" y="529" font-size="15.5" font-weight="500" fill="#eef1fb">Bounded Python Retry Loops</text>
+<text x="108" y="548" font-size="11.5" fill="#8a94b4">pure routing functions, no framework</text>
+<path d="M530.0,585 V618 Q530.0,648 560.0,648 H670" fill="none" stroke="#4ade80" stroke-width="2.5" filter="url(#glow)"/>
+<circle cx="530.0" cy="585" r="4" fill="#4ade80" filter="url(#glow)"/>
+<rect x="364" y="64" width="332" height="527" rx="20" fill="none" stroke="#4ade80" stroke-opacity=".18"/>
+<rect x="370" y="70" width="320" height="515" rx="16" fill="#060a16" stroke="#4ade80" stroke-opacity=".75" stroke-width="1.5"/>
+<circle cx="530.0" cy="50" r="34" fill="#4ade80" opacity=".35" filter="url(#soft)"/>
+<circle cx="530.0" cy="50" r="30" fill="#060a16" stroke="#4ade80" stroke-width="2" filter="url(#glow)"/>
+<g transform="translate(530.0,50)" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M-10,-15 H4 L11,-8 V15 H-10Z"/><path d="M4,-15 V-8 H11"/><path d="M-5,-1 H6 M-5,5 H6 M-5,11 H2"/></g>
+<text x="530.0" y="120" text-anchor="middle" font-size="16" font-weight="700" letter-spacing="1" fill="#4ade80">DOCUMENT PROCESSING</text>
+<rect x="384" y="142" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="154" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">pp</text>
+<text x="448" y="169" font-size="15.5" font-weight="500" fill="#eef1fb">pdfplumber</text>
+<text x="448" y="188" font-size="11.5" fill="#8a94b4">rule-based text, no ML models</text>
+<rect x="384" y="214" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="226" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">pd</text>
+<text x="448" y="241" font-size="15.5" font-weight="500" fill="#eef1fb">pypdfium2 + Pillow</text>
+<text x="448" y="260" font-size="11.5" fill="#8a94b4">renders each page to PNG</text>
+<rect x="384" y="286" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="298" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="322" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">VL</text>
+<text x="448" y="313" font-size="15.5" font-weight="500" fill="#eef1fb">Claude Vision (VLM)</text>
+<text x="448" y="332" font-size="11.5" fill="#8a94b4">one call per page, reads figures</text>
+<rect x="384" y="358" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="370" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="394" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">D</text>
+<text x="448" y="385" font-size="15.5" font-weight="500" fill="#eef1fb">Docling</text>
+<text x="448" y="404" font-size="11.5" fill="#8a94b4">optional backend, separate env</text>
+<rect x="384" y="430" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="442" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="466" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">M</text>
+<text x="448" y="457" font-size="15.5" font-weight="500" fill="#eef1fb">MinerU</text>
+<text x="448" y="476" font-size="11.5" fill="#8a94b4">optional backend, separate env</text>
+<rect x="384" y="502" width="292" height="62" rx="10" fill="#0b1122" stroke="#4ade80" stroke-opacity=".28"/>
+<rect x="396" y="514" width="38" height="38" rx="9" fill="#4ade80" fill-opacity=".14" stroke="#4ade80" stroke-opacity=".9"/>
+<text x="415" y="538" text-anchor="middle" font-size="14" font-weight="700" fill="#4ade80">MD</text>
+<text x="448" y="529" font-size="15.5" font-weight="500" fill="#eef1fb">Markdown per Paper</text>
+<text x="448" y="548" font-size="11.5" fill="#8a94b4">figures, tables, equations as text</text>
+<path d="M870.0,585 V618 Q870.0,648 840.0,648 H730" fill="none" stroke="#38bdf8" stroke-width="2.5" filter="url(#glow)"/>
+<circle cx="870.0" cy="585" r="4" fill="#38bdf8" filter="url(#glow)"/>
+<rect x="704" y="64" width="332" height="527" rx="20" fill="none" stroke="#38bdf8" stroke-opacity=".18"/>
+<rect x="710" y="70" width="320" height="515" rx="16" fill="#060a16" stroke="#38bdf8" stroke-opacity=".75" stroke-width="1.5"/>
+<circle cx="870.0" cy="50" r="34" fill="#38bdf8" opacity=".35" filter="url(#soft)"/>
+<circle cx="870.0" cy="50" r="30" fill="#060a16" stroke="#38bdf8" stroke-width="2" filter="url(#glow)"/>
+<g transform="translate(870.0,50)" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M0,-15 L14,-7 V8 L0,16 L-14,8 V-7Z"/><path d="M-14,-7 L0,1 L14,-7 M0,1 V16"/></g>
+<text x="870.0" y="120" text-anchor="middle" font-size="16" font-weight="700" letter-spacing="1" fill="#38bdf8">EXECUTION &amp; VERIFICATION</text>
+<rect x="724" y="142" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="154" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">DK</text>
+<text x="788" y="169" font-size="15.5" font-weight="500" fill="#eef1fb">Docker Sandbox</text>
+<text x="788" y="188" font-size="11.5" fill="#8a94b4">python:3.11-slim, bind-mounted code</text>
+<rect x="724" y="214" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="226" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">PT</text>
+<text x="788" y="241" font-size="15.5" font-weight="500" fill="#eef1fb">PyTorch 2.5.1</text>
+<text x="788" y="260" font-size="11.5" fill="#8a94b4">plain training loops, CPU image</text>
+<rect x="724" y="286" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="298" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="322" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">sk</text>
+<text x="788" y="313" font-size="15.5" font-weight="500" fill="#eef1fb">scikit-learn 1.5.2</text>
+<text x="788" y="332" font-size="11.5" fill="#8a94b4">SVMs, forests, classical models</text>
+<rect x="724" y="358" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="370" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="394" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">np</text>
+<text x="788" y="385" font-size="15.5" font-weight="500" fill="#eef1fb">pandas · NumPy · SciPy</text>
+<text x="788" y="404" font-size="11.5" fill="#8a94b4">tabular data, pinned versions</text>
+<rect x="724" y="430" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="442" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="466" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">HC</text>
+<text x="788" y="457" font-size="15.5" font-weight="500" fill="#eef1fb">Live Check-ups</text>
+<text x="788" y="476" font-size="11.5" fill="#8a94b4">halt unhealthy runs mid-training</text>
+<rect x="724" y="502" width="292" height="62" rx="10" fill="#0b1122" stroke="#38bdf8" stroke-opacity=".28"/>
+<rect x="736" y="514" width="38" height="38" rx="9" fill="#38bdf8" fill-opacity=".14" stroke="#38bdf8" stroke-opacity=".9"/>
+<text x="755" y="538" text-anchor="middle" font-size="14" font-weight="700" fill="#38bdf8">±</text>
+<text x="788" y="529" font-size="15.5" font-weight="500" fill="#eef1fb">Arithmetic Critic Verdict</text>
+<text x="788" y="548" font-size="11.5" fill="#8a94b4">pass / fail / inconclusive, no LLM</text>
+<path d="M1210.0,585 V618 Q1210.0,648 1180.0,648 H730" fill="none" stroke="#fbbf24" stroke-width="2.5" filter="url(#glow)"/>
+<circle cx="1210.0" cy="585" r="4" fill="#fbbf24" filter="url(#glow)"/>
+<rect x="1044" y="64" width="332" height="527" rx="20" fill="none" stroke="#fbbf24" stroke-opacity=".18"/>
+<rect x="1050" y="70" width="320" height="515" rx="16" fill="#060a16" stroke="#fbbf24" stroke-opacity=".75" stroke-width="1.5"/>
+<circle cx="1210.0" cy="50" r="34" fill="#fbbf24" opacity=".35" filter="url(#soft)"/>
+<circle cx="1210.0" cy="50" r="30" fill="#060a16" stroke="#fbbf24" stroke-width="2" filter="url(#glow)"/>
+<g transform="translate(1210.0,50)" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="0" cy="-10" rx="12" ry="5"/><path d="M-12,-10 V10 A12,5 0 0 0 12,10 V-10"/><path d="M-12,-3 A12,5 0 0 0 12,-3 M-12,4 A12,5 0 0 0 12,4"/></g>
+<text x="1210.0" y="120" text-anchor="middle" font-size="16" font-weight="700" letter-spacing="1" fill="#fbbf24">BACKEND &amp; TOOLING</text>
+<rect x="1064" y="142" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="154" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">Py</text>
+<text x="1128" y="169" font-size="15.5" font-weight="500" fill="#eef1fb">Python 3.13</text>
+<text x="1128" y="188" font-size="11.5" fill="#8a94b4">one folder per pipeline stage</text>
+<rect x="1064" y="214" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="226" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="250" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">uv</text>
+<text x="1128" y="241" font-size="15.5" font-weight="500" fill="#eef1fb">uv</text>
+<text x="1128" y="260" font-size="11.5" fill="#8a94b4">one lock, per-stage extras</text>
+<rect x="1064" y="286" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="298" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="322" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">{ }</text>
+<text x="1128" y="313" font-size="15.5" font-weight="500" fill="#eef1fb">JSON Structured Outputs</text>
+<text x="1128" y="332" font-size="11.5" fill="#8a94b4">shared ReproState memory</text>
+<rect x="1064" y="358" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="370" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="394" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">St</text>
+<text x="1128" y="385" font-size="15.5" font-weight="500" fill="#eef1fb">Streamlit Viewer</text>
+<text x="1128" y="404" font-size="11.5" fill="#8a94b4">dashboard over every stage</text>
+<rect x="1064" y="430" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="442" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="466" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">lg</text>
+<text x="1128" y="457" font-size="15.5" font-weight="500" fill="#eef1fb">loguru</text>
+<text x="1128" y="476" font-size="11.5" fill="#8a94b4">per-page, per-claim logging</text>
+<rect x="1064" y="502" width="292" height="62" rx="10" fill="#0b1122" stroke="#fbbf24" stroke-opacity=".28"/>
+<rect x="1076" y="514" width="38" height="38" rx="9" fill="#fbbf24" fill-opacity=".14" stroke="#fbbf24" stroke-opacity=".9"/>
+<text x="1095" y="538" text-anchor="middle" font-size="14" font-weight="700" fill="#fbbf24">QA</text>
+<text x="1128" y="529" font-size="15.5" font-weight="500" fill="#eef1fb">ruff · mypy · pytest</text>
+<text x="1128" y="548" font-size="11.5" fill="#8a94b4">strict typing, replay tests, pre-commit</text>
+<circle cx="700" cy="648" r="34" fill="#4ade80" opacity=".3" filter="url(#soft)"/>
+<circle cx="700" cy="648" r="29" fill="#060a16" stroke="url(#hubline)" stroke-width="2.5" filter="url(#glow)"/>
+<text x="700" y="654" text-anchor="middle" font-size="18" font-weight="700" fill="#e8fff1">&lt;/&gt;</text>
+<path d="M700,677 V705" stroke="#38bdf8" stroke-width="2" filter="url(#glow)"/>
+<rect x="24" y="699" width="1352" height="212" rx="22" fill="none" stroke="#38bdf8" stroke-opacity=".18"/>
+<rect x="30" y="705" width="1340" height="200" rx="18" fill="#060a16" stroke="#38bdf8" stroke-opacity=".6" stroke-width="1.5"/>
+<path d="M169.71428571428572,807 H265.14285714285717" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M263.14285714285717,801 L271.14285714285717,807 L263.14285714285717,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M361.14285714285717,807 H456.57142857142856" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M454.57142857142856,801 L462.57142857142856,807 L454.57142857142856,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M552.5714285714286,807 H648.0" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M646.0,801 L654.0,807 L646.0,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M744.0,807 H839.4285714285714" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M837.4285714285714,801 L845.4285714285714,807 L837.4285714285714,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M935.4285714285714,807 H1030.857142857143" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M1028.857142857143,801 L1036.857142857143,807 L1028.857142857143,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1126.857142857143,807 H1222.2857142857142" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3 5"/>
+<path d="M1220.2857142857142,801 L1228.2857142857142,807 L1220.2857142857142,813" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1082.857142857143,771 C1082.857142857143,737 700.0,737 700.0,767" fill="none" stroke="#f472b6" stroke-width="1.6" stroke-dasharray="5 5"/>
+<path d="M694.0,760 L700.0,769 L706.0,760" fill="none" stroke="#f472b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="813.4285714285714" y="726" width="156" height="20" rx="10" fill="#060a16"/>
+<text x="891.4285714285714" y="740" text-anchor="middle" font-size="11.5" fill="#f9a8d4">retry loop with feedback</text>
+<rect x="89.71428571428571" y="771" width="72" height="72" rx="18" fill="#a78bfa" opacity=".22" filter="url(#soft)"/>
+<rect x="93.71428571428571" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#a78bfa" stroke-width="2" filter="url(#glow)"/>
+<text x="125.71428571428571" y="813" text-anchor="middle" font-size="16" font-weight="700" fill="#a78bfa">PDF</text>
+<text x="125.71428571428571" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#a78bfa">INPUT</text>
+<text x="125.71428571428571" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">PDF paper</text>
+<rect x="281.14285714285717" y="771" width="72" height="72" rx="18" fill="#4ade80" opacity=".22" filter="url(#soft)"/>
+<rect x="285.14285714285717" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#4ade80" stroke-width="2" filter="url(#glow)"/>
+<text x="317.14285714285717" y="813" text-anchor="middle" font-size="16" font-weight="700" fill="#4ade80">MD</text>
+<text x="317.14285714285717" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#4ade80">OCR</text>
+<text x="317.14285714285717" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Pages to Markdown</text>
+<rect x="472.57142857142856" y="771" width="72" height="72" rx="18" fill="#22d3ee" opacity=".22" filter="url(#soft)"/>
+<rect x="476.57142857142856" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#22d3ee" stroke-width="2" filter="url(#glow)"/>
+<text x="508.57142857142856" y="813" text-anchor="middle" font-size="16" font-weight="700" fill="#22d3ee">{ }</text>
+<text x="508.57142857142856" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#22d3ee">READER</text>
+<text x="508.57142857142856" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Claims &amp; architecture</text>
+<rect x="664.0" y="771" width="72" height="72" rx="18" fill="#38bdf8" opacity=".22" filter="url(#soft)"/>
+<rect x="668.0" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#38bdf8" stroke-width="2" filter="url(#glow)"/>
+<text x="700.0" y="813" text-anchor="middle" font-size="16" font-weight="700" fill="#38bdf8">&lt;/&gt;</text>
+<text x="700.0" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#38bdf8">CODER</text>
+<text x="700.0" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Training script</text>
+<rect x="855.4285714285714" y="771" width="72" height="72" rx="18" fill="#fbbf24" opacity=".22" filter="url(#soft)"/>
+<rect x="859.4285714285714" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#fbbf24" stroke-width="2" filter="url(#glow)"/>
+<path d="M883.4285714285714,794 L904.4285714285714,807 L883.4285714285714,820Z" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linejoin="round"/>
+<text x="891.4285714285714" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#fbbf24">RUNNER</text>
+<text x="891.4285714285714" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Docker execution</text>
+<rect x="1046.857142857143" y="771" width="72" height="72" rx="18" fill="#f472b6" opacity=".22" filter="url(#soft)"/>
+<rect x="1050.857142857143" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#f472b6" stroke-width="2" filter="url(#glow)"/>
+<text x="1082.857142857143" y="813" text-anchor="middle" font-size="22" font-weight="700" fill="#f472b6">±</text>
+<text x="1082.857142857143" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#f472b6">CRITIC</text>
+<text x="1082.857142857143" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Fidelity verdict</text>
+<rect x="1238.2857142857142" y="771" width="72" height="72" rx="18" fill="#fb923c" opacity=".22" filter="url(#soft)"/>
+<rect x="1242.2857142857142" y="775" width="64" height="64" rx="16" fill="#0b1122" stroke="#fb923c" stroke-width="2" filter="url(#glow)"/>
+<path d="M1261.2857142857142,808 L1270.2857142857142,817 L1288.2857142857142,797" fill="none" stroke="#fb923c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1274.2857142857142" y="865" text-anchor="middle" font-size="14" font-weight="700" letter-spacing="1" fill="#fb923c">REPORT</text>
+<text x="1274.2857142857142" y="884" text-anchor="middle" font-size="12" fill="#aab3cf">Replication report</text>
+</svg>

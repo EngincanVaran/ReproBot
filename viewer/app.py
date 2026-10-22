@@ -62,6 +62,7 @@ from loguru import logger
 
 from coder.pipeline import MissingPaperMarkdownError, ScriptSyntaxError
 from coder.pipeline import run_pipeline as run_coder_pipeline
+from critic.blocking import pass_blocking_reasons
 from critic.checks import run_checks
 from critic.claims import group_claims
 from critic.history import write_history
@@ -73,6 +74,15 @@ from reader.pipeline import run_pipeline as run_reader_pipeline
 from report.pipeline import REPORT_FILENAME, SUMMARY_FILENAME, build_report, state_files
 from report.render import render_index
 from report.summary import render_summary
+from viewer.full_run import (
+    JOBS_DIR,
+    STAGES,
+    job_alive,
+    job_dir,
+    read_status,
+    start_job,
+    stop_job,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_DIR = REPO_ROOT / "dataset"
@@ -197,7 +207,11 @@ def load_run_outputs(paper: str) -> tuple[dict[str, Any] | None, dict[str, Any] 
                 "failed_stage": attempt.get("failed_stage"),
                 "exit_code": attempt.get("exit_code"),
             }
-        critic = critic or state.get("critic_output")
+        loop_critic = state.get("critic_output") or {}
+        if critic is not None and not critic.get("review") and loop_critic.get("review"):
+            # A verdict re-run from this page carries no review; the run's review still applies.
+            critic = {**critic, "review": loop_critic["review"]}
+        critic = critic or loop_critic or None
     return runner, critic
 
 
@@ -908,7 +922,17 @@ def render_critic(
     runner_data: dict[str, Any] | None,
 ) -> None:
     verdict = str(critic_data.get("verdict", "unknown"))
-    _VERDICT_BANNERS.get(verdict, st.info)(f"Verdict: **{verdict}** - {critic_data.get('reason')}")
+    blocked = pass_blocking_reasons(critic_data.get("review")) if verdict == "pass" else []
+    if blocked:
+        st.warning(
+            "Verdict: **pass, blocked by the review** - the number matches, but the script is "
+            "not the paper's method or data, so this is not a reproduction:\n"
+            + "\n".join(f"- {reason}" for reason in blocked)
+        )
+    else:
+        _VERDICT_BANNERS.get(verdict, st.info)(
+            f"Verdict: **{verdict}** - {critic_data.get('reason')}"
+        )
 
     unit = str(critic_data.get("unit") or "")
     st.caption(
@@ -980,6 +1004,18 @@ def render_paper(paper: str) -> None:
 
     if not reader_path.exists() and not ocr_path.exists():
         st.warning(f"No pipeline output yet for '{paper}'.")
+        pdf_path = next(
+            (
+                source / f"{paper}.pdf"
+                for source in (DATASET_DIR, EXTRA_DIR, UPLOADS_DIR)
+                if (source / f"{paper}.pdf").exists()
+            ),
+            None,
+        )
+        if pdf_path is not None:
+            st.caption("Calls the Anthropic API once per page (Claude reads each page image).")
+            if st.button("Run OCR extraction", key=f"run_ocr_{paper}"):
+                run_ocr_extraction(pdf_path, paper, max_pages=None)
         return
 
     coder_failed_path = coder_failed_json_path(paper)
@@ -1055,6 +1091,9 @@ def render_paper(paper: str) -> None:
             if st.button("Generate code", key=f"run_coder_{paper}"):
                 run_coder_extraction(reader_path, paper)
 
+        if coder_data is not None and coder_data.get("syntax_ok", True):
+            render_run_training_button(paper)
+
         if runner_data is not None:
             st.markdown(
                 f"- Runner status: **{runner_data.get('status')}** "
@@ -1114,15 +1153,183 @@ def render_paper(paper: str) -> None:
             st.markdown(load_markdown(str(ocr_path), ocr_path.stat().st_mtime))
 
 
+SSH_FILE = JOBS_DIR / "gpu_ssh.txt"
+
+
+def paper_pdf(paper: str) -> Path | None:
+    for source in (DATASET_DIR, EXTRA_DIR, UPLOADS_DIR):
+        if (source / f"{paper}.pdf").exists():
+            return source / f"{paper}.pdf"
+    return None
+
+
+def render_compute_sidebar() -> None:
+    """Where the Orchestrator runs. The SSH command is kept on disk so it survives reloads."""
+    st.sidebar.header("Compute")
+    target = st.sidebar.radio(
+        "Run training on",
+        ["gpu", "local"],
+        format_func=lambda t: "GPU box (SSH)" if t == "gpu" else "Local Docker (CPU)",
+        key="compute_target",
+    )
+    if target == "gpu":
+        saved = SSH_FILE.read_text().strip() if SSH_FILE.exists() else ""
+        ssh = st.sidebar.text_input(
+            "SSH command (from Vast)", value=saved, placeholder="ssh -p 44683 root@1.2.3.4"
+        )
+        if ssh != saved:
+            JOBS_DIR.mkdir(parents=True, exist_ok=True)
+            SSH_FILE.write_text(ssh)
+        st.sidebar.caption(
+            "Code, this paper's inputs and `.env` (the API key, for retries and the Critic) "
+            "are copied to the box. It bills while idle - stop it on Vast when done."
+        )
+    st.sidebar.selectbox(
+        "Highest stage",
+        ["full", "capped", "smoke", "probe"],
+        index=0 if target == "gpu" else 1,
+        key="max_stage",
+        help="probe -> smoke -> capped -> full. 'full' is the paper's real setup.",
+    )
+
+
+def current_ssh() -> str | None:
+    if st.session_state.get("compute_target") != "gpu" or not SSH_FILE.exists():
+        return None
+    return SSH_FILE.read_text().strip() or None
+
+
+STATE_ICONS = {"done": "✅", "skipped": "⏭️", "running": "⏳", "failed": "❌"}
+
+
+def render_full_run(paper: str) -> None:
+    # Collapsed unless this paper has a job, so it stays out of the way when browsing.
+    with st.expander("Run full pipeline", expanded=read_status(paper) is not None):
+        render_full_run_body(paper)
+
+
+def render_full_run_body(paper: str) -> None:
+    st.caption(
+        "OCR → Reader → Coder → Orchestrator (Runner + Critic + retries) → Report. "
+        "Runs in the background: refresh or close the tab freely. Stages already on "
+        "disk are skipped."
+    )
+    pdf = paper_pdf(paper)
+    alive = job_alive(paper)
+    target = st.session_state.get("compute_target", "gpu")
+    ssh = current_ssh()
+    cols = st.columns([1, 1, 4])
+    if pdf is None:
+        cols[2].warning("No PDF found for this paper.")
+    elif cols[0].button("▶ Run full pipeline", disabled=alive, key=f"full_{paper}"):
+        if target == "gpu" and not ssh:
+            st.error("Paste the GPU box's SSH command in the sidebar first.")
+        else:
+            start_job(paper, pdf, target, ssh, st.session_state.get("max_stage", "full"))
+            st.rerun()
+    if cols[1].button("■ Stop", disabled=not alive, key=f"stop_{paper}"):
+        stop_job(paper, ssh)
+        st.rerun()
+    render_job_progress(paper)
+
+
+def render_run_training_button(paper: str) -> None:
+    """Start the same background job as 'Run full pipeline'; with code already on disk,
+    OCR/Reader/Coder are skipped and it goes straight to the Orchestrator."""
+    target = st.session_state.get("compute_target", "gpu")
+    stage = st.session_state.get("max_stage", "full")
+    where = "the GPU box" if target == "gpu" else "local Docker"
+    st.caption(
+        f"Runs the script on {where} up to `{stage}` (sidebar), with the Critic and retries, "
+        "then writes the report. In the background - progress shows under "
+        "'Run full pipeline' above."
+    )
+    pdf = paper_pdf(paper)
+    alive = job_alive(paper)
+    if st.button(
+        "Training running…" if alive else "Run training",
+        key=f"run_training_{paper}",
+        disabled=alive or pdf is None,
+    ):
+        ssh = current_ssh()
+        if target == "gpu" and not ssh:
+            st.error("Paste the GPU box's SSH command in the sidebar first.")
+        elif pdf is not None:
+            start_job(paper, pdf, target, ssh, stage)
+            st.rerun()
+
+
+def render_critic_line(critic: dict[str, Any]) -> None:
+    """'done' only means the run finished; this says whether the paper's number held."""
+    verdict = critic.get("verdict")
+    if not verdict:
+        return
+    numbers = ""
+    if critic.get("reproduced") is not None and critic.get("claimed") is not None:
+        unit = critic.get("unit", "")
+        numbers = f": {critic['reproduced']:.4g}{unit} vs the paper's {critic['claimed']:.4g}{unit}"
+    if verdict == "pass" and critic.get("blocked"):
+        st.warning(
+            f"**Critic: pass blocked{numbers}.** The number matches, but the review found "
+            "the script is not the paper's method or data, so this is not a reproduction."
+        )
+    elif verdict == "pass":
+        st.success(f"**Critic: pass{numbers}**")
+    elif verdict == "fail":
+        st.error(f"**Critic: fail{numbers}**")
+    else:
+        st.info(f"**Critic: {verdict}{numbers}**")
+
+
+@st.fragment(run_every=5)
+def render_job_progress(paper: str) -> None:
+    status = read_status(paper)
+    if status is None:
+        return
+    alive = job_alive(paper)
+    state = status.get("state", "?")
+    if state == "running" and not alive:
+        state = "died"
+    where = f"{status.get('target', '?')}, up to {status.get('max_stage', '?')}"
+    label = {
+        "running": "⏳ running",
+        "done": "✅ done",
+        "failed": "❌ failed",
+        "stopped": "■ stopped",
+        "died": "❌ job process ended unexpectedly",
+    }.get(state, state)
+    st.markdown(f"**Job:** {label} ({where}) · last update {status.get('updated', '?')}")
+    if status.get("error"):
+        st.error(status["error"])
+    render_critic_line(status.get("critic") or {})
+    stages = status.get("stages", {})
+    cols = st.columns(len(STAGES))
+    for col, name in zip(cols, STAGES, strict=True):
+        info = stages.get(name)
+        icon = STATE_ICONS.get(info["state"], "") if info else "·"
+        col.markdown(f"{icon} **{name}**")
+        if info and info.get("detail"):
+            col.caption(info["detail"])
+    log_path = job_dir(paper) / "job.log"
+    if log_path.exists():
+        lines = log_path.read_text(errors="replace").splitlines()
+        st.code("\n".join(lines[-40:]) or "(no output yet)", language="text")
+    if state in ("done", "failed", "stopped", "died") and st.button(
+        "Refresh results", key=f"refresh_{paper}"
+    ):
+        st.rerun(scope="app")
+
+
 def main() -> None:
     st.set_page_config(page_title="ReproBot Pipeline Viewer", layout="wide")
     st.title("ReproBot Pipeline Viewer")
     st.caption(
         "Displays ocr/output/, reader/output/, coder/output/, and runner/output/ "
         "as-is; the import section below and the per-paper Overview buttons can "
-        "trigger the OCR/Reader/Coder stages, unmodified. Runner is CLI-only "
-        "(a real run can take up to 45 minutes) and shown here read-only."
+        "trigger the OCR/Reader/Coder stages, unmodified. 'Run full pipeline' takes a "
+        "paper through every stage as a background job, locally or on a GPU box."
     )
+    render_compute_sidebar()
 
     papers = list_papers()
     if not papers:
@@ -1136,6 +1343,7 @@ def main() -> None:
     render_import_section()
     st.divider()
     selected = st.selectbox("Select a paper", papers)
+    render_full_run(selected)
     render_paper(selected)
 
 

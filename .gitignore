@@ -274,3 +274,10 @@ coder/output-e2e/
 orchestrator/output-e2e/
 critic/output-e2e/
 report/output-e2e/
+
+# viewer/full_run.py background job state
+viewer/jobs/
+
+# GPU-box Coder output and the Critic fail-path test runs (2026-09-25)
+coder/output-gpu/
+orchestrator/output_failtest*/
