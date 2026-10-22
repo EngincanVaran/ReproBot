@@ -109,6 +109,7 @@ would have reproduced a paper:
 | `stuck_at_chance` | after warmup (max(3, 10% of the run)), the metric is not meaningfully past chance for 3 records running — skipped when the claim itself sits near chance | full |
 | `diverged` | the loss is >1.5x its best **and** the metric has kept <50% of its best gain over chance, for 3 records running | full |
 | `no_first_record` | the stage has been **silent** — no record written, no dataset arriving — for longer than its per-stage deadline | capped, full |
+| `hang` (`check_hang`, live only) | records had been arriving, then none for longer than max(1800 s, 10x the longest wait so far) | full, seed2, seed3 |
 
 "Meaningfully past chance" is max(3 SEs, 10% of the distance from chance to a perfect
 score). `no_progress` was first allowed in `capped` too, and end-to-end testing
@@ -177,6 +178,27 @@ resetting the clock until the stage's own timeout ends it. The walk is bounded a
 20,000 entries and runs only while a stage is still silent, so the check cannot become
 the slow part of the run.
 
+### `check_hang` — silence after records have started
+
+`no_first_record` disarms at the first record; `check_hang` takes over from there and
+fires when the records stop arriving. It halts a `full`/`seed2`/`seed3` stage when no
+new record has arrived for longer than `max(1800 s, 10 x the longest wait so far)`,
+and only after records have arrived at least twice. Three choices keep it
+conservative:
+
+- **The watcher's clock, not the script's.** `elapsed_seconds` is unusable: WRN's
+  history omits it, and the SVM guide's script restarted it for its second grid.
+- **The longest wait, not the typical one, plus a floor.** In the SVM guide's real
+  `full` run the slowest fold took 5.33 s against a median of 0.15 s - 35x. The wait
+  before the first record (dataset download, model setup) counts as a wait too.
+- **Silence after the final step is left to the stage timeout.** A final evaluation
+  or a refit on all the data has no cadence to compare against.
+
+It needs the time, so only the live watcher asks it; it is never judged after exit.
+The cheaper stages do not get it because their timeouts are no longer than its floor.
+A WRN-28-10 epoch on the dev machine's CPU (~2.6 h) puts the limit past the 24 h
+stage timeout, so a run that slow is never hang-halted.
+
 **Verified** (`tests/test_checkups.py`, 33 replays of real curves and real timings; plus
 Docker):
 
@@ -192,6 +214,10 @@ Docker):
 | A pre-contract (`Trainer`-era) script, silent for 24 h | never halted — the rule is not armed for it |
 | Soft tree, sign-flipped loss, **live `full` run in Docker** | halted at epoch 1 of 40, container killed 0.3 s after the record — ~70 min saved |
 | Same fault through the Orchestrator | halted in `probe` after 5 s → evidence fed to the Coder → regenerated script passed to `capped`, `success` |
+| SVM guide's real `full` cadence (192 records) through `check_hang` | never halted |
+| WRN-28-10 at its real GPU pace (61 s/epoch), then silence | halted 1801 s after the last record, `hang` |
+| Stand-in process (no Docker) that writes 4 records and then sleeps, through `run_stage`'s real watcher, floor lowered to 3 s | `full`: halted, `hang`, process killed; `capped`: left to the timeout; a process that exits normally: `success` |
+| The same stand-in, now four `test_watcher_*` tests: records-then-silence, never reports, healthy exit, silent `capped` | `hang`, `no_first_record`, `success`, `timeout` — both silence checks through one watcher loop |
 
 ## Class architecture
 

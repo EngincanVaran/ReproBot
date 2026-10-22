@@ -4,11 +4,35 @@ Living tracker. Updated by hand as things land; the narrative history with full 
 lives in [`docs/agent-log.md`](docs/agent-log.md), and each stage's own README holds the
 deep version of its known issues.
 
-**Last updated:** 2026-09-14 · `main` · **4th progress-report period** (everything since 2026-09-14)
+**Last updated:** 2026-10-22 · branch `mert/critic-wired` = `main` (2026-09-14) + Mert's GPU, viewer and Critic-UI work · **4th progress-report period**
 
 ---
 
 ## Resume here
+
+**2026-10-22: eleven new papers through the whole pipeline** (OCR → Reader → Coder →
+Orchestrator + Critic → Report), several on the GPU box via `viewer/full_run.py`:
+
+| Paper | Fidelity | ReproBot vs paper |
+|---|---|---|
+| Pang & Lee 2002 (SVM, unigrams) | **pass** | 84.21% vs 82.9% (mean of 3, ±1.76) |
+| Kim 2014 (text CNN) | **pass** | 80.43% vs 81.5% (mean of 10, ±1.12) |
+| DenseNet 2016 | **pass** | 5.37% vs 5.24% error (±0.45) |
+| GCN 2016 (Cora) | **pass** | 81.19% vs 81.5% (mean of 10, ±0.78) |
+| TCN 2018 | fail | 98.76% vs 99% (±0.20) |
+| fastText 2016 | fail | 87.45% vs 91.5% (±0.64) |
+| Tang 2013 (claim 11.9%, not the MNIST 0.87%) | fail | 14.15% vs 11.9% error (±0.65) |
+| XGBoost 2016 | fail | AUC 0.8292 vs 0.8304 (mean of 3, ±0.0005) |
+| Network In Network | not judged | 4 attempts, all halted by check-ups (`non_finite`, `no_progress`, `stuck_at_chance`) |
+| Breiman, Random Forests | not judged | Reader returned no claims; Coder invented a claim_id (now gated) |
+| Stochastic Depth 2016 | running | `full` on the RTX 4060 Ti, ~2.2 h, learning normally |
+
+Open from today: NIN never trains at full; the XGBoost fidelity retry died with the Coder
+returning no `script_content` three times (likely max_tokens, a new silent failure);
+XGBoost's ±0.0005 tolerance makes a 0.001 AUC gap a fail; Breiman needs the Reader re-run
+with the raised claims `max_tokens`; `report/output/SUMMARY.md` was rebuilt for XGBoost only.
+Fixed today: claim-target gates, pass-blocking reviews (Pang & Lee's fabricated-data pass),
+xgboost in both images, VLM content-filter fallback.
 
 **Phase 3 is done.** Five papers across five model families were replicated at full fidelity,
 the third progress report is written (`docs/progress-reports/third-progress-report/`), and
@@ -59,7 +83,8 @@ and text classification from a plain corpus URL.
 | Hsu/Chang/Lin SVM guide | RBF SVM | svmguide1 96.9% | **96.625%** (rerun 2026-09-14 with check-ups: **96.925%**) | Orchestrated, 1 auto-repair, 73 s; `SVC` at the paper's C=γ=2 reproduces 66.925 / 96.15 / 96.875% **exactly**; the grid search's pick varies with fold assignment |
 | Fashion-MNIST (Xiao 2017) | Random forest | 0.873, mean of 5 | **0.8773** (0.8753–0.8792) | Orchestrated, 0 retries, 3.3 min |
 | Frosst & Hinton 2017 | Soft decision tree | MNIST 94.45% | **95.11%** | Orchestrated, 0 retries, 70 min; needed manual fix of the paper's misprinted loss (Eq. 3). Regenerated 2026-09-14 under the new prompt, the Coder implemented the correct loss on its own (verified to `capped` only) |
-| Network In Network, WRN | CIFAR-10 CNNs | — | smoke only | Full runs need a GPU (~22 days/WRN run on CPU) |
+| Wide Residual Networks | WRN-28-10, CIFAR-10 | Test error 4.00% (median of 5) | **3.83%** | `full` on a rented RTX 4090 (Vast.ai), 3.4 h, ~$1.50, one seed. Critic **pass** (±0.39), review **faithful**. Made with the *old* HF-`Trainer` Coder, before the plain-loop rewrite; regenerate under the new Coder to run it through the loop. The eval-count guard found the script scored 9,984 of 10,000 test images |
+| Network In Network | CIFAR-10 CNN | — | smoke only | Not yet run at full on the GPU |
 
 Since 2026-09-14 every row is judged by `critic/`: Tang, SVM guide, Fashion-MNIST, soft tree and
 Wijaya all **pass**. Fashion-MNIST and the soft tree exceed their claims. Wijaya passes on a wide
@@ -97,8 +122,8 @@ the unstated split. Wijaya's third run is the seed escalation working unprompted
 | `runner/` | ✅ built — **live check-ups** judge training health while it runs (`halted` status) | every stage incl. `full`, 7 papers; live kill verified |
 | `orchestrator/` | ✅ built | 6 papers to `success` (NIN, WRN at smoke; Wijaya, SVM guide, Fashion-MNIST, soft tree at full); 3 real defects auto-repaired |
 | `critic/` | ✅ v1 arithmetic verdicts + v2 Opus review (cited findings, guards, `fix` route) | 5 real results replayed (all match by-hand verdicts); Wijaya end to end (inconclusive → seeds → pass); 25 tests |
-| `report/` | ✅ built 2026-09-20 — Markdown + SVG curve, claim table, gap, review, timeline | generated from the real Wijaya state; 14 tests |
-| `viewer/` | 🟡 Mert's branch `origin/mert/runner-agent`, not merged | — |
+| `report/` | ✅ built 2026-09-20 — Markdown + SVG curve, claim table, gap, review, timeline, cross-run summary | generated from the real Wijaya state; main's implementation kept at the 2026-10-18 merge (this branch's parallel v1 dropped) |
+| `viewer/` | ✅ merged with main 2026-10-18 (Mert's `runner-agent` + `critic-agent` work) | Runner tab, Critic tab, verdict and review buttons; Report tab now drives main's `report/` (reports only papers with an Orchestrator `state.json`) |
 
 ---
 
@@ -114,11 +139,15 @@ the unstated split. Wijaya's third run is the seed escalation working unprompted
 - [x] **Ladder for models without epochs** — `model_family` → classical `capped` uses 5,000/2,000
       rows (RF capped 0.8435 vs smoke 0.776, previously identical).
 - [x] Coder: capped subsets seeded random + stratified (svmguide1 first-N-rows single-class crash).
+- [x] **Hang check** (2026-10-01) — `check_hang` halts a `full`/`seed2`/`seed3` stage whose records
+      stop arriving for longer than max(1800 s, 10 x the longest wait so far), on the watcher's
+      clock. It covers silence *after* records start; `no_first_record` covers silence *before*
+      the first one. **Not yet seen firing in Docker** (daemon was down).
 - [ ] **Follow-ups:** regenerate the older scripts (NIN, WRN, Tang, Wijaya) so they write history
       — until then `no_first_record` is disarmed for them, so a legacy hang is bounded only by the
-      stage budget; keep calibrating thresholds from every halt's logged evidence (one false
-      positive already found and fixed end to end). ~~A "no record for too long" hang rule~~ —
-      done 2026-10-08, see `runner/`'s section below.
+      stage budget; run one deliberately hung script in Docker to see `hang` kill a real container;
+      keep calibrating thresholds from every halt's logged evidence (one false positive already
+      found and fixed end to end).
 - [ ] **`no_first_record` has never fired in Docker.** It is verified by replay only (the measured
       cold fetch, the SVC silence, the disarm paths); the live kill path it uses is the same one
       the other six rules and the timeout already exercise.
@@ -202,12 +231,13 @@ approved plan and are done, except where marked. Results are in `critic/README.m
       Tang's momentum and `C` were flagged nowhere.
 - [ ] **Reader handles dataset/benchmark papers** — Fashion-MNIST's first pass kept 0 of 124 rows
       (no "own method"); only the validator's retry recovered 26 claims.
-- [ ] **Secure GPU compute** for the CIFAR-10 set.
-- [ ] **Report generator** — `orchestrator/state.py` already carries everything.
+- [x] **Secure GPU compute** for the CIFAR-10 set — done 2026-09-24: `runner --gpu` + `runner/Dockerfile.cuda`, verified on a Vast.ai VM (RTX 4090, x86_64, driver 575, cu124). Measured ~61 s/epoch for WRN-28-10, so a full run is ~3.4 h. Vast's CIFAR-10 mirror is throttled per connection (~68 kB/s); parallel range requests are ~8x faster.
+- [x] **Report generator** — `report/` v1 built. Open: judge and show *every* claim a run can speak to; an optional Sonnet gap paragraph; a link from the viewer; regenerate on each run automatically.
 - [ ] **Single entry point** — PDF through all stages; blocked by the exit-code bug below.
-- [ ] **Review and merge Mert's `viewer/`** (`origin/mert/runner-agent`) — reconcile
-      `pyproject.toml`/`uv.lock` first (it predates `dc5a541`); extend it to Runner/Orchestrator
-      output and learning curves.
+- [x] **Review and merge Mert's `viewer/`** — merged on `mert/critic-wired`, `pyproject.toml`/`uv.lock` reconciled.
+- [ ] **Extend `viewer/` to Orchestrator output** (attempts, `state.json`, Critic seeds/fix loop) — it shows Runner and Critic output only.
+- [ ] **Regenerate WRN under the current Coder and run it through `orchestrator/` with `--gpu`**, so the Critic runs inside the loop on a real CIFAR-10 result (~3.4 h GPU).
+- [ ] **Test the Critic's fail path on a real failure** — e.g. the old WRN script with the LR-units bug (epoch milestones stepped per optimizer step, LR collapses to 0.0008 in half an epoch). It passed every gate; only a real run showed it.
 - [ ] **Refresh the handouts and claude.ai artifacts** — all predate the generalization work.
 - [ ] Second progress report's uncatalogued rendering issues (low priority).
 
@@ -316,8 +346,8 @@ Anything marked **cost** is actively wasting money or time on every run.
 
 ## Blockers and constraints
 
-- **GPU compute gates fidelity for the CIFAR-10 papers** — ~22 days per real WRN run on this CPU.
-  CPU-sized papers run in 73 s to 70 min.
+- **GPU compute for the CIFAR-10 papers is rented, not owned** — ~22 days per WRN run on this CPU, ~3.4 h on a rented RTX 4090
+  (~$0.44/hr on Vast.ai, instances bill while idle). CPU-sized papers run in 73 s to 70 min.
 - **The dev machine cannot run generated scripts natively** (Intel Mac torch trap) — this is *why*
   `runner/` uses Docker. See CLAUDE.md's Tooling section.
 - **Docker Desktop isn't always running** — `open -a Docker` starts it, unless it's waiting on a

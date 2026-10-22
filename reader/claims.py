@@ -208,7 +208,10 @@ class ClaimsExtractor(Extractor[ClaimsExtraction]):
             client,
             log_prefix="claims",
             model=MODEL,
-            max_tokens=8192,
+            # 8192 truncated Breiman's Random Forests (75 candidate results) before the
+            # claims list, and the whole extraction came back empty. Kept under ~21k so the
+            # SDK still allows a non-streaming request.
+            max_tokens=20000,
             tool=CLAIM_TOOL,
             user_content=f"{prompt}\n\n---\n\n{markdown_text}",
             required_keys=("tables_examined", "candidates_considered", "claims"),

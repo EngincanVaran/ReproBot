@@ -71,6 +71,19 @@ orchestrator = [
     "anthropic>=0.69",
     "python-dotenv>=1.0",
 ]
+# viewer/ is a Streamlit dashboard over the files ocr/, reader/, and coder/
+# have already written, plus buttons that call each stage's own entry point
+# (run_vlm / reader.run_pipeline / coder.run_pipeline) unmodified. It therefore
+# needs those stages' deps (anthropic + dotenv + pypdfium2 for the OCR import
+# path) alongside streamlit and pandas. No torch, so it stays in the managed
+# lock like the rest.
+viewer = [
+    "streamlit>=1.38",
+    "pandas>=2.2",
+    "anthropic>=0.69",
+    "pypdfium2>=4.30",
+    "python-dotenv>=1.0",
+]
 
 # The Critic's verdict is pure arithmetic, but its v2 review is one Claude call,
 # so it needs the same client as every other model-calling stage.
@@ -82,6 +95,7 @@ critic = [
 [dependency-groups]
 dev = [
     "mypy>=1.13",
+    "pandas-stubs>=2.2",
     "pre-commit>=4.0",
     "pytest>=9.1.1",
     "ruff>=0.8",
@@ -92,7 +106,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["ocr", "reader", "coder", "runner", "orchestrator", "critic", "report"]
+packages = ["ocr", "reader", "coder", "runner", "orchestrator", "critic", "report", "viewer"]
 
 [tool.ruff]
 line-length = 100

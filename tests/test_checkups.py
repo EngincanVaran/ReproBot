@@ -5,17 +5,28 @@ synthetic shape chosen to pass. The two failure modes of phase 3 must halt early
 every healthy run must never halt - a false halt kills a reproduction.
 """
 
+import contextlib
 import json
+import os
+import signal
+import sys
 from pathlib import Path
 
 import pytest
 
+import runner.checkups
+import runner.docker_runner
 from runner.checkups import (
+    HANG_FLOOR_SECONDS,
+    HANG_GAP_MULTIPLIER,
     PROGRESS_MARKER,
+    ArrivalClock,
     HistoryTail,
     ProgressRecord,
     SilenceClock,
+    check_hang,
     evaluate,
+    hang_limit,
     history_path_from_metrics,
     parse_record,
     writes_progress_history,
@@ -361,6 +372,134 @@ def test_svm_single_fit_never_halts() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Hang - records stop arriving. Timings below are measured, not invented.
+# --------------------------------------------------------------------------- #
+
+# Seconds between consecutive records of the SVM guide's real `full` run (192
+# records: two cross-validation grids, then the final fit), from the history
+# file's `elapsed_seconds`. The script restarted that clock for the second grid,
+# which is why the rule runs on the watcher's clock instead.
+SVM_FULL_GAPS = [
+    *(0.44, 0.43, 0.44, 0.47, 0.44, 0.44, 0.38, 0.29, 0.25, 0.28, 0.42, 0.44, 0.44, 0.44, 0.45),
+    *(0.4, 0.29, 0.21, 0.16, 0.19, 0.5, 0.43, 0.44, 0.44, 0.41, 0.29, 0.2, 0.15, 0.12, 0.15, 0.44),
+    *(0.49, 0.43, 0.38, 0.29, 0.21, 0.14, 0.11, 0.11, 0.13, 0.43, 0.46, 0.39, 0.29, 0.2, 0.19),
+    *(0.11, 0.11, 0.13, 0.16, 0.45, 0.61, 0.34, 0.21, 0.15, 0.13, 0.12, 0.12, 0.12, 0.14, 0.39),
+    *(0.29, 0.2, 0.21, 0.13, 0.13, 0.12, 0.12, 0.15, 0.19, 0.29, 0.2, 0.16, 0.13, 0.15, 0.13, 0.14),
+    *(0.17, 0.27, 0.32, 0.21, 0.15, 0.13, 0.14, 0.13, 0.2, 0.2, 0.38, 0.63, 0.61, 0.15, 0.14, 0.14),
+    *(0.14, 0.16, 0.24, 0.42, 1.03, 1.7, 1.18, 0.14, 0.14, 0.15, 0.17, 0.32, 0.53, 1.06, 3.38),
+    *(5.33, 2.08, 0.1, 0.11, 0.12, 0.13, 0.13, 0.14, 0.17, 0.16, 0.17, 0.11, 0.12, 0.12, 0.12),
+    *(0.13, 0.14, 0.14, 0.15, 0.17, 0.11, 0.12, 0.12, 0.13, 0.13, 0.13, 0.15, 0.19, 0.16, 0.12),
+    *(0.11, 0.13, 0.12, 0.13, 0.14, 0.15, 0.15, 0.16, 0.12, 0.11, 0.13, 0.13, 0.14, 0.13, 0.15),
+    *(0.16, 0.17, 0.11, 0.12, 0.13, 0.13, 0.13, 0.13, 0.15, 0.16, 0.21, 0.12, 0.12, 0.13, 0.13),
+    *(0.13, 0.14, 0.14, 0.16, 0.18, 0.11, 0.12, 0.12, 0.13, 0.14, 0.14, 0.15, 0.16, 0.17, 0.12),
+    *(0.12, 0.12, 0.14, 0.13, 0.14, 0.16, 0.16, 0.17, 0.1),
+]
+
+# WRN-28-10's real `full` run: 200 epochs in 3.4 h on an RTX 4090. Its history has
+# no `elapsed_seconds`, so this is the run's mean epoch, not a per-epoch reading.
+WRN_GPU_EPOCH_SECONDS = 3.4 * 3600 / 200
+# The same network measured on the dev machine's CPU: ~22 days for 200 epochs.
+WRN_CPU_EPOCH_SECONDS = 22 * 86400 / 200
+
+
+def epoch_run(
+    epochs_done: int, total: int, seconds_per_epoch: float
+) -> tuple[list[ProgressRecord], ArrivalClock, float]:
+    """A healthy run that has reported `epochs_done` epochs; returns (records, clock, now)."""
+    clock = ArrivalClock(0.0)
+    records = []
+    now = 0.0
+    for epoch in range(1, epochs_done + 1):
+        now += seconds_per_epoch
+        clock.note(now)
+        records.append(rec(epoch, total, loss=1.0 / epoch, eval_metric=40.0 / epoch, chance=90.0))
+    return records, clock, now
+
+
+def test_svm_real_cadence_never_hangs() -> None:
+    assert len(SVM_FULL_GAPS) == 192
+    clock = ArrivalClock(0.0)
+    records: list[ProgressRecord] = []
+    now = 0.0
+    for i, gap in enumerate(SVM_FULL_GAPS):
+        # Asked just before each record lands: the longest silence that record allowed.
+        assert check_hang(records, "full", clock, now + gap) is None
+        now += gap
+        clock.note(now)
+        records.append(
+            rec(i + 1, 191, kind="fold", eval_metric=96.0, higher_is_better=True, chance=50.0)
+        )
+    assert clock.arrivals == 192
+    assert clock.longest_gap == pytest.approx(5.33)
+
+
+def test_svm_real_cadence_is_why_the_limit_uses_the_longest_gap_and_a_floor() -> None:
+    """The slowest real fold took 35x the median one, so a limit built on the typical
+    gap would have killed this run. Built on the longest gap alone it would have been
+    a few seconds wide; at that scale the floor is what governs."""
+    ordered = sorted(SVM_FULL_GAPS)
+    median = ordered[len(ordered) // 2]
+    assert max(SVM_FULL_GAPS) > HANG_GAP_MULTIPLIER * median
+    assert HANG_GAP_MULTIPLIER * max(SVM_FULL_GAPS) < HANG_FLOOR_SECONDS
+    assert hang_limit(max(SVM_FULL_GAPS)) == HANG_FLOOR_SECONDS
+
+
+def test_wrn_gpu_run_hangs_only_past_the_floor() -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert HANG_GAP_MULTIPLIER * WRN_GPU_EPOCH_SECONDS < HANG_FLOOR_SECONDS
+    assert check_hang(records, "full", clock, now + HANG_FLOOR_SECONDS) is None
+    halt = check_hang(records, "full", clock, now + HANG_FLOOR_SECONDS + 1)
+    assert halt is not None
+    assert (halt.rule, halt.step, halt.kind) == ("hang", 50, "epoch")
+    assert "1801 s" in halt.message and "hang" in halt.feedback()
+
+
+def test_wrn_cpu_slow_epochs_raise_the_limit_above_the_floor() -> None:
+    records, clock, now = epoch_run(3, 200, WRN_CPU_EPOCH_SECONDS)
+    limit = hang_limit(clock.longest_gap)
+    assert limit == pytest.approx(HANG_GAP_MULTIPLIER * WRN_CPU_EPOCH_SECONDS)
+    assert limit > 86400  # past the full stage's own timeout: such a run is never hang-halted
+    assert check_hang(records, "full", clock, now + 3 * WRN_CPU_EPOCH_SECONDS) is None
+
+
+def test_slow_start_counts_as_a_gap() -> None:
+    # The measured cold CIFAR-10 download: 1707 s before the script did anything.
+    clock = ArrivalClock(0.0)
+    clock.note(1707.0 + WRN_GPU_EPOCH_SECONDS)
+    clock.note(1707.0 + 2 * WRN_GPU_EPOCH_SECONDS)
+    assert hang_limit(clock.longest_gap) == pytest.approx(10 * (1707.0 + WRN_GPU_EPOCH_SECONDS))
+
+
+@pytest.mark.parametrize("mode", ["probe", "smoke", "capped"])
+def test_hang_is_left_to_the_timeout_in_cheap_stages(mode: str) -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, mode, clock, now + 10 * HANG_FLOOR_SECONDS) is None
+
+
+@pytest.mark.parametrize("mode", ["seed2", "seed3"])
+def test_hang_applies_to_extra_seed_runs(mode: str) -> None:
+    records, clock, now = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, mode, clock, now + HANG_FLOOR_SECONDS + 1) is not None
+
+
+def test_hang_needs_two_arrivals() -> None:
+    records, clock, now = epoch_run(1, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, "full", clock, now + 10 * HANG_FLOOR_SECONDS) is None
+    assert check_hang([], "full", ArrivalClock(0.0), 10 * HANG_FLOOR_SECONDS) is None
+
+
+def test_silence_after_the_final_step_is_left_to_the_timeout() -> None:
+    records, clock, now = epoch_run(200, 200, WRN_GPU_EPOCH_SECONDS)
+    assert check_hang(records, "full", clock, now + 10 * HANG_FLOOR_SECONDS) is None
+
+
+def test_hang_is_never_judged_after_exit() -> None:
+    """`evaluate` is what runs after the process exits, and it has no clock."""
+    records, _, _ = epoch_run(50, 200, WRN_GPU_EPOCH_SECONDS)
+    assert evaluate(records, "full") is None
+
+
+# --------------------------------------------------------------------------- #
 # Mechanics
 # --------------------------------------------------------------------------- #
 
@@ -579,3 +718,97 @@ def test_pre_contract_script_cannot_arm_the_silence_rule(tmp_path: Path) -> None
     )
     assert writes_progress_history(current) is True
     assert writes_progress_history(tmp_path / "absent.py") is False
+
+
+# --------------------------------------------------------------------------- #
+# The live watcher in `DockerRunner.run_stage`
+# --------------------------------------------------------------------------- #
+#
+# The rules above are pure; this is the thread that feeds them. `run_stage` runs a
+# stand-in process instead of `docker run`, with the hang floor and the first-record
+# deadline shrunk to seconds, so the real watcher loop - both silence checks side by
+# side - is exercised without a daemon.
+
+STANDIN = """
+import json, os, sys, time
+paper, mode, count, gap, tail = sys.argv[1:6]
+open(os.path.join(paper, "pid"), "w").write(str(os.getpid()))
+for step in range(1, int(count) + 1):
+    time.sleep(float(gap))
+    with open(os.path.join(paper, f"metrics.{mode}.history.jsonl"), "a") as handle:
+        handle.write(json.dumps({
+            "step": step, "steps_total": 100, "kind": "epoch", "train_loss": 1.0 / step,
+            "eval_metric": 0.5 + step / 100, "metric": "accuracy", "higher_is_better": True,
+            "chance_metric": 0.1,
+        }) + "\\n")
+if tail == "sleep":
+    time.sleep(60)
+"""
+
+
+def run_standin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    records: int,
+    tail: str,
+    timeout: int = 30,
+    first_record: dict[str, float] | None = None,
+) -> runner.docker_runner.StageRun:
+    paper = tmp_path / "paper"
+    (paper / "logs").mkdir(parents=True)
+    (paper / "train.py").write_text(f"# writes {PROGRESS_MARKER} records\n", encoding="utf-8")
+    (paper / "standin.py").write_text(STANDIN, encoding="utf-8")
+    command = [sys.executable, str(paper / "standin.py"), str(paper), mode, str(records), "0.05"]
+    monkeypatch.setattr(runner.docker_runner, "build_run_command", lambda **_: [*command, tail])
+    monkeypatch.setattr(runner.checkups, "HANG_FLOOR_SECONDS", 1.5)
+    stage_runner = runner.docker_runner.DockerRunner(
+        cache_dir=tmp_path / "cache",
+        stage_timeouts={mode: timeout},
+        run_triage=False,
+        checkup_interval=0.2,
+        first_record_seconds=first_record,
+    )
+
+    def kill(name: str, reason: str = "") -> None:
+        # On a timeout `subprocess.run` has already killed the stand-in itself.
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(int((paper / "pid").read_text(encoding="utf-8")), signal.SIGKILL)
+
+    monkeypatch.setattr(stage_runner, "kill_container", kill)
+    return stage_runner.run_stage(paper, paper / "logs", mode)
+
+
+def halt_rule(stage: runner.docker_runner.StageRun) -> object:
+    return ((stage.checkup or {}).get("halt") or {}).get("rule")
+
+
+def test_watcher_halts_a_full_run_whose_records_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "full", records=4, tail="sleep")
+    assert (stage.status, halt_rule(stage)) == ("halted", "hang")
+    assert stage.wall_clock_seconds < 15  # killed by the watcher, not the 30 s budget
+
+
+def test_watcher_halts_a_full_run_that_never_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(
+        tmp_path, monkeypatch, "full", records=0, tail="sleep", first_record={"full": 1.0}
+    )
+    assert (stage.status, halt_rule(stage)) == ("halted", "no_first_record")
+
+
+def test_watcher_leaves_a_healthy_full_run_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "full", records=5, tail="exit")
+    assert (stage.status, halt_rule(stage)) == ("success", None)
+
+
+def test_watcher_leaves_a_silent_capped_run_to_its_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = run_standin(tmp_path, monkeypatch, "capped", records=4, tail="sleep", timeout=3)
+    assert (stage.status, halt_rule(stage)) == ("timeout", None)

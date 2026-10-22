@@ -1,0 +1,4 @@
+Hand ReproBot an ML paper and it reruns it. Here it takes the classic SVM guide from PDF to verdict in one UI: 22 claims read, training script written, run in Docker in 99 seconds, 96.62% against the paper's 96.9%. PASS.
+
+Don't trust the number. Rerun it.
+github.com/EngincanVaran/ReproBot

@@ -349,7 +349,8 @@ loss is a different optimizer reaching a different solution, and scikit-learn's 
 7 and 12 below are for neural models and do not apply; instead fit the \
 estimator on the training split and predict on both splits. Record \
 `model_family` as "classical". The Runner's image \
-has scikit-learn 1.5.2 and no xgboost, lightgbm or catboost.
+has scikit-learn 1.5.2 and xgboost 2.1.3 (use `xgboost` itself for an XGBoost \
+claim, never a scikit-learn stand-in), but no lightgbm or catboost.
    - NEURAL MODELS -> PyTorch, per rules 6 and 7. Anything the paper defines as \
 a network of parameters trained by gradient descent is neural, INCLUDING \
 tree-shaped models trained that way (a soft decision tree with learned \
@@ -489,6 +490,14 @@ training and test matrices have the same width.
    - DATA THE PAPER GENERATES from a stated procedure (a synthetic task) is \
 generated in code, seeded from `--seed`, following the procedure exactly; \
 record any size or distribution detail the paper leaves out in `assumptions`.
+   - NEVER INVENT A STAND-IN FOR A REAL DATASET. If the paper evaluates on real \
+data (reviews, images, a benchmark) and you cannot obtain it, do not generate \
+synthetic examples, plant keyword signals, or build "a corpus with the same \
+shape" - any number measured on invented data is meaningless as a reproduction, \
+however it is disclosed. Instead raise a RuntimeError before training that names \
+the dataset, the source you tried and what is needed (a file to pre-cache under \
+`--data-dir`, a working URL). A loud failure can be fixed; a fabricated pass \
+cannot be told apart from a real one.
    - Never `datasets.load_dataset` or any HuggingFace Hub download: the \
 `datasets` library is not in the Runner's image.
    - EVERY download lands under `--data-dir`. Pass it explicitly as the \
@@ -675,9 +684,9 @@ split.
 The script runs standalone inside a Docker container and must not depend on \
 this repository's tooling. Its third-party imports are limited to `torch` and \
 `numpy`, plus `torchvision` (image datasets and transforms), `pandas`, \
-`scipy` and `scikit-learn` (fetching, splitting and preprocessing data, and - \
-under rule 5 - the classical estimator being reproduced). Those are what the \
-Runner's image guarantees; any other import, including xgboost, lightgbm and \
+`scipy`, `scikit-learn` and `xgboost` (fetching, splitting and preprocessing \
+data, and - under rule 5 - the classical estimator being reproduced). Those are \
+what the Runner's image guarantees; any other import, including lightgbm and \
 catboost, is a failure waiting to happen there. A classical-estimator script \
 need not use `torch` at all.
 
