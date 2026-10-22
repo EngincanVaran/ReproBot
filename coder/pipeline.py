@@ -82,6 +82,17 @@ class ScriptContractError(ScriptGateError):
     """The generated script does not write the learning-curve history the Runner reads."""
 
 
+class ClaimTargetError(ScriptGateError):
+    """The script targets a claim_id the Reader never extracted, so it can never be judged."""
+
+
+class NoClaimsError(RuntimeError):
+    """The Reader extracted no claims, so there is nothing a script could reproduce.
+
+    Not a gate error: regenerating a script cannot fix the Reader's output, so the
+    Orchestrator must not spend retries on it."""
+
+
 @dataclass
 class CoderOutput:
     paper: str
@@ -226,6 +237,14 @@ class CoderPipeline:
             f"{len(architecture_notes.get('unstated_details', []))} unstated detail(s)"
         )
 
+        if not claims:
+            # Breiman's Random Forests: the claims call hit max_tokens and returned none, and
+            # the Coder then invented a claim_id the Critic could not find. Stop before paying
+            # for a script that can never be judged.
+            raise NoClaimsError(
+                f"reader output for '{paper}' has no claims - the Reader's claims extraction "
+                f"is empty or failed (check its log for max_tokens); re-run the Reader first"
+            )
         if feedback:
             logger.info(f"[{self.writer.name}] regenerating with feedback: {feedback}")
         else:
@@ -296,6 +315,20 @@ class CoderPipeline:
                 f"`.history.jsonl` file derived from --metrics-output and print each record "
                 f"after the {PROGRESS_MARKER} marker"
             )
+        claim_ids = {str(claim.get("claim_id")) for claim in claims}
+        if result.claim_targeted not in claim_ids:
+            invalid_path = paper_dir / "train.py.invalid"
+            invalid_path.write_text(result.script_content, encoding="utf-8")
+            logger.error(
+                f"  [gate:claim] FAILED - claim_targeted {result.claim_targeted!r} is not one of "
+                f"the Reader's {len(claim_ids)} claim_id(s); wrote the script to {invalid_path}"
+            )
+            raise ClaimTargetError(
+                f"the script for '{paper}' targets claim_id {result.claim_targeted!r}, which is "
+                f"not in the reader output; claim_targeted must be copied verbatim from one of: "
+                f"{', '.join(sorted(claim_ids))}"
+            )
+        logger.info(f"  [gate:claim] passed - targets {result.claim_targeted}")
         script_path = paper_dir / "train.py"
         script_path.write_text(result.script_content, encoding="utf-8")
         logger.info(f"  -> {script_path}")
