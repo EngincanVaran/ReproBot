@@ -4,11 +4,35 @@ Living tracker. Updated by hand as things land; the narrative history with full 
 lives in [`docs/agent-log.md`](docs/agent-log.md), and each stage's own README holds the
 deep version of its known issues.
 
-**Last updated:** 2026-10-01 · branch `mert/critic-wired` = `main` (2026-09-14) + Mert's GPU, viewer and Critic-UI work · **4th progress-report period**
+**Last updated:** 2026-10-22 · branch `mert/critic-wired` = `main` (2026-09-14) + Mert's GPU, viewer and Critic-UI work · **4th progress-report period**
 
 ---
 
 ## Resume here
+
+**2026-10-22: eleven new papers through the whole pipeline** (OCR → Reader → Coder →
+Orchestrator + Critic → Report), several on the GPU box via `viewer/full_run.py`:
+
+| Paper | Fidelity | ReproBot vs paper |
+|---|---|---|
+| Pang & Lee 2002 (SVM, unigrams) | **pass** | 84.21% vs 82.9% (mean of 3, ±1.76) |
+| Kim 2014 (text CNN) | **pass** | 80.43% vs 81.5% (mean of 10, ±1.12) |
+| DenseNet 2016 | **pass** | 5.37% vs 5.24% error (±0.45) |
+| GCN 2016 (Cora) | **pass** | 81.19% vs 81.5% (mean of 10, ±0.78) |
+| TCN 2018 | fail | 98.76% vs 99% (±0.20) |
+| fastText 2016 | fail | 87.45% vs 91.5% (±0.64) |
+| Tang 2013 (claim 11.9%, not the MNIST 0.87%) | fail | 14.15% vs 11.9% error (±0.65) |
+| XGBoost 2016 | fail | AUC 0.8292 vs 0.8304 (mean of 3, ±0.0005) |
+| Network In Network | not judged | 4 attempts, all halted by check-ups (`non_finite`, `no_progress`, `stuck_at_chance`) |
+| Breiman, Random Forests | not judged | Reader returned no claims; Coder invented a claim_id (now gated) |
+| Stochastic Depth 2016 | running | `full` on the RTX 4060 Ti, ~2.2 h, learning normally |
+
+Open from today: NIN never trains at full; the XGBoost fidelity retry died with the Coder
+returning no `script_content` three times (likely max_tokens, a new silent failure);
+XGBoost's ±0.0005 tolerance makes a 0.001 AUC gap a fail; Breiman needs the Reader re-run
+with the raised claims `max_tokens`; `report/output/SUMMARY.md` was rebuilt for XGBoost only.
+Fixed today: claim-target gates, pass-blocking reviews (Pang & Lee's fabricated-data pass),
+xgboost in both images, VLM content-filter fallback.
 
 **Phase 3 is done.** Five papers across five model families were replicated at full fidelity,
 the third progress report is written (`docs/progress-reports/third-progress-report/`), and
