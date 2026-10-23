@@ -57,7 +57,7 @@
   \and
   Göktuğ Mert Özdoğan \\ \small\texttt{goekmeroz@gmail.com}
 }
-\date{inzva AI Projects \#10 \\ 10.10.2026}
+\date{inzva AI Projects \#10 \\ 23.10.2026}
 
 
 \begin{document}
@@ -75,17 +75,21 @@ retry loop. This report presents the finished system and everything it has measu
 spanning five model families were reproduced at their own full settings and all five passed,
 two of them beating the paper's own number. Three of those papers were then carried from PDF to
 report three times each: 9 of 9 runs reproduced their claim, and every run reached the full stage
-on its first attempt. The central finding is about where the remaining disagreement comes from:
-every difference between runs of the same paper traced to exactly one detail that paper never
-states, and we could name it each time --- a fully specified protocol gave three independently
-generated scripts bit-identical values, while an unstated cross-validation shuffle and an
-unstated data split each moved the result in a way we can explain. A loop-on/loop-off ablation
+on its first attempt. The same protocol was then run on a paper the pipeline had never seen,
+whose task has no train/test split at all, and passed 3 times out of 3. A further eleven papers
+were put through the whole loop in one batch, several of them on a rented GPU: four reproduced
+their claim, four did not, and three could not be judged. Those four are the first replication
+failures this project has reported, and they matter more than their number --- a system that can
+return \emph{does not replicate} is the thing that makes its passes worth anything. The central
+finding is about where the remaining disagreement comes from: every difference between runs of
+the same paper traced to exactly one detail that paper never states, and we could name it each
+time --- a fully specified protocol gave three independently generated scripts bit-identical
+values, while an unstated cross-validation shuffle, an unstated data split and an unstated
+repetition count each moved the result in a way we can explain. A loop-on/loop-off ablation
 shows the retry loop changed 1 of 5 verdicts, and that the system's real defence against
 publishing a wrong number is not the retries but the guards: a live check-up that halts an
-unhealthy run, and a Critic that refuses to rule on one. We make no fidelity claim for the
-eight-paper CIFAR-10 set: a full \emph{Wide Residual Networks} run measures at about 22 days on
-the project's CPU, and a one-epoch run proves that a script executes, never that its number is
-right.
+unhealthy run, a Critic that refuses to rule on one, and a review that can block a number that
+matched for the wrong reason.
 \end{abstract}
 
 \section{Introduction}
@@ -109,8 +113,12 @@ Its contributions are:
   \item \textbf{Five full-fidelity replications across five model families}, each judged by
     arithmetic rather than by eye, with two reproductions better than the paper's own number
     (Section~\ref{sec:results}).
+  \item \textbf{Eleven more papers in one batch}, four reproducing their claim and four not ---
+    the first failures this system has reported rather than had planted in it
+    (Section~\ref{sec:batch}).
   \item \textbf{A repeatability measurement}: three papers carried from PDF to report three
-    times each, 9 of 9 passing (Section~\ref{sec:repeat}).
+    times each, 9 of 9 passing, plus a fourth paper the pipeline had never seen, 3 of 3
+    (Section~\ref{sec:repeat}).
   \item \textbf{The report's main finding}: run-to-run variance is a property of the paper, not
     a defect of the system, and in every case we could name the single unstated detail
     responsible (Section~\ref{sec:unstated}).
@@ -119,9 +127,16 @@ Its contributions are:
     (Section~\ref{sec:verdict}).
   \item \textbf{The project plan's headline ablation}, loop on against loop off, reported
     honestly including where the loop bought nothing (Section~\ref{sec:experiments}).
-  \item \textbf{Two documented paper sets}, one CPU-sized and one GPU-bound, and a plain
-    statement of which results exist for which (Section~\ref{sec:sets}).
+  \item \textbf{Two documented paper sets}, one CPU-sized and one GPU-bound, with a per-paper
+    statement of how far each has got and where its evidence lives (Section~\ref{sec:sets}).
 \end{itemize}
+
+\textbf{A note on provenance, because this report mixes two kinds of evidence.} Everything in
+Sections~\ref{sec:results5} to~\ref{sec:experiments}, apart from Section~\ref{sec:batch}, was
+re-derived for this report from run data committed to the repository, and the files are named
+where the numbers are. The eleven-paper batch of Section~\ref{sec:batch} was run on a rented GPU
+box and on a second contributor's machine; its state files are not in the repository, so every
+figure in it is reported \emph{as recorded in the project tracker} and is marked as such.
 
 \section{The System}
 \label{sec:system}
@@ -174,7 +189,9 @@ Its contributions are:
 close the loop: the Runner's triage routes a script bug back to the Coder, and the Critic routes a
 fidelity failure back as one guided retry, or asks the Runner for extra seeds instead of ruling.
 Both are bounded by the Orchestrator's budgets and by a plateau guard that stops a retry which is
-not changing the script.}
+not changing the script. A Streamlit dashboard (\texttt{viewer/}, Table~\ref{tab:stages}) sits
+over the whole column: it can start a paper at the top, place the Runner's container in local
+Docker or on a rented GPU box, and show each stage's output as it lands.}
 \label{fig:pipeline}
 \end{figure}
 
@@ -188,9 +205,9 @@ reviewing an implementation --- and nowhere else.
 \begin{table}[tbp]
 \centering
 \small
-\caption{The seven stages. Each is a top-level folder with the same command-line shape
-(\texttt{-{}-input}, \texttt{-{}-output}, skip what is already done), so any stage can be run
-alone or as part of the loop.}
+\caption{The seven pipeline stages, and the dashboard over them. Each stage is a top-level folder
+with the same command-line shape (\texttt{-{}-input}, \texttt{-{}-output}, skip what is already
+done), so any stage can be run alone or as part of the loop.}
 \label{tab:stages}
 \squeeze
 \begin{tabular}{L{0.16\textwidth}L{0.28\textwidth}L{0.21\textwidth}L{0.25\textwidth}}
@@ -217,6 +234,11 @@ Stage & What it does & Model calls & Checked without a model \\
   is checked to exist \\
 \texttt{report/} & Renders the state object as Markdown with an SVG learning curve & None & Every
   number copied from the state; the tolerance printed with every verdict \\
+\midrule
+\texttt{viewer/} & A Streamlit dashboard over all of the above, and the one place a whole paper
+  can be started from: import a PDF, then run every stage locally or on a rented GPU box &
+  None of its own --- it calls each stage's published entry point unmodified & N/A: it displays
+  and launches, and never re-decides a verdict \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -230,9 +252,25 @@ per paper, and a plateau guard that compares each regenerated script with its pr
 stops early when the ``fix'' is not changing anything.
 
 \textbf{The parts that must not be wrong are tested.} The pure logic --- the Critic's arithmetic,
-the loop's four decision functions, the seven check-up rules and the report renderer --- is
-covered by 102 replay tests, built from real recorded learning curves rather than synthetic
-shapes, including every false positive found end to end.
+the loop's four decision functions, the seven check-up rules, the Coder's gates, the
+pass-blocking rule and the report renderer --- is covered by 135 replay tests, built from real
+recorded learning curves and real recorded reviews rather than synthetic shapes, including every
+false positive found end to end.
+
+\textbf{The dashboard, and how a run is started.} \texttt{viewer/} is a Streamlit app over the
+pipeline's own outputs: a per-paper status table, then tabs for the Reader's five extractions,
+the generated script, the Runner's stages and live learning curve, the Critic's verdict and
+review, and the rendered report. It is deliberately thin. Every button calls the matching
+stage's published entry point unmodified --- \texttt{run\_vlm()}, \texttt{reader}'s and
+\texttt{coder}'s \texttt{run\_pipeline()}, the Orchestrator's CLI --- so nothing a paper does
+through the dashboard differs from doing it from a shell, and the dashboard can never produce a
+verdict the command line would not. Its \texttt{full\_run} helper carries one paper through
+every stage as a background job that survives a restart, with each stage skipping work already
+on disk, and can place the Orchestrator step either in local Docker or on a rented GPU box over
+SSH: the code and that paper's inputs are copied over, the run is started under
+\texttt{nohup} so a dropped connection does not kill it, and its outputs are copied back on
+every poll so the curve fills in live. The Runner has a matching CUDA image, selected by one
+flag, differing from the CPU image only in which index its \texttt{torch} wheels come from.
 
 \textbf{What the stages run on.} The Runner's interface is \texttt{reproduce.sh <mode>} and
 nothing else --- it never builds a \texttt{python} command and never passes a flag --- so a paper
@@ -246,19 +284,23 @@ again with another seed.
 \label{sec:results}
 
 \subsection{Fidelity: five papers, five model families}
+\label{sec:results5}
 
-Table~\ref{tab:fidelity} is the headline result. Five papers were reproduced at their own full
-settings --- not a reduced proxy --- and judged by the arithmetic of
-Section~\ref{sec:verdict}. All five passed. Two reproductions are better than the paper's own
-number by more than the tolerance band, which the Critic records as \texttt{exceeds\_claim}.
-Figure~\ref{fig:curves} shows four of the implementations learning.
+Table~\ref{tab:fidelity} is the result this report is built on, because it is the one whose
+evidence is committed alongside it. Five papers were reproduced at their own full settings ---
+not a reduced proxy --- and judged by the arithmetic of Section~\ref{sec:verdict}. All five
+passed. Two reproductions are better than the paper's own number by more than the tolerance
+band, which the Critic records as \texttt{exceeds\_claim}. Figure~\ref{fig:curves} shows four of
+the implementations learning. A sixth paper was added to the table later, under the harder
+condition described in Section~\ref{sec:unseen}: the pipeline had never seen it.
 
 \begin{table}[tbp]
 \centering
 \small
-\caption{Reproduced results against the published claims, every one at the \texttt{full} stage.
-$\uparrow$ marks a result better than the paper's own beyond the tolerance band. The last row is
-deliberate: the CIFAR-10 set has no fidelity verdict at all.}
+\caption{Reproduced results against the published claims, every one at the \texttt{full} stage,
+and every one re-derived for this report from run data committed to the repository. $\uparrow$
+marks a result better than the paper's own beyond the tolerance band. Eleven further papers,
+judged on another machine, are in Table~\ref{tab:batch}.}
 \label{tab:fidelity}
 \squeeze
 \begin{tabular}{L{0.14\textwidth}L{0.14\textwidth}L{0.12\textwidth}L{0.095\textwidth}L{0.105\textwidth}cL{0.095\textwidth}}
@@ -279,10 +321,14 @@ Wijaya (2023) \cite{wijaya2023housing} & Dense regression network (paper used Ke
   Housing \cite{harrison1978hedonic}, 405/101, 13 features & test RMSE 3.02 & \textbf{3.03629},
   mean of 3 seeds & \texttt{pass} & $\pm$0.2044 \\
 \midrule
-CIFAR-10 set, 8 papers & Image CNNs and transformers & CIFAR-10 & --- & executes to
-  \texttt{smoke} & \texttt{not\_evaluated} & needs a GPU \\
+Liu, Ting \& Zhou (2008) \cite{liu2008iforest} & Isolation forest (scikit-learn), unsupervised &
+  Pima, 768 rows, no train/test split & AUC 0.67 & \textbf{0.674582 -- 0.682799} over 3 runs &
+  \texttt{pass} 3/3 & $\pm$0.005 to $\pm$0.011 \\
 \bottomrule
 \end{tabular}
+\\[2pt]
+{\small The last row was added after the first five, on a paper the pipeline had never
+transcribed, read or coded before that day (Section~\ref{sec:unseen}).}
 \end{table}
 
 
@@ -670,6 +716,112 @@ seeds instead of ruling. Two more full runs gave 3.0283 and 2.9520, and the re-j
 than assumed. A system that ruled on one number would have called this paper a failure at 3.13,
 or a success at 2.76, depending only on which run you happened to see.
 
+\subsection{Eleven papers in one batch, and the first reported failures}
+\label{sec:batch}
+
+The results above are six papers chosen because they are cheap. The batch in
+Table~\ref{tab:batch} is the opposite kind of evidence: eleven papers put through the whole
+pipeline --- transcription, extraction, generation, the orchestrated loop with the Critic, and a
+rendered report --- in one day, several of them on a rented GPU through the dashboard's remote
+path. \textbf{Four reproduced their claim, four did not, two could not be judged at all, and one
+was still training when the batch was written up.}
+
+\textbf{The four failures are the most valuable rows in this report.} Until this batch, every
+\texttt{fail} verdict the project held came from a run that was not allowed to stand: one from a
+bug we planted on purpose to test the Critic's diagnosis (a swapped train/validation unpacking
+in the Wijaya script), and one from an ablation leg discarded for an unrelated infrastructure
+fault --- a second single-shot Tang generation that scored 1.17\% against a claimed 0.87\%, a gap
+of 0.30 against a band of $\pm$0.1857, which Section~\ref{sec:experiments} reports because the
+disagreement is itself a finding. Neither was a paper the system had been asked to replicate and
+honestly reported as not replicated. These four are. That distinction is the whole point of
+building the Critic as arithmetic: \textbf{a replication system that cannot return
+\emph{does not replicate} has not established anything by returning \emph{does}}, and until this
+batch ours had never had to.
+
+\begin{table}[tbp]
+\centering
+\small
+\caption{Eleven papers through the whole pipeline in one batch, 2026-10-22. \textbf{Every row
+here is reported as recorded in the project's tracker, not as verified for this report}: this
+batch ran on a rented GPU box and on a second contributor's machine, and its state files are not
+in this repository, so none of it could be re-derived the way every other number in this report
+was. What could be checked was checked: each single-run tolerance below recomputes exactly from
+the Critic's published rule (Section~\ref{sec:verdict}) at the claim and the standard test-set
+size --- 2$\sigma$ of binomial noise gives 0.1990, 0.6398, 0.6476 and 0.4457 for TCN, fastText,
+Tang and DenseNet --- so the table is at least internally consistent with the judge that produced
+it. ``mean of $n$'' describes ReproBot's own value, which is what earns a measured rather than an
+assumed band.}
+\label{tab:batch}
+\squeeze
+\begin{tabular}{L{0.175\textwidth}cL{0.115\textwidth}L{0.13\textwidth}L{0.075\textwidth}cL{0.235\textwidth}}
+\toprule
+Paper & Set & Paper claims & ReproBot & Verdict & Tol. & Notes \\
+\midrule
+Pang, Lee \& Vaithyanathan (2002) \cite{pang2002thumbs} & CPU & 82.9\% accuracy &
+  \textbf{84.21\%}, mean of 3 & \texttt{pass} & $\pm$1.76 & An earlier generation of this paper
+  is why a pass can now be blocked; see Table~\ref{tab:problems} \\
+Kim (2014) \cite{kim2014cnn} & CPU & 81.5\% accuracy & \textbf{80.43\%}, mean of 10 &
+  \texttt{pass} & $\pm$1.12 & Passes on a measured spread, by 0.05 points of band \\
+Kipf \& Welling (2016) \cite{kipf2017gcn} & CPU & 81.5\% accuracy, Cora &
+  \textbf{81.19\%}, mean of 10 & \texttt{pass} & $\pm$0.78 & \\
+Huang et al.\ (2017) \cite{huang2017densenet} & GPU & 5.24\% test error &
+  \textbf{5.37\%} & \texttt{pass} & $\pm$0.45 & CIFAR-10, on the GPU box \\
+\midrule
+Bai, Kolter \& Koltun (2018) \cite{bai2018tcn} & CPU & 99\% accuracy & 98.76\% &
+  \textbf{\texttt{fail}} & $\pm$0.20 & Misses by 0.24 against a band of 0.20: the closest of the
+  four \\
+Joulin et al.\ (2016) \cite{joulin2016fasttext} & CPU & 91.5\% accuracy & 87.45\% &
+  \textbf{\texttt{fail}} & $\pm$0.64 & Misses by 4.05, more than six bands: the clearest \\
+Tang (2013) \cite{tang2013dlsvm}, its CIFAR-10 claim & CPU & 11.9\% test error & 14.15\% &
+  \textbf{\texttt{fail}} & $\pm$0.65 & The same paper whose MNIST claim passes in
+  Table~\ref{tab:fidelity} \\
+Chen \& Guestrin (2016) \cite{chen2016xgboost} & CPU & test AUC 0.8304 & 0.8292, mean of 3 &
+  \textbf{\texttt{fail}} & $\pm$0.0005 & A gap of 0.0012 --- 0.14\% of the claim --- against the
+  narrowest band in this report. Discussed below \\
+\midrule
+Lin, Chen \& Yan \cite{lin2014nin} & GPU & --- & no number & not judged & --- & Four attempts,
+  every one halted by a live check-up (\texttt{non\_finite}, \texttt{no\_progress},
+  \texttt{stuck\_at\_chance}). It has never trained at \texttt{full} \\
+Breiman (2001) \cite{breiman2001rf} & CPU & --- & no number & not judged & --- & The Reader's
+  claims call returned nothing, so there was no claim to target. Now gated;
+  Table~\ref{tab:problems} \\
+Huang et al.\ (2016) \cite{huang2016stochastic} & GPU & --- & still running & --- & --- &
+  \texttt{full} on the GPU box, about 2.2\,h, learning normally when the batch was recorded \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{The failures are not all the same kind of failure, and the spread between them is the
+useful part.} fastText misses by more than six tolerance bands, which is a result: something
+about that reproduction is wrong or the paper's 91.5\% depends on something it does not say, and
+either way the gap is far too large to be noise. Tang's CIFAR-10 claim misses by 2.25 points,
+from the same paper and the same generated-code path whose MNIST claim passes --- the clearest
+demonstration in this report that a verdict is about a claim, not about a paper. TCN misses by
+0.24 against a band of 0.20, which is a near miss that the arithmetic nonetheless calls, and
+correctly: the rule is fixed in advance so that it cannot be relaxed once the number is known.
+
+\textbf{And then the uncomfortable one.} XGBoost reproduced test AUC 0.8292 against a claimed
+0.8304 --- a gap of 0.0012, or 0.14\% of the claim --- and \texttt{fail}ed, because three runs
+agreed so closely that the measured band came out at $\pm$0.0005. This is a real property of the
+rule and it is worth stating rather than hiding: \textbf{a tolerance derived from a tight
+measured spread can turn a near miss into a failure, and the same gap with one run instead of
+three would have been judged \texttt{inconclusive} and sent for more seeds.} We think the rule is
+still the right one --- a band that grows when the evidence is weaker and shrinks when it is
+stronger is exactly what the uncertainty of the gap \emph{is}, and a fixed relative tolerance
+would have let a 0.14\% miss through on a paper whose own numbers are stable to a tenth of
+that. But a reader who wants to call this row a near-reproduction rather than a failure is
+reading the same arithmetic we are, and the printed tolerance is what lets them. Two things
+would sharpen it: the spread of three runs is a three-sample estimate of $\sigma$ and
+systematically underestimates it, and the claim's own uncertainty --- which the paper does not
+report --- is not in the band at all.
+
+\textbf{Two of the three unjudged rows are the system refusing, not crashing.} Breiman was
+stopped before a script was even paid for, because the Reader had extracted no claims and a
+script that targets a claim nobody can find can never be judged. Network In Network was halted
+four separate times by the live check-ups while training, which is the guard working exactly as
+designed and the honest statement that this paper does not yet train: \texttt{not judged} is the
+correct answer, and it is a different answer from \texttt{fail}.
+
 \subsection{Repeatability: three papers, three runs each, PDF to report}
 \label{sec:repeat}
 
@@ -707,14 +859,71 @@ Wijaya (\texttt{c3}) & RMSE 3.02 & \textbf{3/3} & 2.76299 & 2.86305 & 3.03629$^{
 \texttt{inconclusive} and the Critic escalated on its own.}
 \end{table}
 
+\subsection{A paper the pipeline had never seen}
+\label{sec:unseen}
+
+Those three papers are the papers this project debugged against, which is the obvious objection
+to a 9-of-9 result. So the same protocol --- three runs, full loop, review on run~1 --- was run
+the next day on a fourth paper that had never been transcribed, read or coded before:
+\emph{Isolation Forest} \cite{liu2008iforest}. \textbf{3 of 3 runs passed, each reaching
+\texttt{full} on its first attempt with no retry}, in 20 to 33 seconds end to end.
+
+The target was chosen to be hard to hit by luck. The paper states twelve AUC values; Pima's
+0.67 is a mid-range one, where the near-ceiling rows (Shuttle 1.00, Breastw 0.99) would pass
+almost any implementation --- and it is one of the paper's own \emph{weak} rows, where isolation
+forest loses to the ORCA baseline's boldfaced 0.71. The Reader noticed that and annotated the
+claim. The task shape is one nothing else in this project has: there is no train/test split at
+all. The forest is fit unsupervised on the whole contaminated dataset and the labels are used
+only afterwards, to score an AUC. The Coder produced a working script for that on the first
+attempt, having never seen the paper.
+
+\begin{table}[tbp]
+\centering
+\small
+\caption{Three runs of a paper the pipeline had never seen, 2026-10-10, re-derived from
+\texttt{docs/notes/end-to-end/}\allowbreak\texttt{data/iforest-runs.json}. Same claim, same
+verdict, two very different strengths of evidence --- and the report records which is which.}
+\label{tab:unseen}
+\squeeze
+\begin{tabular}{L{0.07\textwidth}L{0.15\textwidth}L{0.21\textwidth}L{0.08\textwidth}L{0.32\textwidth}}
+\toprule
+Run & Reproduced & How it passed & Tol. & Behind the tolerance \\
+\midrule
+1 & 0.682799 & \texttt{exceeds\_}\allowbreak\texttt{claim} & $\pm$0.005 & Reporting precision
+  only: one seeded run \\
+2 & 0.678728 & Within tolerance & $\pm$0.011 & Measured spread of the paper's 10 repetitions \\
+3 & 0.674582 & Within tolerance, gap 0.0046 & $\pm$0.005 & Reporting precision only: one seeded
+  run \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three things in Table~\ref{tab:unseen} are worth more than the pass rate. \textbf{The claim sits
+just below the spread}, not inside it: 0.674582 to 0.682799, mean 0.678703, against 0.67. All
+three runs overshoot slightly, which is a consistent small positive bias rather than noise around
+the claim --- scikit-learn's \texttt{IsolationForest} is these authors' algorithm but not their
+code, and the paper never says whether its 0.67 is one draw or an average. \textbf{AUC exercised
+a path through the Critic that nothing else had}: it gets no binomial noise model, so a single
+run's band is the claim's own printed precision and nothing more, which is why run~3's pass at a
+gap of 0.0046 is \emph{just} inside $\pm$0.005. \textbf{And run~2 shows what a measured band is
+worth}: ten repetitions gave the Critic a spread instead of a precision, and a band twice as
+wide, on the same claim with the same verdict.
+
+It also surfaced two silent defects, both now fixed and both in Table~\ref{tab:problems}: the
+transcriber refused 3 of its 10 pages and used to lose the whole paper to one refusal, and the
+Coder misclassified the model family on run~3, which quietly made one rung of the escalation
+ladder a byte-identical repeat of the rung below it while reporting success.
+
 \subsection{Run-to-run variance is a property of the paper}
 \label{sec:unstated}
 
-This is the finding we would keep if we could keep only one. Across the nine runs, \textbf{every
+This is the finding we would keep if we could keep only one. Across the twelve repeated runs ---
+the nine of Section~\ref{sec:repeat} and the three of Section~\ref{sec:unseen} --- \textbf{every
 disagreement between two runs of the same paper traced to exactly one detail that paper never
-states, and in every case we could name it.} Table~\ref{tab:unstated} gives the mechanism for
-each, and Figure~\ref{fig:spread} plots every reproduced value this project holds for the two
-papers it ran most often.
+states, and in every case we could name it.} Four papers, four different mechanisms, the same
+finding each time. Table~\ref{tab:unstated} gives the mechanism for each, and
+Figure~\ref{fig:spread} plots every reproduced value this project holds for the two papers it ran
+most often.
 
 \begin{table}[tbp]
 \centering
@@ -740,6 +949,12 @@ SVM guide & Whether the five cross-validation folds are shuffled & Which $(C, \g
 Wijaya & How the 405/101 split is drawn & Which rows are held out of a 506-row dataset & The RMSE
   moves continuously: 2.76299, 2.86305, 3.03629 across three runs, and 2.619 to 4.003 across five
   independent generations \\
+Isolation Forest & Whether Table 3's AUC is one run or an average. The paper states a ten-repeat
+  protocol, but only for a later section & Not the value so much as the \emph{evidence}: whether
+  the Critic gets a measured spread or only the claim's printed precision & Runs 1 and 3 reproduced
+  a single seeded run and were judged on $\pm$0.005; run 2 implemented the ten repetitions and was
+  judged on a measured $\pm$0.011. The reviewer had named the ambiguity on run 1, in as many
+  words, \emph{before} run 2 resolved it the other way \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -874,9 +1089,11 @@ rather than omitting it.
 \begin{table}[tbp]
 \centering
 \small
-\caption{Claims extracted against claims tested. Merging collapses one result printed in prose, a
-table and a figure; it only bites where a paper repeats itself. A dash means merging was never run
-for that paper.}
+\caption{Claims extracted against claims tested, for the papers whose Reader output is in this
+repository. Merging collapses one result printed in prose, a table and a figure; it only bites
+where a paper repeats itself. A dash means merging was never run for that paper. Two of the
+\emph{tested} counts rest on runs made elsewhere --- Wide Residual Networks on a rented GPU, and
+Tang's second claim in the batch of Table~\ref{tab:batch}.}
 \label{tab:coverage}
 \squeeze
 \begin{tabular}{L{0.36\linewidth}rrr}
@@ -885,16 +1102,22 @@ Paper & Claims & Distinct & Tested \\
 \midrule
 Fashion-MNIST (2017) & 74 & 70 & 1 \\
 Deep Residual Learning (2015) & 66 & --- & 0 \\
-Wide Residual Networks (2016) & 61 & --- & 0 \\
+Wide Residual Networks (2016) & 61 & --- & 1 \\
 SVM guide (2003) & 27 & 27 & 1 \\
+Isolation Forest (2008) & 24 & 24 & 1 \\
 All Convolutional Net (2014) & 17 & --- & 0 \\
-Tang (2013) & 15 & 15 & 1 \\
+Tang (2013) & 15 & 15 & 2 \\
 Network In Network (2013) & 12 & --- & 0 \\
 Frosst \& Hinton (2017) & 8 & 8 & 1 \\
 Wijaya (2023) & 4 & 4 & 1 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Isolation Forest is the sharpest row: 24 claims, none of which merges with another, and one
+tested. Tang is the only paper here with two, and they disagree --- its MNIST claim passes and
+its CIFAR-10 claim fails (Table~\ref{tab:batch}), which is the reason the denominator is worth
+printing at all.
 
 Claim counts are a property of a particular Reader run, not of the paper: an earlier extraction of
 Wijaya found 14 claims that merged to 8 distinct results, where the run in the table found 4.
@@ -916,8 +1139,10 @@ printed in the report.
 \begin{table}[tbp]
 \centering
 \small
-\caption{Code review of the three end-to-end run-1 scripts, reviewer \texttt{claude-opus-5}. No
-review reported a deviation from the paper or an implementation bug.}
+\caption{Code review of the four run-1 scripts, reviewer \texttt{claude-opus-5}. No review
+reported a deviation from the paper or an implementation bug. ``Citations'' counts the findings
+whose quotes and line references the deterministic guards could verify, out of all findings
+returned; the difference is dropped and the report says how many.}
 \label{tab:review}
 \squeeze
 \begin{tabular}{L{0.26\linewidth}L{0.21\linewidth}L{0.17\linewidth}r}
@@ -927,6 +1152,7 @@ Paper & Fidelity & Deviations & Citations \\
 SVM guide & \texttt{faithful} & none & 10 / 10 \\
 Fashion-MNIST & \texttt{faithful} & none & 8 / 8 \\
 Wijaya & \texttt{faithful} & none & 12 / 15 \\
+Isolation Forest & \texttt{faithful} & none & 12 / 14 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -944,6 +1170,20 @@ the log stating the two split sizes --- and misdiagnosed it as a missing early-s
 which made the Coder add checkpoint selection that the paper never mentions. Opus found the swap,
 the loop fixed it, and the next review returned \texttt{faithful}: a fidelity \texttt{fail} at
 4.76 became a \texttt{pass} at 3.40 against 3.02, in eleven minutes.
+
+\textbf{The review can also block a pass, which is the most recent thing it learned to do.} A
+matching number proves nothing about a paper if the script that produced it is not the paper's
+method, and the case that forced this was real: a regenerated Pang \& Lee script invented 1,400
+keyword-planted ``reviews'' instead of fetching the corpus, and scored 92.8\% against a claimed
+82.9\%. The arithmetic had no way to object --- the number was better than the claim. So a pass
+whose review carries a \texttt{major\_deviations} rating, or any \emph{verified} high-severity
+deviation or implementation bug, is now routed as a correctness retry when the budget allows and
+is otherwise reported as \texttt{not established} rather than as a reproduction. The rule is
+deliberately narrow and deliberately deterministic: it recomputes from the stored review, so an
+old state file renders the same way today; it never touches the arithmetic verdict itself; and
+medium-severity or unverified findings never block, because an honest pass must survive a
+reviewer's minor quibble. It was replayed against the real GCN and Kim reviews from the batch of
+Table~\ref{tab:batch}, whose passes stand.
 
 \section{How a Verdict Is Made}
 \label{sec:verdict}
@@ -965,7 +1205,8 @@ Four verdicts follow, and each carries a consequence:
 
 \begin{itemize}
   \item \texttt{pass} --- within tolerance, or better than the claim beyond it, which is recorded
-    separately as \texttt{exceeds\_claim}.
+    separately as \texttt{exceeds\_claim}. A pass whose code review shows the script was not
+    doing what the paper describes is reported as \texttt{not established} instead.
   \item \texttt{fail} --- worse than the claim beyond tolerance, \emph{with} an uncertainty
     estimate. If the Critic's review found verified problems the paper itself states, this becomes
     a normal retry; otherwise it spends the single guided fidelity retry.
@@ -980,16 +1221,20 @@ Four verdicts follow, and each carries a consequence:
 \centering
 \small
 \caption{Where each tolerance came from, and how wide it is relative to the claim. A tighter band
-is a stronger pass. The two Wijaya rows are the same paper judged on one run and on three.}
+is a stronger pass --- and, as the XGBoost row shows, a harsher judge of a near miss. The paired
+rows are one paper judged on one run and on several.}
 \label{tab:tolerance}
 \squeeze
 \begin{tabular}{L{0.2\linewidth}L{0.31\linewidth}rr}
 \toprule
 Paper (claim) & Uncertainty source & Tolerance & of claim \\
 \midrule
+XGBoost (AUC 0.8304) & Measured spread of 3 runs & $\pm$0.0005 & 0.06\% \\
 Fashion-MNIST (0.873) & Measured spread of 5 runs & $\pm$0.00175 & 0.20\% \\
 SVM guide (96.9\%) & Binomial noise, 4{,}000 test rows & $\pm$0.5481 & 0.57\% \\
 Soft tree (94.45\%) & Binomial noise, 10{,}000 test images & $\pm$0.4579 & 0.48\% \\
+Isolation Forest (0.67), 1 run & None --- reporting precision only & $\pm$0.005 & 0.75\% \\
+Isolation Forest (0.67), 10 runs & Measured spread of 10 runs & $\pm$0.011 & 1.6\% \\
 Tang (0.87\%) & Binomial noise, 10{,}000 test images & $\pm$0.1857 & 21\% \\
 Wijaya (3.02), 1 run & None --- reporting precision only & $\pm$0.005 & 0.17\% \\
 Wijaya (3.02), 3 seeds & Measured spread of 3 seeds & $\pm$0.2044 & 6.8\% \\
@@ -1007,19 +1252,32 @@ than a close match. Tang's $\pm$0.1857 on a claim of 0.87\% is the same situatio
 guise: a test error that small is simply not measurable to better than about a fifth of itself on
 10{,}000 images.
 
-\section{The Three Experiments}
+The XGBoost row is the same honesty pointing the other way, and it is the one this report would
+most like a reader to argue with. $\pm$0.0005 on an AUC of 0.8304 is the narrowest band here by a
+factor of three, because three runs happened to agree to four decimals --- and it is what turned a
+gap of 0.0012 into the \texttt{fail} of Table~\ref{tab:batch}. Nothing was tuned to produce that
+outcome: the rule was fixed before the run, which is the only property that makes any of these
+verdicts worth reading. But the band is a three-sample estimate of a standard deviation, which
+underestimates on average, and it contains no term for the uncertainty of the paper's own
+number, which the paper does not report. Both corrections would widen it.
+
+\section{Measuring the System}
 \label{sec:experiments}
 
-Beyond the per-paper fidelity runs, three experiments were run to measure the system rather than
-the papers. Table~\ref{tab:experiments} summarises them. Across all the runs this project holds,
-32 carry a Critic verdict: 24 \texttt{pass}, 3 \texttt{inconclusive} and 5
-\texttt{not\_evaluated} --- three cheap-stage runs, one generation that crashed at \texttt{probe},
-and one ablation leg that never reached \texttt{full}.
+Beyond the per-paper fidelity runs, several experiments were run to measure the system rather than
+the papers. Table~\ref{tab:experiments} summarises them. Across the four batches whose run data is
+committed to this repository --- the ablation, the consistency experiment, the nine end-to-end runs
+and the three Isolation Forest runs --- \textbf{32 runs carry a Critic verdict: 27
+\texttt{pass}, 3 \texttt{inconclusive} and 2 \texttt{not\_evaluated}}, the latter being one
+generation that crashed at \texttt{probe} and one ablation leg that never reached \texttt{full}.
+The batch of Table~\ref{tab:batch} adds eleven judged papers that are not in that count, because
+their evidence is not here to count.
 
 \begin{table}[tbp]
 \centering
 \small
-\caption{The four measurements in this report, and what each one actually establishes.}
+\caption{Every measurement in this report, and what each one actually establishes. The first five
+are re-derived from committed run data; the last is as recorded in the project tracker.}
 \label{tab:experiments}
 \squeeze
 \begin{tabular}{L{0.14\textwidth}L{0.22\textwidth}cL{0.48\textwidth}}
@@ -1035,6 +1293,10 @@ Consistency & 2 papers $\times$ 5 independent generations & 10 & The SVM guide's
   was born broken \\
 End to end & 3 papers $\times$ 3 runs, PDF to report, full loop & 9 & 9/9 pass, every run
   \texttt{full} on the first attempt \\
+Unseen paper & 1 paper never transcribed, read or coded before, $\times$ 3 runs & 3 & 3/3 pass on
+  a task with no train/test split; the same unstated-detail mechanism found a fourth time \\
+Batch of eleven & 11 papers, one loop each, several on a rented GPU & 11 & 4 pass, 4 fail, 3 not
+  judged --- the project's first reported replication failures \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1147,7 +1409,9 @@ broken generation \emph{is} included, because that failure was the system's own.
 The third experiment is the one a demonstration has to pass: start at the PDF, finish at a
 rendered report, three times per paper. Its results are Table~\ref{tab:repeat} and
 Section~\ref{sec:unstated}; what it adds to the other two is that the whole chain ran unattended,
-including the Critic's own escalation. A sample of what the final stage emits per run --- headline,
+including the Critic's own escalation. The fourth batch repeated it on a paper nobody had tuned
+against (Section~\ref{sec:unseen}), and the fifth widened it to eleven papers at once
+(Section~\ref{sec:batch}). A sample of what the final stage emits per run --- headline,
 claim table, learning curve, the gap with its tolerance, the review, every unstated guess, the
 attempt timeline and the commands to run it again --- is kept at
 \texttt{docs/notes/end-to-end/sample-report/}.
@@ -1173,8 +1437,10 @@ trained by gradient descent, graph and text models, anomaly detection and tabula
 \centering
 \small
 \caption{The CPU set, \texttt{extra-papers/}, 15 papers. Target claims and data sources were read
-from each PDF directly and every dataset URL was checked to respond. Five have a \texttt{full}
-verdict; the rest are selected and documented but not yet transcribed.}
+from each PDF directly and every dataset URL was checked to respond --- and in three cases the
+claim actually targeted later differed from the one listed here, which the status column names.
+Twelve now have a \texttt{full} verdict. A status marked \emph{(tracker)} comes from the batch of
+Table~\ref{tab:batch} and is not evidenced in this repository; the others are.}
 \label{tab:cpuset}
 \squeeze
 \begin{tabular}{L{0.165\textwidth}L{0.155\textwidth}L{0.145\textwidth}L{0.225\textwidth}L{0.165\textwidth}}
@@ -1183,97 +1449,125 @@ Paper & Model family & Data & Target claim & Status \\
 \midrule
 Breiman (2001) \cite{breiman2001rf} & Random forest & 13 small tabular sets, all on OpenML &
   Table 2 test error per dataset, e.g.\ breast cancer 2.9\%, glass 20.6\% --- 13 claims from one
-  paper & Selected; not yet transcribed \\
+  paper & Attempted; \textbf{not judged}: the Reader returned no claims \emph{(tracker)} \\
 Pang, Lee \& Vaithyanathan (2002) \cite{pang2002thumbs} & Naive Bayes / MaxEnt / linear SVM &
-  1{,}400 movie reviews & SVM 82.9\% with presence-weighted unigrams, three-fold CV & Selected;
-  not yet transcribed \\
+  1{,}400 movie reviews & SVM 82.9\% with presence-weighted unigrams, three-fold CV &
+  \textbf{\texttt{full}: pass}, 84.21\% \emph{(tracker)} \\
 Hsu, Chang \& Lin (2003) \cite{hsu2003guide} & RBF SVM & svmguide1, 3{,}089/4{,}000 & 96.9\%
   accuracy & \textbf{\texttt{full}: pass, 3/3 runs} \\
 Liu, Ting \& Zhou (2008) \cite{liu2008iforest} & Isolation forest, unsupervised & 9 sets, OpenML
-  plus scikit-learn fetchers & Table 2 AUC, e.g.\ Shuttle 1.00, Pima 0.67 --- the first target with
-  no train/test split & Selected; not yet transcribed \\
-Tang (2013) \cite{tang2013dlsvm} & MLP with an L2-SVM loss & MNIST & 0.87\% test error &
-  \textbf{\texttt{full}: pass} \\
-Kim (2014) \cite{kim2014cnn} & Text CNN & TREC & CNN-rand 91.2\% accuracy & Selected; not yet
-  transcribed \\
+  plus scikit-learn fetchers & Table 3 AUC, e.g.\ Shuttle 1.00, Pima 0.67 --- the first target with
+  no train/test split & \textbf{\texttt{full}: pass, 3/3 runs} on Pima \\
+Tang (2013) \cite{tang2013dlsvm} & MLP with an L2-SVM loss & MNIST; also CIFAR-10 & 0.87\% test
+  error; 11.9\% on CIFAR-10 & \textbf{\texttt{full}: pass} on MNIST, \textbf{\texttt{fail}} on
+  CIFAR-10 at 14.15\% \emph{(tracker)} \\
+Kim (2014) \cite{kim2014cnn} & Text CNN & TREC & CNN-rand 91.2\% accuracy &
+  \textbf{\texttt{full}: pass} on a different claim, 80.43\% vs 81.5\% \emph{(tracker)} \\
 Chen \& Guestrin (2016) \cite{chen2016xgboost} & Gradient boosting & HIGGS, 1M-row subset & test
-  AUC 0.8304 & Needs \texttt{xgboost} in the Runner image \\
+  AUC 0.8304 & \textbf{\texttt{full}: fail}, 0.8292 \emph{(tracker)} \\
 Joulin et al.\ (2016) \cite{joulin2016fasttext} & Linear bag-of-$n$-grams & AG News,
-  120k/7.6k & 92.5\% accuracy, and a claimed 1\,s per epoch & Selected; not yet transcribed \\
+  120k/7.6k & 92.5\% accuracy with bigrams, and a claimed 1\,s per epoch &
+  \textbf{\texttt{full}: fail} on the 91.5\% no-bigram row, 87.45\% \emph{(tracker)} \\
 Kipf \& Welling (2016) \cite{kipf2017gcn} & Graph convolutional network & Cora & 81.5\% accuracy,
-  mean of 100 initialisations & Selected; not yet transcribed \\
+  mean of 100 initialisations & \textbf{\texttt{full}: pass}, 81.19\% \emph{(tracker)} \\
 Prokhorenkova et al.\ (2017) \cite{prokhorenkova2018catboost} & CatBoost / LightGBM / XGBoost &
-  Adult, OpenML 1590 & log loss 0.2695, zero-one loss 0.1267 & Needs three boosting libraries in
-  the image \\
+  Adult, OpenML 1590 & log loss 0.2695, zero-one loss 0.1267 & Still needs \texttt{lightgbm} and
+  \texttt{catboost} in the image \\
 Xiao, Rasul \& Vollgraf (2017) \cite{xiao2017fashion} & Random forest, in a classical zoo &
   Fashion-MNIST & 0.873 accuracy, mean of 5 runs & \textbf{\texttt{full}: pass, exceeds} \\
 Frosst \& Hinton (2017) \cite{frosst2017soft} & Soft decision tree & MNIST & 94.45\% accuracy &
   \textbf{\texttt{full}: pass, exceeds} \\
 Bai, Kolter \& Koltun (2018) \cite{bai2018tcn} & Temporal convolutional network & Synthetic adding
-  problem, $T = 600$ & test MSE $5.8 \times 10^{-5}$ & Selected; not yet transcribed \\
+  problem, $T = 600$ & test MSE $5.8 \times 10^{-5}$ & \textbf{\texttt{full}: fail} on a different
+  claim, 98.76\% vs 99\% \emph{(tracker)} \\
 Bentéjac, Csörgő \& Martínez-Muñoz (2019) \cite{bentejac2021comparative} & XGBoost / random forest
   / gradient boosting & 28 small tabular sets & Spambase, default XGBoost 95.17\% $\pm$ 1.29 &
-  Needs \texttt{xgboost} in the image \\
+  Unblocked by \texttt{xgboost} landing in the image; not yet run \\
 Wijaya (2023) \cite{wijaya2023housing} & Dense regression network & Boston Housing, 405/101 & test
   RMSE 3.02 & \textbf{\texttt{full}: pass, 3/3 runs} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Three of the fifteen are blocked on one concrete thing: the Runner's Docker image has no
-\texttt{xgboost}, \texttt{lightgbm} or \texttt{catboost}. The rest are blocked only on transcription
-and compute time, both of which are cheap for this set.
+Only one of the fifteen is still blocked on infrastructure: the Runner's image gained
+\texttt{xgboost}, which unblocked two of the three boosting papers, and \texttt{lightgbm} and
+\texttt{catboost} are what the third still waits on. Breiman is blocked on nothing but a Reader
+re-run now that its claims call has room to finish. \textbf{Three of the targets listed here were
+not the claims actually run}, which is itself worth recording: Kim, the TCN paper and fastText
+were each judged on a different row of their own tables, so the comparison is to the claim the
+run named, not to the one this set documented. Target-claim selection is not reproducible across
+Reader runs (Table~\ref{tab:measurement}), which is why every experiment in
+Section~\ref{sec:experiments} pins it.
 
-\subsection{The GPU set: eight CIFAR-10 papers, and no fidelity claim}
+\subsection{The GPU set: eight CIFAR-10 papers, and its first two verdicts}
 
 The CIFAR-10 set in \texttt{dataset/} is the original evaluation target from the project
 proposal, and it is curated separately from the pipeline work by another member of the team ---
 it is input to ReproBot, not a product of it. Table~\ref{tab:gpuset} states exactly how far each
-paper has got.
+paper has got, and where that is recorded.
 
 \begin{table}[tbp]
 \centering
 \small
 \caption{The GPU set, \texttt{dataset/}, 8 CIFAR-10 papers, curated externally to the pipeline
-work. \built{} done; \absent{} not done. No paper in this set has a fidelity verdict, and none can
-have one without GPU compute.}
+work. \built{} present in this repository, checked file by file against
+\texttt{ocr/output/vlm/} and \texttt{reader/output/}; \partl{} done on the rented GPU box, whose
+outputs are not in this repository; \absent{} not done anywhere. The set now has two fidelity
+passes, both earned on rented hardware.}
 \label{tab:gpuset}
 \squeeze
-\begin{tabular}{L{0.38\textwidth}lccL{0.16\textwidth}c}
+\begin{tabular}{L{0.33\textwidth}lccL{0.2\textwidth}L{0.13\textwidth}}
 \toprule
-Paper & Date & OCR & Reader & Loop & Fidelity \\
+Paper & Date & OCR & Reader & Furthest run & Fidelity \\
 \midrule
-Network In Network \cite{lin2014nin} & 2013-12 & \built & \built & \texttt{smoke}, success,
-  0 retries & \texttt{not\_evaluated} \\
+Network In Network \cite{lin2014nin} & 2013-12 & \built & \built & \texttt{full} attempted 4
+  times, every one halted by a check-up & not judged \\
 Striving for Simplicity: The All Convolutional Net \cite{springenberg2015allconv} & 2014-12 &
-  \built & \built & --- & \texttt{not\_evaluated} \\
+  \built & \built & --- & \texttt{not\_}\allowbreak\texttt{evaluated} \\
 Deep Residual Learning for Image Recognition \cite{he2016resnet} & 2015-12 & \built & \built & ---
-  & \texttt{not\_evaluated} \\
-Deep Networks with Stochastic Depth \cite{huang2016stochastic} & 2016-03 & \absent & \absent & ---
-  & \texttt{not\_evaluated} \\
-Wide Residual Networks \cite{zagoruyko2016wrn} & 2016-05 & \built & \built & \texttt{smoke},
-  success, 0 retries & \texttt{not\_evaluated} \\
-Densely Connected Convolutional Networks \cite{huang2017densenet} & 2016-08 & \absent & \absent &
-  --- & \texttt{not\_evaluated} \\
+  & \texttt{not\_}\allowbreak\texttt{evaluated} \\
+Deep Networks with Stochastic Depth \cite{huang2016stochastic} & 2016-03 & \partl & \partl &
+  \texttt{full} in progress, $\approx$2.2\,h & pending \\
+Wide Residual Networks \cite{zagoruyko2016wrn} & 2016-05 & \built & \built & \texttt{full} on a
+  rented RTX 4090, 3.4\,h & \textbf{\texttt{pass}}, 3.83\% vs 4.00\% \\
+Densely Connected Convolutional Networks \cite{huang2017densenet} & 2016-08 & \partl & \partl &
+  \texttt{full} on the GPU box & \textbf{\texttt{pass}}, 5.37\% vs 5.24\% \\
 AutoAugment: Learning Augmentation Policies from Data \cite{cubuk2019autoaugment} & 2018-05 &
-  \built & \absent & --- & \texttt{not\_evaluated} \\
+  \built & \absent & --- & \texttt{not\_}\allowbreak\texttt{evaluated} \\
 Escaping the Big Data Paradigm with Compact Transformers \cite{hassani2021cct} & 2021-04 & \built
-  & \absent & --- & \texttt{not\_evaluated} \\
+  & \absent & --- & \texttt{not\_}\allowbreak\texttt{evaluated} \\
 \midrule
-\textbf{Total} & 8 & \textbf{6} & \textbf{4} & \textbf{2} & \textbf{0} \\
+\textbf{Total} & 8 & \textbf{6} + 2 & \textbf{4} + 2 & 4 reached \texttt{full} or tried &
+  \textbf{2} \texttt{pass} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Two of the eight --- Network In Network and Wide Residual Networks --- were carried through the
-whole orchestrated loop to the \texttt{smoke} stage, both succeeding on the first attempt with no
-retry. That is worth stating precisely, because it is easy to over-read: \textbf{a one-epoch run
-over a few hundred images establishes that a generated script executes, and nothing whatsoever
-about whether its number is right.} No replication-fidelity claim exists for any paper in this
-set, and none can exist until the project has GPU compute. The reason is arithmetic, not
-pessimism: the \texttt{full} \emph{Wide Residual Networks} configuration measures at about 22 days
-on the development CPU, against about a minute and a half to seventy minutes for each paper in
-the CPU set.
+\textbf{The set's first fidelity verdicts exist, and they are passes.} \emph{Wide Residual
+Networks} ran at its own full configuration on a rented RTX 4090 in about 3.4 hours for roughly
+\$1.50 and reproduced 3.83\% test error against the paper's 4.00\% (median of five) --- inside
+the $\pm$0.39 that two standard errors of binomial noise on 10{,}000 test images allow, and the
+review returned \texttt{faithful}. \emph{DenseNet} reproduced 5.37\% against 5.24\%, inside
+$\pm$0.45. Both are recorded in the project tracker rather than in this repository; what is
+committed here is the recorded WRN metrics, as a replay fixture for the check described next.
+
+\textbf{That WRN run is also where a guard came from.} The reported 3.8261\% of 10{,}000 test
+images is not a whole number of mistakes --- but it is exactly 382 of 9{,}984, which is 78
+batches of 128. The script had been scoring 9{,}984 images and reporting 10{,}000, because the
+final partial batch was being dropped. A deterministic check now catches that class of error by
+arithmetic alone (Table~\ref{tab:problems}).
+
+\textbf{Three caveats, because this is easy to over-read.} First, the two passes are single
+seeds on rented hardware, not a repeated measurement: nothing here has the three-run evidence
+Section~\ref{sec:repeat} has. Second, the WRN script was written by an earlier version of the
+Coder, before the plain-PyTorch rewrite, so it does not exercise the generator this report
+otherwise describes and has still to be regenerated and sent round the loop. Third, four of the
+eight papers have no verdict and one of those four --- Network In Network --- has been
+\emph{tried} at \texttt{full} four times and halted by a live check-up every time. The reason the
+rest of the set is still open is arithmetic rather than pessimism: the \texttt{full} \emph{Wide
+Residual Networks} configuration measures at about 22 days on the development CPU, against about
+a minute and a half to seventy minutes for each paper in the CPU set, so every number in this
+subsection costs rented GPU time.
 
 \section{Problems and Solutions}
 \label{sec:problems}
@@ -1331,6 +1625,29 @@ A tool-use response returned its whole payload as a JSON string under one key on
   \texttt{stop\_reason}, so an extractor silently reported zero datasets & Handled centrally in
   one module, together with \texttt{max\_tokens} truncation and all-empty payloads --- three
   failure modes that each produce a valid but empty result \\
+The claims extraction hit its token ceiling and returned nothing, so the Coder invented a claim
+  id (\texttt{c\_zipcode\_}\allowbreak\texttt{forestRI}) and the Critic could only answer
+  \texttt{not\_evaluated}: a script had been paid for that could never be judged & The claims
+  call's ceiling was raised; an empty claims list now stops the paper before a script is written,
+  and is \emph{not} retried, because regenerating cannot fix the Reader; and the targeted claim id
+  is gated against the ids the Reader actually produced \\
+A regenerated script invented 1{,}400 keyword-planted ``reviews'' instead of fetching the corpus
+  and scored 92.8\% against a claimed 82.9\%. The arithmetic could not object: the number was
+  better than the claim & Two fixes. The prompt now requires a loud failure rather than synthetic
+  data when a real dataset cannot be fetched; and a pass whose review carries a verified
+  high-severity deviation or a \texttt{major\_deviations} rating is routed as a correctness retry,
+  or reported as \texttt{not established} \\
+A reported test error of 3.8261\% over ``10{,}000'' images is not a whole number of mistakes ---
+  it is exactly 382 of 9{,}984, because the final partial batch was dropped. Nothing errored &
+  A deterministic check on every run's own numbers: a rate over $N$ must be $k/N$ for a whole
+  $k$, and if a slightly smaller $N$ fits instead, the script scored fewer samples than it
+  reports. Silent by default, so a mean or a rounded figure is never flagged \\
+The transcriber's output filter blocked 3 of one paper's 10 pages, reproducibly and at two render
+  scales, and the extractor wrote nothing until every page succeeded --- so one refusal lost the
+  whole paper & Two composed fixes. A blocked page is retried, then read from the PDF's own text
+  layer and marked as carrying no figure descriptions; any \emph{other} API failure leaves an
+  explicit gap marker, so a later stage sees an absence rather than content the paper never had,
+  and extraction continues either way \\
 No PyTorch release supports Python 3.13 \emph{and} ships Intel-macOS wheels, so a generated
   training script cannot run natively on the development machine at all & The Runner executes
   every script in Docker, where the container's own Linux Python makes the host's irrelevant. This
@@ -1367,6 +1684,16 @@ A reviewer model that misses a bug does not stay silent --- it misdiagnoses, and
   acts on the misdiagnosis & The review model was selected by a controlled test on a script with a
   planted bug; every citation is checked to exist, and a fix may not add a technique the paper
   never mentions \\
+The widest batch of results was produced on a rented GPU box and on a second machine, so its
+  state files are not in the repository and nothing in it could be re-derived & Reported as
+  recorded in the project tracker and marked as such wherever it appears, never mixed into a
+  count of verified runs. Each of its single-run tolerances was recomputed from the judge's
+  published rule as a consistency check \\
+Three independent generations of one paper disagreed about its model family, and the
+  misclassification silently made one rung of the escalation ladder a byte-identical repeat of the
+  rung below while reporting success & Recorded as an open defect, with the deterministic fix
+  identified: a script that imports from scikit-learn and never builds a \texttt{torch} module is
+  not a neural model. The judged \texttt{full} number was unaffected in the case observed \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1378,17 +1705,29 @@ The following are the limits of what this report establishes. They are stated pl
 replication system that oversells itself is worse than useless.
 
 \begin{itemize}
-  \item \textbf{One claim per run.} Fashion-MNIST has 74 extracted claims and one was tested.
-    Every generated report lists the untested remainder as \texttt{not tested}, so the denominator
-    is on the page --- but nine end-to-end runs are three claims, not three papers replicated.
-  \item \textbf{No GPU results at all}, and therefore no claim of any kind about the CIFAR-10 set
-    the project originally set out to evaluate.
-  \item \textbf{All five replicated papers were chosen because they reproduce on CPU in minutes.}
-    A 9-of-9 pass rate is a statement about the pipeline running unattended on tractable papers,
-    not a success rate on an arbitrary paper.
-  \item \textbf{Two of the five fidelity numbers were human-assisted} --- one unstated
+  \item \textbf{The widest result in this report is not evidenced in this repository.} The eleven
+    papers of Table~\ref{tab:batch} ran on a rented GPU box and on a second contributor's machine;
+    their state files, scripts and logs are not here, so none of those rows was re-derived the way
+    the rest of this report was. They are reported as the project tracker records them, and that
+    is a weaker kind of evidence than everything else on these pages.
+  \item \textbf{One claim per run.} Fashion-MNIST has 74 extracted claims and one was tested;
+    Isolation Forest 24 and one. Every generated report lists the untested remainder as
+    \texttt{not tested}, so the denominator is on the page --- but twelve repeated runs are four
+    claims, not four papers replicated.
+  \item \textbf{The GPU set's two passes are single seeds on rented hardware}, one of them from a
+    script written by a superseded version of the Coder, and four of its eight papers still have
+    no verdict. One of those four has been tried at \texttt{full} four times and halted every
+    time.
+  \item \textbf{Most of the replicated papers were chosen because they reproduce on CPU in
+    minutes.} A 9-of-9 pass rate is a statement about the pipeline running unattended on tractable
+    papers, not a success rate on an arbitrary paper --- and the batch that was not chosen that way
+    reproduced four claims out of eight judged.
+  \item \textbf{Two of the five original fidelity numbers were human-assisted} --- one unstated
     hyperparameter changed after an ablation, one misprinted loss corrected --- and both are
     marked as such wherever they appear.
+  \item \textbf{A tolerance can be narrower than the thing it is judging.} XGBoost's
+    \texttt{fail} rests on a $\pm$0.0005 band estimated from three runs; three samples is a poor
+    estimate of a standard deviation, and the paper's own uncertainty is not in the band at all.
   \item \textbf{The ablation is too thin to settle its own question}: five papers, one generation
     per arm, with two loop-on numbers human-assisted and three loop-on states captured on a
     zero-retry day. Three runs is enough to see whether a paper varies, not to estimate how much.
@@ -1396,10 +1735,12 @@ replication system that oversells itself is worse than useless.
     unless it was written to a separate output directory.
   \item \textbf{Retries regenerate the whole script} instead of patching the faulty lines, which
     makes each retry more expensive and less targeted than it needs to be.
-  \item \textbf{Review ran on one generation per paper} in the end-to-end batch, so a deviation
+  \item \textbf{Review ran on one generation per paper} in the repeated batches, so a deviation
     present only in the other two generations would not have been caught by the reviewer.
-  \item \textbf{There is no demonstration interface yet}: a Streamlit dashboard over the
-    pipeline's outputs exists on a feature branch, unmerged and unreviewed.
+  \item \textbf{The dashboard does not yet show the loop.} It is merged and it can start a whole
+    paper locally or on a GPU box, but it displays Runner, Critic and report output only --- not
+    the Orchestrator's attempts, its retry feedback or the Critic's seed escalation, which are
+    exactly the parts a demonstration most wants to show.
   \item \textbf{One dataset carries an ethical caveat.} Boston Housing includes a feature derived
     from the proportion of Black residents per town \cite{harrison1978hedonic}; it is used here
     only because the replicated paper used it.
@@ -1414,22 +1755,37 @@ loop should edit the faulty lines and hold every other disclosed guess fixed unl
 concerns it.
 
 \textbf{More than one claim per paper.} The coverage table is the clearest gap in this report.
-Breiman alone offers 13 independent per-dataset claims and Isolation Forest nine, which would
-multiply the evaluation without multiplying the compute.
+Breiman alone offers 13 independent per-dataset claims and Isolation Forest twelve AUC values,
+which would multiply the evaluation without multiplying the compute. Tang is the proof that this
+is not bookkeeping: its two claims disagree, and a system that tested only the first would have
+reported the paper as reproduced.
 
-\textbf{The boosting libraries.} Three selected papers are blocked on \texttt{xgboost},
-\texttt{lightgbm} and \texttt{catboost} being absent from the Runner image --- the cheapest
-remaining widening of model-family coverage.
+\textbf{Chase the four failures.} Each one is now a concrete, bounded question rather than a
+gap in coverage --- why fastText is four points short, whether TCN's 0.24 is the implementation
+or the paper, whether XGBoost's 0.0012 survives more seeds. A failure the system can name is the
+cheapest research it has ever offered us.
 
-\textbf{GPU compute for the CIFAR-10 set.} Everything else about that set is ready: the loop
-carries its papers to \texttt{smoke} without a retry. What is missing is hardware, and until it
-arrives the set stays at \texttt{not\_evaluated}.
+\textbf{Make Network In Network train.} It is the one paper that has been attempted at
+\texttt{full} and never got there, halted four times by the check-ups. Until it does, the oldest
+paper in the CIFAR-10 set has no verdict for a reason the system itself diagnosed.
 
-\textbf{Keep every run's evidence.} Making each run's state immutable, rather than overwriting it,
-is a small change that would have preserved two results this project has already lost.
+\textbf{The two remaining boosting libraries.} \texttt{xgboost} is now in both Runner images,
+which is what let the XGBoost paper run at all; \texttt{lightgbm} and \texttt{catboost} are what
+one selected paper still waits on.
 
-\textbf{A demonstration.} The Streamlit viewer should display Runner, Critic and report output ---
-the curves and comparisons of this report --- and merge.
+\textbf{Close the last silent failure.} The XGBoost fidelity retry ended with the Coder returning
+no script three times in a row, most likely a token ceiling reached without being reported --- the
+same class of defect the Reader's three guards already cover, in the one stage that does not yet
+have it.
+
+\textbf{Keep every run's evidence, in one place.} Making each run's state immutable rather than
+overwriting it would have preserved two results this project has already lost --- and the eleven
+papers of Table~\ref{tab:batch} would be evidence in this report rather than a citation to a
+tracker if the remote path copied its states back into the repository by default.
+
+\textbf{Show the loop.} The dashboard can now start a whole paper and watch it train on a rented
+GPU, but it still does not display the Orchestrator's attempts, its retry feedback or the
+Critic's escalation --- the parts of this report a demonstration would most want on screen.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -1437,18 +1793,32 @@ the curves and comparisons of this report --- and merge.
 ReproBot carries a paper from PDF to a judged replication report without supervision. Five papers
 across five model families reproduced their published numbers at the papers' own settings, two of
 them beating the published figure; three were carried end to end three times each and passed 9
-times out of 9. The verdict behind each of those passes is arithmetic over the claim's own
-precision and the run's own measured spread, printed with its tolerance so that a wide pass cannot
-masquerade as a close match.
+times out of 9; a fourth, which the pipeline had never seen and whose task has no train/test split
+at all, passed 3 out of 3. Eleven more went through the whole loop in a single batch, four
+reproducing their claim and four not. The verdict behind every one of those is arithmetic over the
+claim's own precision and the run's own measured spread, printed with its tolerance so that a wide
+pass cannot masquerade as a close match --- and, since the batch, narrow enough in one case to
+turn a 0.14\% miss into a failure, which we report rather than round away.
+
+Those four failures are what the rest of this report was for. A replication system that only ever
+answers \emph{yes} has not answered anything, and until this batch ours had never been made to
+say otherwise about a paper it was asked to replicate. Saying it required the whole apparatus: a
+tolerance fixed before the run so it cannot be relaxed afterwards, a check-up that halts a run
+rather than reporting its number, a reviewer that can block a pass whose code was not the paper's
+method, and a verdict of \texttt{not judged} that is kept distinct from a verdict of
+\texttt{fail}.
 
 The result we did not expect is the one we would keep. When runs of the same paper disagreed, the
 disagreement was never mysterious: it was one sentence the paper did not write. A paper that
 states its protocol completely gave three unrelated scripts bit-identical numbers; a paper that
 omits whether its cross-validation folds are shuffled moved its own selected hyperparameters and
 its test accuracy; a paper that gives split sizes but not split assignment moved its RMSE
-continuously across a range that contains its claim. Reproducing a result automatically turns out
-to be a good way of finding out precisely what a paper forgot to say --- and the system's most
-valuable habit is not its retry loop but its refusal to report a number it cannot stand behind.
+continuously across a range that contains its claim; a paper that never says whether its headline
+AUC is one run or an average changed not the value but the strength of the evidence behind it, and
+the reviewer named that ambiguity before an independent run demonstrated it. Reproducing a result
+automatically turns out to be a good way of finding out precisely what a paper forgot to say ---
+and the system's most valuable habit is not its retry loop but its refusal to report a number it
+cannot stand behind.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{30}
