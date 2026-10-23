@@ -1270,3 +1270,26 @@ usable number and an explicit rule: nothing not in the pack or a file it names g
 - LaTeX traps recorded in its README so nobody re-derives them: wide-table overflow is
   silent (`pdflatex` exits 0), a long `\texttt{}` cannot hyphenate in a `p{}` column, and
   `*.aux`/`*.out` are not gitignored while `*.log` is.
+
+## 2026-10-23 — Coding Agent: the final report, second pass
+
+**Asked:** update `docs/final-report/` for everything since 2026-10-10 — the eleven-paper GPU
+batch, Isolation Forest, the viewer, the new guards — with a strict provenance rule, since
+that batch's raw outputs are not in this repo and only `TODO.md` records them.
+
+**Came back:** nothing. The agent wrote its last byte at 22:50 and stopped without sending a
+handback; it was gone from the agent list when checked at 23:28. **Its output was verified
+here instead**, which is the reason this entry exists: an agent that does the work and never
+reports is indistinguishable, from the outside, from one that half-did it.
+
+**Verified before committing:** both `.tex` files regenerate byte-identically from
+`generate.py`; 25 pages single-column, 20 two-column; 17 tables, 3 figures; zero undefined
+references; worst overfull box 5.66pt; `ruff check` and `format --check` clean. Content
+spot-checked against the brief — the GPU figures are marked "as recorded in the project
+tracker", and the CIFAR-10 per-paper table matches what is actually on disk (8 papers,
+6 OCR'd, 4 extracted, Stochastic Depth and DenseNet partial).
+
+**Worth keeping:** two verification greps of mine returned 0 and looked like gaps in the
+report — the eval-count guard and the OCR text-layer fallback — when both were present. The
+phrases were split across source lines and LaTeX-escaped (`9{,}984`). Grepping generated
+LaTeX for prose is unreliable; read the table.
