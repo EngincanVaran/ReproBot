@@ -49,8 +49,10 @@ dataset cache restarts that clock) - the container is killed by name,
 exactly as on a timeout, and the stage ends with status `halted` plus the
 evidence. The rules run once more after the process exits, because a short stage
 can finish between two polls; the wall clock is not handed to that final pass, so
-silence can only halt a stage that is still running. A script that writes no
-history keeps the old exit-code-only behaviour, with a warning.
+silence can only halt a stage that is still running. A `full` run whose records
+stop arriving for far longer than they ever took is halted the same way
+(`check_hang`). A script that writes no history keeps the old exit-code-only
+behaviour, with a warning.
 
 Usage:
     from runner.docker_runner import DockerRunner
@@ -61,7 +63,9 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -79,10 +83,12 @@ from runner.checkups import (
     DEFAULT_FIRST_RECORD_SECONDS,
     HISTORY_SUFFIX,
     PROGRESS_MARKER,
+    ArrivalClock,
     Halt,
     HistoryTail,
     ProgressRecord,
     SilenceClock,
+    check_hang,
     evaluate,
     writes_progress_history,
 )
@@ -90,10 +96,12 @@ from runner.triage import TriageResult, triage_failure
 
 RUNNER_DIR: Final[Path] = Path(__file__).resolve().parent
 DOCKERFILE_PATH: Final[Path] = RUNNER_DIR / "Dockerfile"
+DOCKERFILE_CUDA_PATH: Final[Path] = RUNNER_DIR / "Dockerfile.cuda"
 BUILD_CONTEXT: Final[Path] = RUNNER_DIR
 DEFAULT_CACHE_DIR: Final[Path] = RUNNER_DIR / "cache"
 
 DEFAULT_IMAGE: Final[str] = "reprobot-runner:latest"
+DEFAULT_CUDA_IMAGE: Final[str] = "reprobot-runner:cuda"
 
 # The generated script `reproduce.sh` runs. Read here for one reason only: to tell
 # whether it implements the progress contract at all (see run_stage).
@@ -475,6 +483,8 @@ def build_run_command(
     memory: str | None = None,
     cpus: str | None = None,
     network: str = "bridge",
+    gpus: str | None = None,
+    user: str | None = None,
 ) -> list[str]:
     """Assemble the `docker run` argv for one stage.
 
@@ -497,6 +507,11 @@ def build_run_command(
 
     `--rm` because the results are already on the host through the mount, so a
     stopped container carries nothing worth keeping.
+
+    `gpus` (e.g. "all") adds `--gpus`; it needs the NVIDIA container toolkit on
+    the host and a CUDA image. `user` (e.g. "1000:1000") adds `--user`, so files
+    the container writes into the bind mounts are owned by the host user instead
+    of root - invisible on macOS Docker Desktop, real on a Linux host.
     """
     command = [
         "docker",
@@ -518,12 +533,48 @@ def build_run_command(
         "--env",
         "PYTHONUNBUFFERED=1",
     ]
+    if gpus:
+        command += ["--gpus", gpus]
+    if user:
+        command += ["--user", user]
     if memory:
         command += ["--memory", memory]
     if cpus:
         command += ["--cpus", cpus]
     command += [image, "bash", "reproduce.sh", mode]
     return command
+
+
+def add_gpu_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register `--gpu` / `--as-host-user`, shared by runner/ and orchestrator/ CLIs."""
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help=(
+            "Run on the host's NVIDIA GPU: uses the CUDA image (runner/Dockerfile.cuda) "
+            "and passes `--gpus all`. Needs the NVIDIA container toolkit on the host"
+        ),
+    )
+    parser.add_argument(
+        "--as-host-user",
+        action="store_true",
+        help=(
+            "Run the container as the host's uid:gid so files written into the bind mounts "
+            "are not root-owned. Off by default; matters on a Linux host, not Docker Desktop"
+        ),
+    )
+
+
+def runner_kwargs_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    """Translate `--image` / `--gpu` / `--as-host-user` into `DockerRunner` kwargs."""
+    kwargs: dict[str, Any] = {"image": args.image or DEFAULT_IMAGE}
+    if args.gpu:
+        kwargs.update(
+            image=args.image or DEFAULT_CUDA_IMAGE, dockerfile=DOCKERFILE_CUDA_PATH, gpus="all"
+        )
+    if args.as_host_user:
+        kwargs["user"] = f"{os.getuid()}:{os.getgid()}"
+    return kwargs
 
 
 def decode_stream(value: str | bytes | None) -> str:
@@ -558,11 +609,17 @@ class DockerRunner:
         cpus: str | None = None,
         network: str = "bridge",
         run_triage: bool = True,
+        dockerfile: Path = DOCKERFILE_PATH,
+        gpus: str | None = None,
+        user: str | None = None,
         live_checkups: bool = True,
         checkup_interval: float = DEFAULT_CHECKUP_INTERVAL,
         first_record_seconds: dict[str, float] | None = None,
     ) -> None:
         self.image = image
+        self.dockerfile = dockerfile
+        self.gpus = gpus
+        self.user = user
         self.cache_dir = cache_dir
         self.stage_timeouts = {**DEFAULT_STAGE_TIMEOUTS, **(stage_timeouts or {})}
         self.memory = memory
@@ -608,14 +665,26 @@ class DockerRunner:
         logger.info(f"[docker] daemon reachable, server version {probe.stdout.strip()}")
 
     def image_exists(self) -> bool:
+        """Check presence via `docker images -q`, NOT `docker image inspect`.
+
+        Measured false negative on a Docker Desktop host using the containerd
+        image snapshotter (`docker info`'s `driver-type
+        io.containerd.snapshotter.v1`): a buildx-built image carrying
+        attestation manifests exists, appears in `docker images`, and runs
+        fine via `docker run`, but `docker image inspect <tag>` reports "No
+        such image" for it anyway. That false negative made `ensure_image`
+        rebuild on every single invocation, even with `--no-build`, on an
+        image that was already there. `docker images -q` reads the same tag
+        index `docker images` does, so it does not share the bug.
+        """
         result = subprocess.run(
-            ["docker", "image", "inspect", self.image],
+            ["docker", "images", "-q", self.image],
             capture_output=True,
             text=True,
             timeout=DOCKER_CONTROL_TIMEOUT,
             check=False,
         )
-        return result.returncode == 0
+        return result.returncode == 0 and bool(result.stdout.strip())
 
     def build_image(self) -> None:
         """Build the sandbox image from `runner/Dockerfile`.
@@ -624,7 +693,7 @@ class DockerRunner:
         generated script is in it, by design: the image stays static across every
         Coder regeneration and its layer cache is never invalidated by one.
         """
-        logger.info(f"[docker] building {self.image} from {DOCKERFILE_PATH}")
+        logger.info(f"[docker] building {self.image} from {self.dockerfile}")
         logger.info(f"[docker] build context: {BUILD_CONTEXT} (no generated code is copied in)")
         started = time.monotonic()
         result = subprocess.run(
@@ -634,7 +703,7 @@ class DockerRunner:
                 "--tag",
                 self.image,
                 "--file",
-                str(DOCKERFILE_PATH),
+                str(self.dockerfile),
                 str(BUILD_CONTEXT),
             ],
             capture_output=True,
@@ -662,7 +731,7 @@ class DockerRunner:
             raise ImageMissingError(
                 f"image {self.image} does not exist locally and --no-build was given. "
                 f"Run once with --build, or `docker build -t {self.image} "
-                f"-f {DOCKERFILE_PATH} {BUILD_CONTEXT}`."
+                f"-f {self.dockerfile} {BUILD_CONTEXT}`."
             )
         self.build_image()
 
@@ -731,6 +800,8 @@ class DockerRunner:
             memory=self.memory,
             cpus=self.cpus,
             network=self.network,
+            gpus=self.gpus,
+            user=self.user,
         )
         logger.info(f"  [{mode}] container: {container_name}")
         logger.info(f"  [{mode}] budget: {timeout_seconds}s")
@@ -774,6 +845,8 @@ class DockerRunner:
                 ):
                     logger.info(f"  [{mode}] progress: {record.describe()}")
 
+        arrivals = ArrivalClock(time.monotonic())
+
         def watch() -> None:
             # The rules are evaluated on every tick, not only when a new record
             # arrives: `no_first_record` judges the silence itself, so the tick
@@ -783,16 +856,24 @@ class DockerRunner:
             # Runner can see while a stage is still running.
             clock = SilenceClock(self.cache_dir / "datasets", time.monotonic())
             while not stop_watching.wait(self.checkup_interval):
-                absorb(tail.read_new())
+                new = tail.read_new()
+                now = time.monotonic()
+                if new:
+                    arrivals.note(now)
+                    absorb(new)
                 # Once any record exists, silence is settled and the clock's walk
                 # would be wasted work, so stop asking it.
-                silent = None if records else clock.silent_seconds(time.monotonic())
+                silent = None if records else clock.silent_seconds(now)
                 halt = evaluate(
                     records,
                     mode,
                     silent_seconds=silent,
                     first_record_seconds=armed_deadlines,
                 )
+                # After the first record, `check_hang` takes over the silence:
+                # records that started and then stopped.
+                if halt is None and not new:
+                    halt = check_hang(records, mode, arrivals, now)
                 if halt is not None:
                     halts.append(halt)
                     logger.error(

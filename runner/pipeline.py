@@ -59,8 +59,10 @@ from runner.docker_runner import (
     DockerUnavailableError,
     ImageMissingError,
     RunnerOutput,
+    add_gpu_arguments,
     parse_first_record_overrides,
     parse_timeout_overrides,
+    runner_kwargs_from_args,
     stages_up_to,
 )
 
@@ -197,7 +199,12 @@ def main() -> None:
         help="Run ONLY this one mode, skipping the escalation ladder entirely",
     )
 
-    parser.add_argument("--image", default=DEFAULT_IMAGE, help="Sandbox image tag")
+    parser.add_argument(
+        "--image",
+        default=None,
+        help=f"Sandbox image tag (default {DEFAULT_IMAGE}, or the CUDA image with --gpu)",
+    )
+    add_gpu_arguments(parser)
     parser.add_argument(
         "--build",
         action=argparse.BooleanOptionalAction,
@@ -301,7 +308,7 @@ def main() -> None:
         )
 
     runner = DockerRunner(
-        image=args.image,
+        **runner_kwargs_from_args(args),
         cache_dir=args.cache_dir,
         stage_timeouts=stage_timeouts,
         memory=args.memory,

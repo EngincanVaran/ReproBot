@@ -1,0 +1,232 @@
+{
+  "method_fidelity": "major_deviations",
+  "summary": "The pipeline (unigram presence features with negation tagging, >=4 count cutoff, L2 length-normalised vectors, linear SVM, balanced 3-fold CV over 700/700) faithfully mirrors Section 5.3/6.1. But the corpus is not the paper's: the script synthesizes 1400 pseudo-reviews from 20 positive and 20 negative seed words injected at a fixed 12% rate against neutral filler. That makes the task far easier than real movie reviews, so eval accuracy lands at 92.786% (folds 92.31/93.78/92.27) against the claimed 82.9%. The \"pass\" therefore reflects an easier synthetic dataset, not a demonstration that the paper's 82.9% on the IMDb corpus is reproduced.",
+  "curve_assessment": "The curve is a 3-fold CV curve, not an optimisation curve: fold eval accuracies are 92.308, 93.777 and 92.275 (mean 92.786), with train accuracies 96.352/96.467/97.752 and eval losses 0.25173/0.24743/0.25602. The spread across folds is small (tolerance 1.4009 from measured spread), so the estimator is stable. Train-eval gap is roughly 4 points, normal for a linear SVM on binary indicators; nothing diverges and nothing is near chance (logged chance 47.65/47.64/50.00%). Every fold sits well above the 82.9 target value recorded in the curve, i.e. the signal in the synthetic corpus is stronger than in the paper's reviews, which is where the 9.8864-point gap above the claim comes from.",
+  "findings": [
+    {
+      "kind": "deviates_from_paper",
+      "aspect": "data source",
+      "severity": "high",
+      "paper_quote": "Our data source was the Internet Movie Database (IMDb) archive of the rec.arts.movies.reviews newsgroup.",
+      "script_lines": [
+        134,
+        142,
+        306
+      ],
+      "script_snippet": "def build_synthetic_corpus(n_pos, n_neg, seed):\n        toks = generate_synthetic_document(rng, 1, POSITIVE_SEED_WORDS,\n        docs, labels = build_synthetic_corpus(n_pos, n_neg, seed=args.seed)",
+      "explanation": "The paper evaluates on real IMDb movie reviews; the script trains and evaluates on a seeded synthetic bag-of-unigrams corpus. This substitution is disclosed in the Coder bookkeeping, but it means the reported 92.786% is not a measurement on the paper's dataset and on its own explains why the reproduction sits far above 82.9.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "deviates_from_paper",
+      "aspect": "preprocessing / task difficulty",
+      "severity": "high",
+      "paper_quote": "sentiment can be expressed in a more subtle manner. For example, the sentence \"How could anyone sit through this movie?\" contains no single word that is obviously negative.",
+      "script_lines": [
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124
+      ],
+      "script_snippet": "    for _ in range(length):\n        r = rng.random()\n        if r < 0.12:\n            tokens.append(rng.choice(own_words))\n        elif r < 0.17:\n            # noise: occasional opposite-sentiment word (thwarted expectations)\n            tokens.append(rng.choice(other_words))",
+      "explanation": "The generator writes an explicit lexical signal: ~12% of tokens are drawn from the document's own 20-word class lexicon versus ~5% from the opposite lexicon, in documents of 40-180 tokens. A linear SVM over presence features recovers this almost perfectly, producing the 96.9% train / 92.8% eval accuracies seen in the run. The paper's whole point is that real sentiment lacks such reliable keyword cues, so the synthetic task is strictly easier than the paper's.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "deviates_from_paper",
+      "aspect": "feature set size",
+      "severity": "medium",
+      "paper_quote": "the 16165 unigrams appearing at least four times in our 1400-document corpus",
+      "script_lines": [
+        367,
+        368,
+        369
+      ],
+      "script_snippet": "        vocab = build_vocab(train_docs, min_count=4)\n        logger.info(\"Fold %d vocabulary size (unigrams occurring >=4 times in training fold): %d\",\n                     fold_idx + 1, len(vocab))",
+      "explanation": "The >=4 cutoff rule matches the paper, but the synthetic vocabulary yields only 174 features per fold (RUNNER LOG) versus the paper's 16165 unigrams. A 174-dimensional, highly class-correlated feature space is far better conditioned than the paper's sparse high-dimensional one, further inflating accuracy.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "evaluation protocol / split",
+      "severity": "low",
+      "paper_quote": "we randomly selected 700 positive-sentiment and 700 negative-sentiment documents. We then divided this data into three equal-sized folds, maintaining balanced class distributions in each fold.",
+      "script_lines": [
+        295,
+        321,
+        322,
+        223,
+        234,
+        235
+      ],
+      "script_snippet": "    n_pos, n_neg = 700, 700\n    n_folds = 3\n    fold_of = make_fold_assignment(n_pos, n_neg, n_folds, seed=args.seed)\ndef make_fold_assignment(n_pos, n_neg, n_folds, seed):\n    for i, idx in enumerate(pos_idx):\n        fold_of[idx] = i % n_folds",
+      "explanation": "1400 balanced documents split into 3 class-balanced folds, with positives and negatives dealt round-robin into folds. RUNNER LOG confirms 932/468 and 934/466 train/eval sizes per fold, and the reported value is the mean of the three fold eval accuracies, matching 'average three-fold cross-validation accuracies'.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "data handling / leakage",
+      "severity": "low",
+      "paper_quote": "we did not use a larger number of folds due to the slowness of the MaxEnt training procedure",
+      "script_lines": [
+        340,
+        341,
+        367,
+        376,
+        377
+      ],
+      "script_snippet": "        train_doc_idx = np.where(fold_of != fold_idx)[0]\n        eval_doc_idx = np.where(fold_of == fold_idx)[0]\n        vocab = build_vocab(train_docs, min_count=4)\n        X_train = vectorize(train_docs, vocab, binarize=True)\n        X_eval = vectorize(eval_docs, vocab, binarize=True)",
+      "explanation": "Data tracing: train indices are the complement of the held-out fold, eval indices are the fold itself; the vocabulary (the only fitted preprocessing state) is built from train_docs only and then applied to both matrices. The SVM is fit on X_train and the reported metric comes from eval_decision on X_eval. No test data reaches fitting, and the subset-capping path is inactive (no --max-*-samples in this run, and the metrics include run_values, so capped_run was False).",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "feature representation",
+      "severity": "low",
+      "paper_quote": "we binarized the document vectors, setting $n_i(d)$ to 1 if and only feature $f_i$ appears in $d$",
+      "script_lines": [
+        170,
+        180,
+        181,
+        376
+      ],
+      "script_snippet": "def vectorize(token_lists, vocab, binarize=True):\n                if binarize:\n                    mat[di, j] = 1.0\n        X_train = vectorize(train_docs, vocab, binarize=True)",
+      "explanation": "Claim c5 is the unigram-presence SVM row of Figure 3; the script binarizes presence rather than counting frequency, as the paper specifies for the SVM in all subsequent experiments.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "preprocessing (normalisation)",
+      "severity": "low",
+      "paper_quote": "after first length-normalizing the document vectors, as is standard (neglecting to normalize generally hurt performance slightly)",
+      "script_lines": [
+        380,
+        381
+      ],
+      "script_snippet": "        X_train = normalize(X_train, norm=\"l2\")\n        X_eval = normalize(X_eval, norm=\"l2\")",
+      "explanation": "Document vectors are L2 length-normalised before fitting and before prediction, exactly as Section 5.3 states. Normalisation is parameter-free so applying it to the eval fold is not leakage.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "preprocessing (negation tagging)",
+      "severity": "low",
+      "paper_quote": "we added the tag NOT_ to every word between a negation word (\"not\", \"isn't\", \"didn't\", etc.) and the first punctuation mark following the negation word",
+      "script_lines": [
+        84,
+        91,
+        92,
+        95
+      ],
+      "script_snippet": "def apply_negation_tagging(tokens):\n            if tok in PUNCT_STOP:\n                negate = False\n                out.append(\"NOT_\" + tok)",
+      "explanation": "NOT_ prefixing runs from a negation cue until the next punctuation token, applied to unigrams only, as the paper describes.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "preprocessing (tokenisation)",
+      "severity": "low",
+      "paper_quote": "treating punctuation as separate lexical items. No stemming or stoplists were used.",
+      "script_lines": [
+        76,
+        79,
+        80
+      ],
+      "script_snippet": "def tokenize(text):\n    text = text.lower()\n    tokens = re.findall(r\"[a-z']+|[.,!?;:]\", text)",
+      "explanation": "Punctuation is emitted as its own token and no stemming or stoplist is applied, matching Section 6.1. (Note the synthetic corpus is generated directly as token lists, so this tokenizer is only exercised indirectly.)",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "optimizer / SVM solver and hyperparameters",
+      "severity": "medium",
+      "paper_quote": "We used Joachim's (1999) $SVM^{light}$ package$^8$ for training and testing, with all parameters set to their default values",
+      "script_lines": [
+        386,
+        387,
+        388,
+        389,
+        390,
+        391
+      ],
+      "script_snippet": "        clf = LinearSVC(\n            C=1.0,\n            loss=\"squared_hinge\",\n            penalty=\"l2\",\n            dual=True,\n            max_iter=10000,",
+      "explanation": "The paper defers to SVM^light defaults without enumerating them. The script substitutes scikit-learn LinearSVC with C=1.0 and squared hinge, a disclosed framework-default translation. SVM^light's default is the plain hinge loss with a C derived from the data scale, so the effective regularisation differs; with a 174-feature, near-separable synthetic problem this choice is unlikely to drive the gap, but it is a translation rather than the paper's setting.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "loss reporting",
+      "severity": "low",
+      "paper_quote": "not stated",
+      "script_lines": [
+        187,
+        191,
+        192,
+        193
+      ],
+      "script_snippet": "def hinge_loss(decision_values, y_pm1):\n    margins = 1.0 - y_pm1 * decision_values\n    margins = np.clip(margins, 0.0, None)\n    return float(np.mean(margins ** 2))",
+      "explanation": "The paper reports no loss for the SVM. The script logs mean squared-hinge margin loss as a monitoring proxy (train 0.1508, eval 0.25173); it is not used for model selection or for the reported metric, so it is cosmetic.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "reported sample counts",
+      "severity": "low",
+      "paper_quote": "not stated",
+      "script_lines": [
+        364,
+        459,
+        460
+      ],
+      "script_snippet": "        last_num_train, last_num_eval = len(train_docs), len(eval_docs)\n        \"num_train_samples\": last_num_train,\n        \"num_eval_samples\": last_num_eval,",
+      "explanation": "num_train_samples=934 / num_eval_samples=466 in the final metrics are the last fold's sizes, not a total; fold 1 was 932/468 per RUNNER LOG. This is only a reporting detail and does not affect the averaged accuracy, but it means RUN EVIDENCE's sample counts describe one fold.",
+      "verified": true,
+      "problems": []
+    }
+  ],
+  "hypotheses": [
+    {
+      "rank": 1,
+      "hypothesis": "The reproduced 92.786% measures a synthetic corpus with planted keyword signal, not the paper's IMDb reviews, so the 'pass' does not establish that 82.9% is reproducible on the paper's data. The pipeline around the data is faithful; only the data is wrong.",
+      "evidence": "Lines 103-154 generate documents by sampling ~12% of tokens from the document's own 20-word class lexicon and ~5% from the opposite one; the fold vocabulary is 174 features (RUNNER LOG) versus the paper's 16165 unigrams, and all three folds score 92.27-93.78% against a 82.9 target.",
+      "change": "Load the paper's actual movie-review corpus (the Cornell polarity dataset released at http://www.cs.cornell.edu/people/pabo/movie-review-data/, 700 positive + 700 negative documents) in place of build_synthetic_corpus, keeping the existing tokenizer, negation tagging, >=4 cutoff, presence binarisation, L2 normalisation and 3-fold CV untouched.",
+      "change_type": "fix_stated_deviation",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "rank": 2,
+      "hypothesis": "Even on real data, the LinearSVC(C=1.0, squared_hinge) stand-in is not SVM^light's default configuration, so any residual difference from 82.9 could partly come from the solver/loss translation.",
+      "evidence": "Paper: 'with all parameters set to their default values' for SVM^light; script lines 386-391 hardcode C=1.0, loss='squared_hinge', dual=True.",
+      "change": "Use the plain hinge loss (loss='hinge') and document the C value chosen, or report sensitivity across the C values SVM^light's default heuristic implies, rather than silently adopting scikit-learn's squared-hinge default.",
+      "change_type": "revisit_unstated_choice",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "rank": 3,
+      "hypothesis": "The reported num_train_samples/num_eval_samples describe only the final fold, which makes the run evidence look like a single train/test split rather than 3-fold CV.",
+      "evidence": "RUNNER LOG shows fold 1 at 932/468 and folds 2-3 at 934/466, while the final metrics report 934/466; script lines 364 and 459-460 carry forward only the last fold's counts.",
+      "change": "Report the per-fold counts (or their totals) in the metrics JSON instead of overwriting with the last fold's sizes.",
+      "change_type": "revisit_unstated_choice",
+      "verified": true,
+      "problems": []
+    }
+  ],
+  "summary_problems": [],
+  "model": "claude-opus-5"
+}

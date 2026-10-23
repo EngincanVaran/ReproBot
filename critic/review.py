@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from critic.blocking import STATED_PROBLEM_KINDS, pass_blocking_reasons
 from critic.judge import Judgement
 from reader.tooluse import as_list, recover_leaked_fields, request_tool_use
 
@@ -67,9 +68,6 @@ CHANGE_TYPES: tuple[str, ...] = (
     "revisit_unstated_choice",
     "run_more",
 )
-# Kinds that mean "the script is not the paper's method" - a correctness problem,
-# fixable by a normal retry, never a tuning question.
-STATED_PROBLEM_KINDS: frozenset[str] = frozenset({"deviates_from_paper", "implementation_bug"})
 SMALL_INTEGER_LIMIT = 10
 HISTORY_SAMPLES = 12
 LOG_HEAD_LINES = 60
@@ -271,6 +269,9 @@ class Review:
             for f in self.findings
             if f.verified and f.kind in STATED_PROBLEM_KINDS and f.severity in ("high", "medium")
         ]
+
+    def pass_blocking_reasons(self) -> list[str]:
+        return pass_blocking_reasons(self.to_dict())
 
     def counts(self) -> dict[str, int]:
         counts: dict[str, int] = dict.fromkeys(FINDING_KINDS, 0)
@@ -791,6 +792,14 @@ def log_review(review: Review) -> None:
 
 def _gap_line(judgement: Judgement) -> str:
     runs = f" (mean of {len(judgement.run_values)} runs)" if len(judgement.run_values) > 1 else ""
+    if judgement.verdict == "pass":
+        # A pass the review blocked: the number matched, the method did not.
+        return (
+            f"The previous script's result matches the paper's claim - {judgement.metric} "
+            f"{judgement.reproduced:.6g}{judgement.unit}{runs} against the claimed "
+            f"{judgement.claimed:.6g}{judgement.unit} - but that match does not count, "
+            f"because the script does not run the paper's method or data."
+        )
     return (
         f"The previous script ran healthily, but its result misses the paper's claim: "
         f"{judgement.metric} {judgement.reproduced:.6g}{judgement.unit}{runs} against the "

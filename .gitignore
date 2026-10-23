@@ -226,6 +226,9 @@ ocr/output/
 # ReproBot: generated Reader claims output (JSON extracted from ocr/ Markdown)
 reader/output/
 
+# ReproBot: papers imported through viewer/'s "Import a paper" section
+viewer/uploads/
+
 # ReproBot: generated Coder output (training scripts written from reader/ JSON)
 coder/output/
 
@@ -250,6 +253,12 @@ report/output/
 .DS_Store
 .ruff_cache/
 
+# ReproBot: generated replication reports
+report/output*/
+
+# brag videos: keep the deliverables, not the render scratch
+brag-output*/work/
+brag-output*/composition/snapshots/
 # ReproBot: single-shot vs. loop ablation artefacts (docs/notes/ablation/).
 # Same contents as the stage output dirs above, written to separate paths so the
 # loop-ON evidence is never overwritten. The numbers the note quotes are copied
@@ -269,3 +278,10 @@ coder/output-iforest/
 orchestrator/output-iforest/
 critic/output-iforest/
 report/output-iforest/
+
+# viewer/full_run.py background job state
+viewer/jobs/
+
+# GPU-box Coder output and the Critic fail-path test runs (2026-09-25)
+coder/output-gpu/
+orchestrator/output_failtest*/

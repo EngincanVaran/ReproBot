@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from critic.blocking import pass_blocking_reasons
 from critic.claims import ClaimGroup, group_claims, normalise_unit
 from report.curves import Curve
 
@@ -72,16 +73,22 @@ def render(inputs: ReportInputs) -> str:
 def _headline(paper: str, state: dict[str, Any], critic: dict[str, Any]) -> str:
     verdict = str(critic.get("verdict") or "not_evaluated")
     execution = str(state.get("verdict") or "unknown")
-    lines = [
-        f"# {paper}",
-        "",
-        f"**{VERDICT_WORDS.get(verdict, verdict)}** — {_one_line(critic)}",
-        "",
-    ]
+    blocked = pass_blocking_reasons(critic.get("review")) if verdict == "pass" else []
+    words = "not established" if blocked else VERDICT_WORDS.get(verdict, verdict)
+    lines = [f"# {paper}", "", f"**{words}** — {_one_line(critic)}", ""]
+    if blocked:
+        # Recomputed from the stored review, so reports of older runs say it too.
+        lines += [
+            "> **The number matches, but this is not a reproduction.** The Critic's review "
+            "found that the script does not run the paper's method or data, so the match "
+            "says nothing about the paper's claim:",
+            *[f"> - {reason}" for reason in blocked],
+            "",
+        ]
     lines += [
         "| | |",
         "|---|---|",
-        f"| Fidelity verdict | `{verdict}` |",
+        f"| Fidelity verdict | `{verdict}`{' (blocked by the review)' if blocked else ''} |",
         f"| Execution verdict | `{execution}` |",
         f"| Attempts | {len(state.get('attempts') or [])} "
         f"({state.get('retry_count', 0)} retries of {state.get('retry_budget', 0)} allowed) |",

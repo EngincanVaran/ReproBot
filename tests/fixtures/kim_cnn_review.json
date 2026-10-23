@@ -1,0 +1,271 @@
+{
+  "method_fidelity": "faithful",
+  "summary": "This is substantially the paper's method: Kim-2014 single-layer CNN (h=3,4,5, 100 maps each, ReLU, max-over-time, dropout 0.5, s=3 norm constraint, batch 50, Adadelta), real GoogleNews word2vec init with fine-tuned (non-static) embeddings, 10-fold CV on the 10,662 MR sentences with a 10% dev split per fold for early stopping. Data tracing is clean: folds train on 8,635-8,636 sentences, monitor 960 dev, evaluate on held-out 1,066-1,067 test sentences; totals (86,358 train / 10,662 eval) match exactly one pass over the corpus. The mean of 80.426% sits 1.074 below the 81.5 claim, inside the measured 10-fold spread (78.33-82.18).",
+  "curve_assessment": "Training converges hard and fast within each fold: by step 12 train_metric is 100.0 with train_loss 0.0032 while eval_metric is only 79.1, and later folds repeat the pattern (step 118: train 100.0 / eval 80.957; step 164: train 100.0 / eval 80.582). Eval loss rises with it (0.47238 at step 1 up to 0.80158, 0.89094), the classic small-dataset memorisation regime the paper counters with dropout and early stopping. Per-fold early stopping fired between epoch 8 and 19 of the 25 max. Fold test accuracies span 78.33 to 82.176 around a mean of 80.426, with best_eval 82.176 at step 229; the curve plateaus just below the 81.5 target rather than diverging or stalling near the 50.0 chance level.",
+  "findings": [
+    {
+      "kind": "matches_paper",
+      "aspect": "architecture",
+      "severity": "high",
+      "paper_quote": "filter windows (h) of 3, 4, 5 with 100 feature maps each, dropout rate (p) of 0.5, l2 constraint (s) of 3, and mini-batch size of 50",
+      "script_lines": [
+        303,
+        304,
+        305,
+        306,
+        307
+      ],
+      "script_snippet": "    model = SentenceCNN(\n        vocab_size=len(vocab), embed_dim=300, num_classes=2,\n        filter_sizes=[3, 4, 5], num_filters=100, dropout_p=0.5,\n        pad_idx=vocab[PAD_TOKEN],\n    ).to(device)",
+      "explanation": "Filter widths, feature-map count, dropout rate and the 300-d embedding all match Section 3.1 and Section 3.2 exactly.",
+      "verified": false,
+      "problems": [
+        "paper_quote not found in the paper or its extraction"
+      ]
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "architecture",
+      "severity": "medium",
+      "paper_quote": "we apply a max-over-time pooling operation (Collobert et al., 2011) over the feature map and take the maximum value",
+      "script_lines": [
+        223,
+        224,
+        225,
+        226,
+        227
+      ],
+      "script_snippet": "        for conv in self.convs:\n            c = F.relu(conv(emb))            # [batch, num_filters, L-h+1]\n            p = torch.max(c, dim=2)[0]       # max-over-time -> [batch, num_filters]\n            pooled.append(p)\n        z = torch.cat(pooled, dim=1)         # [batch, num_filters * len(filter_sizes)]",
+      "explanation": "Eq. 2/3 convolution with ReLU, max-over-time pooling and concatenation into the 300-d penultimate layer z are implemented exactly as described.",
+      "verified": false,
+      "problems": [
+        "paper_quote not found in the paper or its extraction"
+      ]
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "regularisation",
+      "severity": "medium",
+      "paper_quote": "We additionally constrain l2-norms of the weight vectors by rescaling w to have ||w||_2 = s whenever ||w||_2 > s after a gradient descent step.",
+      "script_lines": [
+        239,
+        240,
+        241,
+        242,
+        353
+      ],
+      "script_snippet": "        norms = w.norm(p=2, dim=1, keepdim=True)\n        desired = torch.clamp(norms, max=s)\n        scale = desired / (norms + 1e-12)\n        w.mul_(scale)\n            apply_l2_constraint(model.fc, s=3.0)",
+      "explanation": "The s=3 norm constraint is applied to the output-layer weight rows immediately after each optimizer step, as the paper specifies.",
+      "verified": false,
+      "problems": [
+        "paper_quote not found in the paper or its extraction"
+      ]
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "initialisation",
+      "severity": "high",
+      "paper_quote": "We use the publicly available word2vec vectors that were trained on 100 billion words from Google News. The vectors have dimensionality of 300",
+      "script_lines": [
+        459,
+        462,
+        309,
+        311
+      ],
+      "script_snippet": "    w2v_vocab, w2v_matrix = load_word2vec_binary(w2v_path)\n    embedding_matrix = build_embedding_matrix(vocab, w2v_vocab, w2v_matrix, dim=300, seed=args.seed)\n        model.embedding.weight.copy_(torch.from_numpy(embedding_matrix))\n    model.embedding.weight.requires_grad = True",
+      "explanation": "Real GoogleNews 300-d word2vec is loaded (log: 3,000,000 vectors, dim=300) and the embedding is trainable, which is the CNN-non-static variant targeted by claim c15. Coverage logged as 16,423/19,443, close to Table 1's |V_pre|=16448 of |V|=18765.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "initialisation",
+      "severity": "low",
+      "paper_quote": "sampling each dimension from $U[-a, a]$ where $a$ was chosen such that the randomly initialized vectors have the same variance as the pre-trained ones",
+      "script_lines": [
+        180,
+        181,
+        190
+      ],
+      "script_snippet": "    pretrained_var = float(np.var(w2v_matrix))\n    a = float(np.sqrt(3.0 * pretrained_var))\n            emb[idx] = rng.uniform(-a, a, size=dim).astype(np.float32)",
+      "explanation": "OOV words are drawn from U[-a,a] with a = sqrt(3 * var) so the uniform's variance equals the pretrained variance, exactly the Section 4.3 recipe.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "data split",
+      "severity": "high",
+      "paper_quote": "Test: Test set size (CV means there was no standard train/test split and thus 10-fold CV was used).",
+      "script_lines": [
+        473,
+        474,
+        496,
+        499,
+        500
+      ],
+      "script_snippet": "    skf = StratifiedKFold(n_splits=args.n_folds, shuffle=True, random_state=args.seed)\n    fold_splits = list(skf.split(indices, labels_arr))\n    for fold_idx, (train_dev_idx, test_idx) in enumerate(fold_splits[:n_folds_to_run], start=1):\n        train_idx, dev_idx = train_test_split(\n            train_dev_idx, test_size=0.1, stratify=train_dev_labels, random_state=rng_fold_seed",
+      "explanation": "Data trace: StratifiedKFold yields (train_dev_idx, test_idx) in the correct order; train_test_split returns train before dev, also correct. Each fold holds 8,635-8,636 train, 960 dev, 1,066-1,067 test (runner log), summing to 86,358 train and 10,662 eval rows across 10 folds - exactly one pass over the 10,662 MR sentences. The final metric is the mean of the 10 per-fold held-out test accuracies, never the dev or train split.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "evaluation",
+      "severity": "high",
+      "paper_quote": "We do not otherwise perform any dataset-specific tuning other than early stopping on dev sets. For datasets without a standard dev set we randomly select 10% of the training data as the dev set.",
+      "script_lines": [
+        361,
+        362,
+        363,
+        392,
+        393,
+        398,
+        399
+      ],
+      "script_snippet": "        dev_loss, dev_acc = evaluate(\n            model, dev_sents, dev_labels, vocab, device, effective_batch_size, criterion\n        )\n        if dev_acc > best_dev_acc:\n            best_dev_acc = dev_acc\n                if patience_counter >= args.patience:\n                logger.info(\"Early stopping fold %d at epoch %d (patience=%d)\", fold_idx, epoch, args.patience)",
+      "explanation": "Early stopping and model selection are driven by the 10%-of-training dev split only; the test fold is evaluated for logging but never used to pick the stopping point or restore weights. This is the paper's own procedure, so the per-fold overfitting visible in the curve is expected, not a bug.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "optimizer",
+      "severity": "medium",
+      "paper_quote": "Training is done through stochastic gradient descent over shuffled mini-batches with the Adadelta update rule (Zeiler, 2012).",
+      "script_lines": [
+        313,
+        314,
+        337,
+        340,
+        341
+      ],
+      "script_snippet": "    optimizer = torch.optim.Adadelta(\n        model.parameters(), lr=1.0, rho=0.95, eps=1e-6\n        perm = np.random.permutation(n_train)\n        for start in range(0, n_train, effective_batch_size):\n            idx = perm[start:start + effective_batch_size]",
+      "explanation": "Adadelta over shuffled mini-batches of size 50 (args.batch_size default), matching Section 3.1.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "learning rate",
+      "severity": "medium",
+      "paper_quote": "not stated",
+      "script_lines": [
+        314,
+        421
+      ],
+      "script_snippet": "        model.parameters(), lr=1.0, rho=0.95, eps=1e-6\n    parser.add_argument(\"--lr\", type=float, default=1.0, help=\"Adadelta base lr (paper gives no explicit value; Zeiler 2012 canonical default used).\")",
+      "explanation": "The paper names only the Adadelta update rule, giving no lr, rho or eps. The script discloses its use of the Zeiler-2012 canonical settings (lr=1.0, rho=0.95, eps=1e-6); the original Kim implementation used rho=0.95, eps=1e-6, so this is a reasonable but unstated translation that can shift accuracy by a fraction of a point.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "epochs",
+      "severity": "medium",
+      "paper_quote": "not stated",
+      "script_lines": [
+        417,
+        426
+      ],
+      "script_snippet": "    parser.add_argument(\"--epochs\", type=int, default=25, help=\"Max epochs per fold before early stopping.\")\n    parser.add_argument(\"--patience\", type=int, default=5, help=\"Early stopping patience (epochs without dev improvement).\")",
+      "explanation": "The paper states early stopping on dev sets but no epoch budget or patience. Max 25 epochs with patience 5 is the script's disclosed guess; the log shows stops at epochs 8-19, so the 25 cap was never binding, but patience 5 does determine which checkpoint each fold reports.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "preprocessing",
+      "severity": "medium",
+      "paper_quote": "not stated",
+      "script_lines": [
+        59,
+        60,
+        61,
+        62
+      ],
+      "script_snippet": "def tokenize(text):\n    text = text.lower()\n    text = re.sub(r\"[^a-z0-9']+\", \" \", text)\n    return text.strip().split()",
+      "explanation": "The paper gives no tokenizer. Lowercasing and stripping all non-alphanumeric characters yields |V|=19443 against Table 1's |V|=18765 and drops punctuation tokens such as '!' and ',' that the paper explicitly discusses as learned vectors (Table 3), so word2vec coverage differs slightly from the paper's 16448/18765.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "preprocessing",
+      "severity": "low",
+      "paper_quote": "A sentence of length $n$ (padded where",
+      "script_lines": [
+        246,
+        247,
+        250
+      ],
+      "script_snippet": "    if max_len is None:\n        max_len = max(len(s) for s in sentences)\n    batch = np.full((len(sentences), max_len), pad_idx, dtype=np.int64)",
+      "explanation": "The paper only says sentences are 'padded where necessary'. The script right-pads dynamically to the longest sentence in each batch with a zero pad vector (padding_idx), a disclosed convention; the original implementation padded to a global max with h-1 border padding, which can change which windows the filters see.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "initialisation",
+      "severity": "low",
+      "paper_quote": "not stated",
+      "script_lines": [
+        210,
+        211,
+        212,
+        216
+      ],
+      "script_snippet": "        self.convs = nn.ModuleList([\n            nn.Conv1d(in_channels=embed_dim, out_channels=num_filters,\n                      kernel_size=h, stride=1, padding=0)\n        self.fc = nn.Linear(num_filters * len(filter_sizes), num_classes)",
+      "explanation": "No initialisation scheme is given for conv filters, biases or the FC layer; PyTorch's default Kaiming-uniform is used, a disclosed framework-default translation.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "randomisation",
+      "severity": "low",
+      "paper_quote": "we eliminate other sources of randomness\u2014CV-fold assignment, initialization of unknown word vectors, initialization of CNN parameters\u2014by keeping them uniform within each dataset",
+      "script_lines": [
+        462,
+        497,
+        500
+      ],
+      "script_snippet": "    embedding_matrix = build_embedding_matrix(vocab, w2v_vocab, w2v_matrix, dim=300, seed=args.seed)\n        rng_fold_seed = args.seed + fold_idx\n            train_dev_idx, test_size=0.1, stratify=train_dev_labels, random_state=rng_fold_seed",
+      "explanation": "Fold assignment and the OOV embedding table are built once from a single seed, matching the paper's uniformity requirement; the per-fold dev split uses seed+fold_idx and CNN parameters are re-initialised per fold from the global torch seed, so CNN init is not literally identical across folds. Minor, since the paper's uniformity statement is about comparing variants, and the script runs only one variant.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "matches_paper",
+      "aspect": "loss",
+      "severity": "low",
+      "paper_quote": "passed to a fully connected softmax layer whose output is the probability distribution over labels",
+      "script_lines": [
+        229,
+        316
+      ],
+      "script_snippet": "        y = self.fc(z)\n    criterion = nn.CrossEntropyLoss()",
+      "explanation": "Softmax output with cross-entropy is the conventional objective for the paper's softmax layer; logits from the FC layer are fed directly to CrossEntropyLoss, which applies log-softmax internally.",
+      "verified": true,
+      "problems": []
+    },
+    {
+      "kind": "unstated_choice",
+      "aspect": "regularisation",
+      "severity": "low",
+      "paper_quote": "At test time, the learned weight vectors are scaled by $p$ such that $\\hat{\\mathbf{w}} = p\\mathbf{w}$, and $\\hat{\\mathbf{w}}$ is used (without dropout)",
+      "script_lines": [
+        215,
+        228
+      ],
+      "script_snippet": "        self.dropout = nn.Dropout(dropout_p)\n        z = self.dropout(z)",
+      "explanation": "The paper describes classic train-time masking with test-time weight scaling by p; nn.Dropout uses inverted dropout (scaling by 1/p at train time, identity at test). The expected activations are equivalent, so this is a benign framework-convention translation, disclosed by the Coder.",
+      "verified": true,
+      "problems": []
+    }
+  ],
+  "hypotheses": [],
+  "summary_problems": [
+    "number 1.074 is not in the material given"
+  ],
+  "model": "claude-opus-5"
+}

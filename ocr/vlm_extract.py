@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from anthropic import Anthropic, APIError
+from anthropic import Anthropic, APIError, BadRequestError
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -104,6 +104,34 @@ def _transcribe_page(client: Anthropic, png_bytes: bytes) -> str:
     return "".join(block.text for block in message.content if block.type == "text")
 
 
+def _page_text_layer(pdf_path: Path, page_index: int) -> str:
+    pdf = pdfium.PdfDocument(pdf_path)
+    try:
+        return str(pdf[page_index].get_textpage().get_text_range())
+    finally:
+        pdf.close()
+
+
+def _transcribe_or_fallback(
+    client: Anthropic, png_bytes: bytes, pdf_path: Path, page_index: int
+) -> str:
+    """Transcribe a page; if the API's output filter blocks it twice, use the PDF text layer.
+
+    The filter fires on some pages as a false positive (NIN page 4, 2026-10-22) and would
+    otherwise abort the whole paper. The fallback loses figure descriptions, so it is marked.
+    """
+    for attempt in (1, 2):
+        try:
+            return _transcribe_page(client, png_bytes)
+        except BadRequestError as exc:
+            if "content filtering" not in str(exc):
+                raise
+            logger.warning(f"  [page {page_index + 1}] blocked by filter, attempt {attempt}")
+    logger.warning(f"  [page {page_index + 1}] falling back to the PDF text layer, no figures")
+    text = _page_text_layer(pdf_path, page_index)
+    return f"[VLM transcription blocked; raw PDF text layer, figures not described]\n\n{text}"
+
+
 def run_vlm(
     pdf_path: Path,
     output_dir: Path,
@@ -129,13 +157,15 @@ def run_vlm(
         page_start = time.monotonic()
         png_bytes = _render_page_png(pdf_path, page_index, scale)
         try:
-            text = _transcribe_page(client, png_bytes)
+            text = _transcribe_or_fallback(client, png_bytes, pdf_path, page_index)
         except APIError as exc:
-            # One unreadable page used to lose the whole paper: nothing is written until
-            # every page succeeds, so a single refusal left no output at all. A recorded
-            # gap is the better failure - the pages that did transcribe are still worth
-            # reading, and the marker tells every later stage that something is missing
-            # rather than letting it look like a page the paper never had.
+            # The fallback above recovers a page the *content filter* blocked. Every other
+            # API failure - a connection drop, a 500, an overloaded error on one page of
+            # ten - still used to lose the whole paper, because nothing is written until
+            # every page succeeds. A recorded gap is the better failure: the pages that did
+            # transcribe are still worth reading, and the marker tells every later stage
+            # that something is missing rather than letting it look like a page the paper
+            # never had.
             logger.error(f"  [page {page_num}/{n_pages}] could not be transcribed: {exc}")
             failed.append(page_num)
             sections.append(

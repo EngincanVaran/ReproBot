@@ -124,7 +124,8 @@ RUN pip install --no-cache-dir \
         pillow==11.0.0 \
         pandas==2.2.3 \
         scikit-learn==1.5.2 \
-        scipy==1.14.1
+        scipy==1.14.1 \
+        xgboost==2.1.3
 
 # Mount points, created up front so their ownership/permissions are known rather
 # than being invented by the daemon at mount time.
