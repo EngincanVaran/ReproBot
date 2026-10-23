@@ -98,6 +98,7 @@ dev = [
     "pandas-stubs>=2.2",
     "pre-commit>=4.0",
     "pytest>=9.1.1",
+    "pytest-cov>=6.0",
     "ruff>=0.8",
 ]
 
@@ -137,3 +138,20 @@ exclude = ["^coder/output/"]
 [[tool.mypy.overrides]]
 module = "pypdfium2.*"
 ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["coder", "critic", "ocr", "orchestrator", "reader", "report", "runner"]
+# viewer/ is a Streamlit app: ~1,000 statements of page layout and widget callbacks whose
+# behaviour is what a person sees, not something a unit test can assert. Measuring it only
+# dilutes the number for the logic that tests actually guard.
+omit = ["*/__init__.py", "viewer/*"]
+
+[tool.coverage.report]
+show_missing = false
+skip_covered = false
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
